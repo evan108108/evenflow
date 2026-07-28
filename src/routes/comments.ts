@@ -10,7 +10,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap } from "../effects";
+import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { callerPubkey, type BoardOwnershipError } from "../authz";
 import { parseCommentRow, parseIssueRow, type CommentShape } from "../shapes";
@@ -87,7 +87,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, CommentsFailure, Db | AuditLog>,
+    program: Effect.Effect<unknown, CommentsFailure, Db | AuditLog | BoardEmitter>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -141,6 +141,14 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         event_type: "comment_created",
         actor: claims.login,
         details: { issue: issue.id, comment: comment.id },
+      });
+      yield* emitBoardEvent(issue.board_id, {
+        kind: "comment.created",
+        board_id: issue.board_id,
+        issue_id: issue.id,
+        comment_id: comment.id,
+        at_ms: now,
+        payload: { comment },
       });
       return { comment };
     });
@@ -213,6 +221,24 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { comment: comment.id },
       });
+      // Comments don't carry board_id — resolve it through the issue. The
+      // issue can only be missing if it was deleted mid-flight (its comment
+      // cascade would have taken this row too), so skip the emit then.
+      const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [
+        comment.issue_id,
+      ]);
+      if (issueRow !== null) {
+        const issue = parseIssueRow(issueRow);
+        const now = yield* Clock.currentTimeMillis;
+        yield* emitBoardEvent(issue.board_id, {
+          kind: "comment.deleted",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          comment_id: comment.id,
+          at_ms: now,
+          payload: { comment_id: comment.id, issue_id: issue.id },
+        });
+      }
       return { deleted: true };
     });
     return runJson(c, program);

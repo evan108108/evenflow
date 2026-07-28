@@ -13,7 +13,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap, type Claims } from "../effects";
+import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
 import {
@@ -229,7 +229,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, IssuesFailure, Db | AuditLog>,
+    program: Effect.Effect<unknown, IssuesFailure, Db | AuditLog | BoardEmitter>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -317,6 +317,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         event_type: "issue_created",
         actor: claims.login,
         details: { board: board.slug, issue: id },
+      });
+      yield* emitBoardEvent(board.id, {
+        kind: "issue.created",
+        board_id: board.id,
+        issue_id: id,
+        at_ms: now,
+        payload: { issue },
       });
       return { issue };
     });
@@ -477,6 +484,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         updated_at_ms: now,
         completed_at_ms: completed,
       };
+      yield* emitBoardEvent(current.board_id, {
+        kind: "issue.updated",
+        board_id: current.board_id,
+        issue_id: current.id,
+        at_ms: now,
+        payload: { issue },
+      });
       return { issue };
     });
     return runJson(c, program);
@@ -495,6 +509,14 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         event_type: "issue_deleted",
         actor: claims.login,
         details: { issue: issue.id },
+      });
+      const now = yield* Clock.currentTimeMillis;
+      yield* emitBoardEvent(issue.board_id, {
+        kind: "issue.deleted",
+        board_id: issue.board_id,
+        issue_id: issue.id,
+        at_ms: now,
+        payload: { issue_id: issue.id },
       });
       return { deleted: true };
     });
@@ -516,6 +538,15 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id, to_status: toStatus },
       });
+      if (updated.status !== issue.status) {
+        yield* emitBoardEvent(issue.board_id, {
+          kind: "issue.transitioned",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: updated.updated_at_ms,
+          payload: { issue: updated, from_status: issue.status, to_status: toStatus },
+        });
+      }
       return { issue: updated };
     });
     return runJson(c, program);
@@ -535,6 +566,15 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           actor: claims.login,
           details: { issue: issue.id },
         });
+        if (updated.container !== issue.container) {
+          yield* emitBoardEvent(issue.board_id, {
+            kind: "issue.container_changed",
+            board_id: issue.board_id,
+            issue_id: issue.id,
+            at_ms: updated.updated_at_ms,
+            payload: { issue: updated, from_container: issue.container, to_container: to },
+          });
+        }
         return { issue: updated };
       });
       return runJson(c, program);
