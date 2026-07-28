@@ -131,6 +131,18 @@ export const makeJwt = (signingKey: string | undefined): JwtService => ({
     }),
 });
 
+/**
+ * sha256 hex of a JWT — the only representation of a token that is ever
+ * stored (sessionCache.jwt_hash). Never persist the raw JWT.
+ */
+export const hashToken = (jwt: string): Effect.Effect<string> =>
+  Effect.promise(async () => {
+    const digest = await crypto.subtle.digest("SHA-256", enc.encode(jwt));
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  });
+
 export const JwtLive: Layer.Layer<Jwt, never, AppEnv> = Layer.effect(
   Jwt,
   Effect.gen(function* () {
