@@ -98,4 +98,7 @@ app.route("/api/v0", makeCommentsRouter());
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 
+// Durable Object classes must be exported from the Worker entrypoint.
+export { BoardDO } from "./durable-objects/BoardDO";
+
 export default app;

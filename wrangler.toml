@@ -25,7 +25,11 @@ database_id = "67efa394-dc02-41e3-883a-b2ee885b1190"
 # binding = "R2"
 # bucket_name = "evenflow-artifacts"
 
-# Durable Object for per-board SSE fanout (add when we build it)
-# [[durable_objects.bindings]]
-# name = "BOARD"
-# class_name = "BoardDO"
+# Durable Object for per-board SSE fanout — one named instance per board id.
+[[durable_objects.bindings]]
+name = "BOARD"
+class_name = "BoardDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["BoardDO"]
