@@ -67,8 +67,10 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const hash = yield* hashToken(jwt);
       const now = yield* Clock.currentTimeMillis;
-      // pubkey '' = KMS-not-wired sentinel; the column is NOT NULL in
-      // migration 0001. Backfilled once KmsClient.Live is real.
+      // TODO(kms-backfill): pubkey '' = KMS-not-wired sentinel; the column
+      // is NOT NULL in migration 0001. When KmsClient.Live lands, derive
+      // real pubkeys here AND backfill existing '' rows in that phase's
+      // migration (Sona-ratified 2026-07-28).
       yield* db.execute(
         "INSERT OR REPLACE INTO sessionCache (jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)",
         [hash, "", claims.provider, claims.oauth_id, claims.exp * 1000, now],
