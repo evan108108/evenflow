@@ -16,8 +16,9 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap, type Claims } from "../effects";
+import { AuditLog, Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
 import { parseBoardRow, type BoardShape } from "../shapes";
 
 const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -36,12 +37,12 @@ class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly reason: string;
 }> {}
 
-type BoardsFailure = ValidationError | ConflictError | NotFoundError | DbError;
-
-// TODO(kms-backfill): provider-qualified stand-in, not a Nostr pubkey (see
-// header comment). Provider-qualified — bare oauth_id would collide across
-// providers ("123" on Google vs GitHub).
-const callerPubkey = (claims: Claims): string => `${claims.provider}:${claims.oauth_id}`;
+type BoardsFailure =
+  | ValidationError
+  | ConflictError
+  | NotFoundError
+  | BoardOwnershipError
+  | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<BoardsFailure>) => {
   const failure = Cause.failureOption(cause);
@@ -53,6 +54,7 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<BoardsFailure>
       case "ConflictError":
         return c.json({ error: "conflict", reason: f.reason }, 409);
       case "NotFoundError":
+      case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
       case "DbError":
         return c.json({ error: "internal", reason: `db-${f.reason}` }, 500);
@@ -98,17 +100,6 @@ const readJsonBody = (c: Context<AppHonoEnv>) =>
       () => new ValidationError({ reason: "expected-json-object" }),
     ),
   );
-
-const fetchOwnBoardRow = (pubkey: string, slug: string) =>
-  Effect.gen(function* () {
-    const db = yield* Db;
-    const row = yield* db.queryFirst(
-      "SELECT * FROM boardCache WHERE pubkey = ? AND slug = ?",
-      [pubkey, slug],
-    );
-    if (row === null) return yield* new NotFoundError({ reason: "board" });
-    return row;
-  });
 
 export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   const boards = new Hono<AppHonoEnv>();
@@ -240,8 +231,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   boards.get("/boards/:slug", async (c) => {
     const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const row = yield* fetchOwnBoardRow(callerPubkey(claims), c.req.param("slug"));
-      return { board: parseBoardRow(row) };
+      const board = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+      return { board };
     });
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -264,9 +255,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       );
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
-      const current = parseBoardRow(
-        yield* fetchOwnBoardRow(callerPubkey(claims), c.req.param("slug")),
-      );
+      const current = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
 
       const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
       const description =
@@ -325,9 +314,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   boards.delete("/boards/:slug", async (c) => {
     const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const current = parseBoardRow(
-        yield* fetchOwnBoardRow(callerPubkey(claims), c.req.param("slug")),
-      );
+      const current = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
       const db = yield* Db;
       const audit = yield* AuditLog;
       yield* db.execute("DELETE FROM boardCache WHERE id = ?", [current.id]);
