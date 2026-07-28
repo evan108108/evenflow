@@ -23,10 +23,32 @@ export const Landing = () => (
         A kanban built on <a href="https://4a4.ai">4a</a>. Free. Yours.
       </p>
       <div style={{ display: "flex", gap: "1rem", "justify-content": "center", "flex-wrap": "wrap" }}>
-        <a class="btn btn-solid" href="/auth/oauth/start?provider=google">
+        {/*
+          Full-page nav (not Solid-Router SPA nav) — the Worker returns 302 to
+          api.4a4.ai's AS, which then bounces to Google/GitHub. Solid-Router's
+          global anchor-click delegate would otherwise intercept these and try
+          to SPA-route, hit no match, and render the 404 shell.
+        */}
+        <a
+          class="btn btn-solid"
+          href="/auth/oauth/start?provider=google"
+          rel="external"
+          onClick={(e) => {
+            e.preventDefault();
+            window.location.assign("/auth/oauth/start?provider=google");
+          }}
+        >
           Sign in with Google
         </a>
-        <a class="btn" href="/auth/oauth/start?provider=github">
+        <a
+          class="btn"
+          href="/auth/oauth/start?provider=github"
+          rel="external"
+          onClick={(e) => {
+            e.preventDefault();
+            window.location.assign("/auth/oauth/start?provider=github");
+          }}
+        >
           Sign in with GitHub
         </a>
       </div>
