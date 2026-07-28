@@ -1,0 +1,72 @@
+// Wire shapes returned by the REST API — mirrors src/shapes.ts on the
+// Worker (the server parsers are the source of truth; these are the
+// client's read-side view of the same JSON).
+
+export type Container = "icebox" | "backlog" | "active";
+
+export interface Board {
+  readonly id: string;
+  readonly pubkey: string;
+  readonly slug: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly columns: ReadonlyArray<string>;
+  readonly labels: ReadonlyArray<unknown>;
+  readonly member_policy: string;
+  readonly is_encrypted: boolean;
+  readonly created_at_ms: number;
+  readonly updated_at_ms: number;
+}
+
+export interface Issue {
+  readonly id: string;
+  readonly board_id: string;
+  readonly title: string;
+  readonly body: string | null;
+  readonly status: string;
+  readonly container: Container;
+  readonly assignee_pubkey: string | null;
+  readonly priority: number | null;
+  readonly estimate: number | null;
+  readonly labels: ReadonlyArray<string>;
+  readonly github_links: ReadonlyArray<{ repo: string; pr: number; state: string }>;
+  readonly created_at_ms: number;
+  readonly updated_at_ms: number;
+  readonly completed_at_ms: number | null;
+}
+
+export interface Comment {
+  readonly id: string;
+  readonly issue_id: string;
+  readonly author_pubkey: string;
+  readonly body: string;
+  readonly in_reply_to: string | null;
+  readonly created_at_ms: number;
+}
+
+export interface FeedItem {
+  readonly id: string;
+  readonly issue_id: string;
+  readonly issue_title: string | null;
+  readonly actor_pubkey: string;
+  readonly kind: "creation" | "status" | "container";
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly container_at_completion: string | null;
+  readonly occurred_at_ms: number;
+}
+
+/** The three container-move verbs, as REST path suffixes. */
+export type ContainerMove = "promote_to_backlog" | "promote_to_active" | "send_to_icebox";
+
+export const CONTAINER_OF_MOVE: Record<ContainerMove, Container> = {
+  promote_to_backlog: "backlog",
+  promote_to_active: "active",
+  send_to_icebox: "icebox",
+};
+
+export const MOVE_TO_CONTAINER: Record<Container, ContainerMove> = {
+  backlog: "promote_to_backlog",
+  active: "promote_to_active",
+  icebox: "send_to_icebox",
+};
