@@ -15,15 +15,17 @@
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types",
     "d1:migrate:local": "wrangler d1 execute evenflow --file=migrations/0001_init.sql --local",
-    "d1:migrate:remote": "wrangler d1 execute evenflow --file=migrations/0001_init.sql --remote"
+    "d1:migrate:remote": "wrangler d1 execute evenflow --file=migrations/0001_init.sql --remote",
+    "test": "vitest run"
   },
   "dependencies": {
-    "hono": "^4.6.14",
-    "effect": "^3.11.10"
+    "effect": "^3.11.10",
+    "hono": "^4.6.14"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",
     "typescript": "^5.7.2",
+    "vitest": "^3.2.7",
     "wrangler": "^3.99.0"
   }
 }
