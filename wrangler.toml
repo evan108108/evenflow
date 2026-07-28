@@ -13,11 +13,12 @@ enabled = true
 #   { pattern = "api.evenflow.work", custom_domain = true }
 # ]
 
-# D1 database (uncomment after `wrangler d1 create evenflow`)
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "evenflow"
-# database_id = "..."
+# D1 database — cache + config surface (see migrations/README.md).
+# Run `wrangler d1 create evenflow` and paste the database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "evenflow"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
 
 # R2 bucket (uncomment after `wrangler r2 bucket create evenflow-artifacts`)
 # [[r2_buckets]]
