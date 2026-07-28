@@ -9,6 +9,7 @@ import {
   JWT_TEST_TOKEN,
   KmsClientTest,
   makeAuditLogTest,
+  makeBoardEmitterTest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
@@ -105,10 +106,12 @@ const makeDbMock = () => {
 const makeHarness = () => {
   const db = makeDbMock();
   const audit = makeAuditLogTest();
+  const emitter = makeBoardEmitterTest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtTest,
     db.layer,
     audit.layer,
+    emitter.layer,
     KmsClientTest,
   );
   const app = new Hono<AppHonoEnv>();

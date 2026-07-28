@@ -7,6 +7,7 @@ import { requireAuth } from "./middleware/requireAuth";
 import { makeAuthRouter } from "./routes/auth";
 import { makeBoardsRouter } from "./routes/boards";
 import { makeCommentsRouter } from "./routes/comments";
+import { makeFeedRouter } from "./routes/feed";
 import { makeIssuesRouter } from "./routes/issues";
 
 const app = new Hono<AppHonoEnv>();
@@ -95,6 +96,7 @@ app.get("/api/v0/me", (c) => c.json(c.get("claims")));
 app.route("/api/v0", makeBoardsRouter());
 app.route("/api/v0", makeIssuesRouter());
 app.route("/api/v0", makeCommentsRouter());
+app.route("/api/v0", makeFeedRouter());
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 

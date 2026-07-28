@@ -10,6 +10,7 @@ import {
   KmsClientLive,
   KmsClientTest,
   makeAuditLogTest,
+  makeBoardEmitterTest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
@@ -45,10 +46,12 @@ const makeDbSpy = (): DbSpy => {
 const makeHarness = (opts?: { kmsStub?: boolean }) => {
   const db = makeDbSpy();
   const audit = makeAuditLogTest();
+  const emitter = makeBoardEmitterTest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtTest,
     db.layer,
     audit.layer,
+    emitter.layer,
     opts?.kmsStub === true ? KmsClientLive : KmsClientTest,
   );
   const app = new Hono<AppHonoEnv>();

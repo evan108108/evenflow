@@ -11,12 +11,14 @@ import {
   JWT_TEST_TOKEN,
   KmsClientTest,
   makeAuditLogTest,
+  makeBoardEmitterTest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
 import { requireAuth } from "../src/middleware/requireAuth";
 import { makeBoardsRouter } from "../src/routes/boards";
 import { makeCommentsRouter } from "../src/routes/comments";
+import { makeFeedRouter } from "../src/routes/feed";
 import { makeIssuesRouter } from "../src/routes/issues";
 import type { IssueShape } from "../src/shapes";
 import { makeDbMock } from "./dbMock";
@@ -27,10 +29,12 @@ export const CALLER = `${JWT_TEST_CLAIMS.provider}:${JWT_TEST_CLAIMS.oauth_id}`;
 export const makeHarness = () => {
   const db = makeDbMock();
   const audit = makeAuditLogTest();
+  const emitter = makeBoardEmitterTest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtTest,
     db.layer,
     audit.layer,
+    emitter.layer,
     KmsClientTest,
   );
   const app = new Hono<AppHonoEnv>();
@@ -38,7 +42,8 @@ export const makeHarness = () => {
   app.route("/api/v0", makeBoardsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeCommentsRouter(() => layer));
-  return { app, db, audit };
+  app.route("/api/v0", makeFeedRouter(() => layer));
+  return { app, db, audit, emitter };
 };
 
 export type Harness = ReturnType<typeof makeHarness>;
