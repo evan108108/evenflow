@@ -1,0 +1,103 @@
+/* Evenflow design tokens — editorial magazine, not enterprise software.
+   Cream paper, ink navy, dramatic high-contrast serif display against a
+   wide geometric sans. See PLAN.md "Design language + inspiration". */
+
+:root {
+  --color-cream: #f5f2ec;
+  --color-ink: #17233b;
+  --color-ink-soft: rgba(23, 35, 59, 0.68);
+  --color-ink-faint: rgba(23, 35, 59, 0.14);
+  --color-paper-raised: #fbf9f5;
+
+  --font-serif: "Bodoni Moda Variable", "Bodoni Moda", "Fraunces", Georgia, serif;
+  --font-sans: "DM Sans Variable", "DM Sans", "Söhne Breit", -apple-system, sans-serif;
+
+  --measure: 42rem;
+  --radius-chamfer: 10px 2px 10px 2px; /* rounded + subtly cut */
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  background: var(--color-cream);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.serif {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+/* Numbers get the serif treatment (velocity readouts, counts). */
+.figure {
+  font-family: var(--font-serif);
+  font-variant-numeric: lining-nums;
+}
+
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+
+/* No focus outlines anywhere — Evan's standing UI rule. */
+:focus,
+:focus-visible {
+  outline: none;
+}
+
+.btn {
+  display: inline-block;
+  padding: 0.7rem 1.6rem;
+  border: 1.5px solid var(--color-ink);
+  border-radius: var(--radius-chamfer);
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.btn:hover {
+  background: var(--color-ink);
+  color: var(--color-cream);
+}
+
+.btn-solid {
+  background: var(--color-ink);
+  color: var(--color-cream);
+}
+
+.btn-solid:hover {
+  background: transparent;
+  color: var(--color-ink);
+}
+
+.muted {
+  color: var(--color-ink-soft);
+}
