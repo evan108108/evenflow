@@ -32,4 +32,4 @@ class_name = "BoardDO"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["BoardDO"]
+new_sqlite_classes = ["BoardDO"]
