@@ -183,6 +183,10 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT COUNT(*) AS n FROM commentCache WHERE issue_id = ?")) {
           return { n: comments.filter((x) => x["issue_id"] === params[0]).length } as R;
         }
+        if (sql.startsWith("SELECT * FROM statusChangeCache WHERE board_id = ? AND id = ?")) {
+          const r = statusChanges.find((x) => x["board_id"] === params[0] && x["id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
         throw new Error(`DbMock: unexpected queryFirst: ${sql}`);
       }),
     queryAll: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -215,6 +219,39 @@ export const makeDbMock = (): DbMock => {
             );
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM statusChangeCache WHERE board_id = ?")) {
+          let rows = statusChanges
+            .filter((r) => r["board_id"] === params[0])
+            .sort(
+              (a, b) =>
+                num(b["occurred_at_ms"]) - num(a["occurred_at_ms"]) ||
+                str(b["id"]).localeCompare(str(a["id"])),
+            );
+          let at = 1;
+          // Feed-kind discriminator fragments (see routes/feed.ts KIND_SQL).
+          if (sql.includes("AND to_status IS NOT NULL AND to_container IS NOT NULL")) {
+            rows = rows.filter((r) => r["to_status"] !== null && r["to_container"] !== null);
+          } else if (sql.includes("AND to_status IS NOT NULL AND to_container IS NULL")) {
+            rows = rows.filter((r) => r["to_status"] !== null && r["to_container"] === null);
+          } else if (sql.includes("AND to_status IS NULL")) {
+            rows = rows.filter((r) => r["to_status"] === null);
+          }
+          if (sql.includes("(occurred_at_ms < ?")) {
+            const [occ, , afterId] = [params[at], params[at + 1], params[at + 2]];
+            at += 3;
+            rows = rows.filter(
+              (r) =>
+                num(r["occurred_at_ms"]) < num(occ) ||
+                (r["occurred_at_ms"] === occ && str(r["id"]) < str(afterId)),
+            );
+          }
+          return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT id, title FROM issueCache WHERE id IN")) {
+          return issues
+            .filter((r) => (params as unknown[]).includes(r["id"]))
+            .map((r) => ({ id: r["id"], title: r["title"] })) as R[];
         }
         if (sql.startsWith("SELECT * FROM boardCache WHERE pubkey = ? ORDER BY")) {
           const rows = boards

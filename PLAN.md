@@ -143,6 +143,20 @@ Board-membership is orthogonal: JWT identifies *who*; audience declarations + ke
 **Live updates**: SSE from the Worker; Durable Object owns per-board subscriber list.
 **Sonata integration**: Sonata talks to Evenflow like any other 4a client — HTTP + JWT via the existing OAuth AS.
 
+## Activity feed semantics
+
+The board activity feed is a straight read over `statusChangeCache` — the audit rows every mutation already writes. A row's *kind* is inferred from which nullable pair is populated; there is no discriminator column:
+
+| kind | to_status | to_container | notes |
+|---|---|---|---|
+| `creation` | non-null | non-null | initial status + container land together; `from_*` both null |
+| `status` | non-null | null | `from_status` also non-null |
+| `container` | null | non-null | statuses both null |
+
+`GET /boards/:slug/activity` filters with `?type=creation|status|container`, keyset-paginates newest-first on `(occurred_at_ms, id)` with `?after=<statusChange id>` (default limit 30, max 100), and enriches each row with its issue title via a second D1 read merged in code — no SQL JOIN, and `issue_title` is `null` when the issue has since been deleted (audit rows outlive their issue).
+
+Live updates ride the same writes: after every committed mutation the Worker fires a `BoardEvent` through the `BoardEmitter` service to the board's `BoardDO` (one Durable Object instance per board id), which fans it out as SSE to every client on `GET /boards/:slug/stream`. Fanout is best-effort by design — a DO hiccup logs a warning but never fails the mutation; clients recover on EventSource reconnect.
+
 ## Deploy economics
 
 Real numbers from Cloudflare's published pricing (2026-07-28):
