@@ -1,0 +1,7 @@
+# Copy to .dev.vars (gitignored, auto-loaded by `wrangler dev`).
+#
+# JWT_SIGNING_KEY — HS256 secret shared with 4a's OAuth AS. Locally any
+# value works: mint test tokens with the same key (see tests/auth.test.ts
+# mintTestJwt). In prod this MUST match api.4a4.ai's JWT_SIGNING_KEY so
+# 4a-minted tokens verify here; set it with `wrangler secret put JWT_SIGNING_KEY`.
+JWT_SIGNING_KEY=dev-signing-key-change-me

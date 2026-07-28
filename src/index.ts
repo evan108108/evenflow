@@ -1,9 +1,12 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { Effect } from "effect";
-import { AuditLog, bootstrap, type WorkerEnv } from "./effects";
+import { AuditLog, bootstrap } from "./effects";
+import type { AppHonoEnv } from "./http";
+import { requireAuth } from "./middleware/requireAuth";
+import { makeAuthRouter } from "./routes/auth";
 
-const app = new Hono<{ Bindings: WorkerEnv }>();
+const app = new Hono<AppHonoEnv>();
 
 app.get("/", (c) => {
   return c.html(html`<!DOCTYPE html>
@@ -77,6 +80,14 @@ app.get("/healthz", async (c) => {
   });
   return c.json(await Effect.runPromise(Effect.provide(healthz, bootstrap(c.env))));
 });
+
+app.route("/auth", makeAuthRouter());
+
+// Every /api/v0/* route requires a valid 4a JWT.
+app.use("/api/v0/*", requireAuth());
+
+// Placeholder demonstrating the middleware end-to-end: echoes the verified claims.
+app.get("/api/v0/me", (c) => c.json(c.get("claims")));
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 
