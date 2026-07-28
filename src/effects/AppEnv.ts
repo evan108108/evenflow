@@ -13,6 +13,7 @@ import { Db, DbLive } from "./Db";
 import { Jwt, JwtLive } from "./Jwt";
 import { KmsClient, KmsClientLive } from "./KmsClient";
 import { AuditLog, AuditLogLive } from "./AuditLog";
+import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
 
 /**
  * Raw Cloudflare Worker bindings. Members are optional while their
@@ -21,13 +22,14 @@ import { AuditLog, AuditLogLive } from "./AuditLog";
  */
 export interface WorkerEnv {
   readonly DB?: D1Database;
+  readonly BOARD?: DurableObjectNamespace;
   readonly JWT_SIGNING_KEY?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
 
 /** Union of every service a handler can require. */
-export type AppServices = Db | Jwt | KmsClient | AuditLog;
+export type AppServices = Db | Jwt | KmsClient | AuditLog | BoardEmitter;
 
 /** All Live services merged, still awaiting the per-request AppEnv. */
 export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
@@ -35,6 +37,7 @@ export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
   JwtLive,
   KmsClientLive,
   AuditLogLive,
+  BoardEmitterLive,
 );
 
 /** Compose the full Live environment for one request from Hono's `c.env`. */

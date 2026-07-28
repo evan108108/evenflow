@@ -27,3 +27,14 @@ export {
   type AuditLogService,
   type AuditLogTestHandle,
 } from "./AuditLog";
+export {
+  BoardEmitter,
+  BoardEmitterLive,
+  EmitError,
+  emitBoardEvent,
+  makeBoardEmitterTest,
+  type BoardEmitterService,
+  type BoardEmitterTestHandle,
+  type BoardEvent,
+  type BoardEventKind,
+} from "./BoardEmitter";
