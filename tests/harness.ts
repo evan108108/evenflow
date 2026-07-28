@@ -20,6 +20,8 @@ import { makeBoardsRouter } from "../src/routes/boards";
 import { makeCommentsRouter } from "../src/routes/comments";
 import { makeFeedRouter } from "../src/routes/feed";
 import { makeIssuesRouter } from "../src/routes/issues";
+import { makeMcpRouter } from "../src/routes/mcp";
+import { makeWellKnownRouter } from "../src/routes/wellknown";
 import type { IssueShape } from "../src/shapes";
 import { makeDbMock } from "./dbMock";
 
@@ -43,6 +45,8 @@ export const makeHarness = () => {
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeCommentsRouter(() => layer));
   app.route("/api/v0", makeFeedRouter(() => layer));
+  app.route("/", makeWellKnownRouter());
+  app.route("/", makeMcpRouter(() => layer));
   return { app, db, audit, emitter };
 };
 
