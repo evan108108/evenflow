@@ -12,6 +12,13 @@ routes = [
 [observability]
 enabled = true
 
+# Static SPA assets (web/ → dist/web via `cd web && npm run build`).
+# Requests matching a built file are served directly; everything else falls
+# through to the Worker, whose catch-all GET serves index.html (SPA routing).
+[assets]
+directory = "./dist/web"
+binding = "ASSETS"
+
 # D1 database — cache + config surface (see migrations/README.md).
 # Lives on Evan's personal Cloudflare account (same as evenflow.work + 4a).
 # Provisioned 2026-07-28 via `wrangler d1 create evenflow`.

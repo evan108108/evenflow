@@ -23,6 +23,7 @@ import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
 export interface WorkerEnv {
   readonly DB?: D1Database;
   readonly BOARD?: DurableObjectNamespace;
+  readonly ASSETS?: Fetcher;
   readonly JWT_SIGNING_KEY?: string;
 }
 
