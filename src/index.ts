@@ -5,6 +5,7 @@ import { AuditLog, bootstrap } from "./effects";
 import type { AppHonoEnv } from "./http";
 import { requireAuth } from "./middleware/requireAuth";
 import { makeAuthRouter } from "./routes/auth";
+import { makeBoardsRouter } from "./routes/boards";
 
 const app = new Hono<AppHonoEnv>();
 
@@ -88,6 +89,8 @@ app.use("/api/v0/*", requireAuth());
 
 // Placeholder demonstrating the middleware end-to-end: echoes the verified claims.
 app.get("/api/v0/me", (c) => c.json(c.get("claims")));
+
+app.route("/api/v0", makeBoardsRouter());
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 
