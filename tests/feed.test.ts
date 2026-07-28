@@ -124,6 +124,51 @@ describe("GET /api/v0/boards/:slug/activity", () => {
   });
 });
 
+describe("GET /api/v0/issues/:id/activity", () => {
+  const getIssueActivity = async (h: Harness, id: string, qs = "") => {
+    const res = await h.app.request(`/api/v0/issues/${id}/activity${qs}`, { headers: bearer }, {});
+    return { res, body: (await res.json()) as FeedBody };
+  };
+
+  it("returns the issue's audit rows newest-first with container_at_completion", async () => {
+    const h = makeHarness();
+    const issue = await seedThreeKinds(h);
+    vi.setSystemTime(4_000);
+    await h.app.request(
+      `/api/v0/issues/${issue.id}/transition`,
+      jsonReq("POST", { to_status: "Done" }),
+      {},
+    );
+    const { res, body } = await getIssueActivity(h, issue.id);
+    expect(res.status).toBe(200);
+    expect(body.activity).toHaveLength(4);
+    expect(body.activity.map((a) => a.occurred_at_ms)).toEqual([4_000, 3_000, 2_000, 1_000]);
+    // The Done transition happened while the issue sat in the icebox.
+    expect(body.activity[0]).toMatchObject({
+      kind: "status",
+      to: "Done",
+      container_at_completion: "icebox",
+      issue_title: "An issue",
+    });
+    expect(body.activity[1]).toMatchObject({ container_at_completion: null });
+  });
+
+  it("respects ?limit= and reports has_more", async () => {
+    const h = makeHarness();
+    const issue = await seedThreeKinds(h);
+    const { body } = await getIssueActivity(h, issue.id, "?limit=2");
+    expect(body.activity).toHaveLength(2);
+    expect(body.has_more).toBe(true);
+  });
+
+  it("404s a foreign issue and an unknown id", async () => {
+    const h = makeHarness();
+    seedForeignBoardAndIssue(h);
+    expect((await getIssueActivity(h, "fi")).res.status).toBe(404);
+    expect((await getIssueActivity(h, "nope")).res.status).toBe(404);
+  });
+});
+
 describe("GET /api/v0/boards/:slug/stream", () => {
   const fakeBoardNs = (subscribed: string[]) =>
     ({

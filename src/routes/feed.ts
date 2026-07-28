@@ -15,11 +15,13 @@ import { Cause, Data, Effect, Exit, Option } from "effect";
 import { Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
-import { parseStatusChangeRow, type StatusChangeShape } from "../shapes";
+import { parseIssueRow, parseStatusChangeRow, type StatusChangeShape } from "../shapes";
 import { SSE_HEADERS } from "../durable-objects/BoardDO";
 
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
+const ISSUE_ACTIVITY_DEFAULT_LIMIT = 10;
+const ISSUE_ACTIVITY_MAX_LIMIT = 50;
 
 const FEED_KINDS = ["creation", "status", "container"] as const;
 type FeedKind = (typeof FEED_KINDS)[number];
@@ -46,6 +48,9 @@ interface FeedItem {
   readonly kind: FeedKind;
   readonly from: string | null;
   readonly to: string | null;
+  // Set when this row is a move to Done — velocity math counts only
+  // completions whose container was "active" (PLAN.md, estimation section).
+  readonly container_at_completion: string | null;
   readonly occurred_at_ms: number;
 }
 
@@ -59,6 +64,7 @@ const toFeedItem = (s: StatusChangeShape, issue_title: string | null): FeedItem 
     kind,
     from: kind === "container" ? s.from_container : s.from_status,
     to: kind === "container" ? s.to_container : s.to_status,
+    container_at_completion: s.container_at_completion,
     occurred_at_ms: s.occurred_at_ms,
   };
 };
@@ -66,8 +72,11 @@ const toFeedItem = (s: StatusChangeShape, issue_title: string | null): FeedItem 
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
+class NotFoundError extends Data.TaggedError("NotFoundError")<{
+  readonly reason: string;
+}> {}
 
-type FeedFailure = ValidationError | BoardOwnershipError | DbError;
+type FeedFailure = ValidationError | NotFoundError | BoardOwnershipError | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<FeedFailure>) => {
   const failure = Cause.failureOption(cause);
@@ -76,6 +85,7 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<FeedFailure>) 
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
+      case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
       case "DbError":
@@ -152,6 +162,51 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
 
       return {
         activity: changes.map((s) => toFeedItem(s, titles.get(s.issue_id) ?? null)),
+        has_more: rows.length > limit,
+      };
+    });
+
+    const exit = await runExit(c, program);
+    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
+    return c.json(exit.value);
+  });
+
+  // ── GET /issues/:id/activity — one issue's recent audit rows ────────────
+  feed.get("/issues/:id/activity", async (c) => {
+    const claims = c.get("claims");
+    const limitRaw = c.req.query("limit");
+
+    const program = Effect.gen(function* () {
+      const db = yield* Db;
+      const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [
+        c.req.param("id"),
+      ]);
+      if (issueRow === null) return yield* new NotFoundError({ reason: "issue" });
+      const issue = parseIssueRow(issueRow);
+      // Same non-leaking posture as issues.ts: someone else's issue and a
+      // missing issue are indistinguishable.
+      const boardRow = yield* db.queryFirst<Record<string, unknown>>(
+        "SELECT * FROM boardCache WHERE id = ?",
+        [issue.board_id],
+      );
+      if (boardRow === null || boardRow["pubkey"] !== callerPubkey(claims)) {
+        return yield* new NotFoundError({ reason: "issue" });
+      }
+
+      let limit = ISSUE_ACTIVITY_DEFAULT_LIMIT;
+      if (limitRaw !== undefined) {
+        const n = Number(limitRaw);
+        if (!Number.isInteger(n) || n < 1) return yield* new ValidationError({ reason: "limit" });
+        limit = Math.min(n, ISSUE_ACTIVITY_MAX_LIMIT);
+      }
+
+      const rows = yield* db.queryAll(
+        "SELECT * FROM statusChangeCache WHERE issue_id = ? ORDER BY occurred_at_ms DESC, id DESC LIMIT ?",
+        [issue.id, limit + 1],
+      );
+      const changes = rows.slice(0, limit).map(parseStatusChangeRow);
+      return {
+        activity: changes.map((s) => toFeedItem(s, issue.title)),
         has_more: rows.length > limit,
       };
     });

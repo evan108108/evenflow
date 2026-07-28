@@ -220,6 +220,16 @@ export const makeDbMock = (): DbMock => {
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
         }
+        if (sql.startsWith("SELECT * FROM statusChangeCache WHERE issue_id = ?")) {
+          const rows = statusChanges
+            .filter((r) => r["issue_id"] === params[0])
+            .sort(
+              (a, b) =>
+                num(b["occurred_at_ms"]) - num(a["occurred_at_ms"]) ||
+                str(b["id"]).localeCompare(str(a["id"])),
+            );
+          return rows.slice(0, num(params[1])).map((r) => ({ ...r })) as R[];
+        }
         if (sql.startsWith("SELECT * FROM statusChangeCache WHERE board_id = ?")) {
           let rows = statusChanges
             .filter((r) => r["board_id"] === params[0])
