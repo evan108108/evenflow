@@ -9,6 +9,8 @@ import { makeBoardsRouter } from "./routes/boards";
 import { makeCommentsRouter } from "./routes/comments";
 import { makeFeedRouter } from "./routes/feed";
 import { makeIssuesRouter } from "./routes/issues";
+import { makeMcpRouter } from "./routes/mcp";
+import { makeWellKnownRouter } from "./routes/wellknown";
 
 const app = new Hono<AppHonoEnv>();
 
@@ -86,6 +88,11 @@ app.get("/healthz", async (c) => {
 });
 
 app.route("/auth", makeAuthRouter());
+
+// Public mounts: RFC 9728 discovery + the MCP endpoint (auth happens per
+// JSON-RPC call inside the router, answering -32001 instead of HTTP 401).
+app.route("/", makeWellKnownRouter());
+app.route("/", makeMcpRouter());
 
 // Every /api/v0/* route requires a valid 4a JWT.
 app.use("/api/v0/*", requireAuth());
