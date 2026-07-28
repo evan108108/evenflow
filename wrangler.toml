@@ -1,0 +1,30 @@
+name = "evenflow"
+main = "src/index.ts"
+compatibility_date = "2026-07-28"
+compatibility_flags = ["nodejs_compat"]
+
+# Observability — send logs to Cloudflare's dashboard
+[observability]
+enabled = true
+
+# Custom domain (add via `wrangler deploy` after DNS is set)
+# routes = [
+#   { pattern = "evenflow.work", custom_domain = true },
+#   { pattern = "api.evenflow.work", custom_domain = true }
+# ]
+
+# D1 database (uncomment after `wrangler d1 create evenflow`)
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "evenflow"
+# database_id = "..."
+
+# R2 bucket (uncomment after `wrangler r2 bucket create evenflow-artifacts`)
+# [[r2_buckets]]
+# binding = "R2"
+# bucket_name = "evenflow-artifacts"
+
+# Durable Object for per-board SSE fanout (add when we build it)
+# [[durable_objects.bindings]]
+# name = "BOARD"
+# class_name = "BoardDO"
