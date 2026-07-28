@@ -160,6 +160,33 @@ Assuming ~10 CPU-ms per request:
 
 At any load a real team would put on this, we're paying single-digit dollars per month. Linear costs $10/user/month × N users. The break-even is trivially small.
 
+## Importers — critical for adoption
+
+Nobody starts fresh. Every team switching to Evenflow is switching *from* Linear, Jira, Trello, GitHub Issues, Notion databases, or a hand-rolled spreadsheet. If import is painful, they don't switch. If it's one click, they do.
+
+**Sources for MVP (in order of value):**
+1. **Linear** — GraphQL API. Take user's Linear API key, fetch projects → boards, issues → issues, comments → comments, labels → labels, states → columns. Preserve issue IDs where possible (add a `["linear", "<team-key>-<number>"]` reference tag for cross-linking).
+2. **Jira** — REST API. Similar shape. Handle Atlassian Cloud auth (API token) + Server/Data Center (basic auth). Preserve issue IDs.
+3. **CSV** — universal fallback. Column mapping UI: title, body/description, status, assignee, labels, estimate, container. Handles Trello CSV export, Jira CSV export, Notion CSV export, Airtable, spreadsheets — anything you can save as CSV.
+4. **Trello JSON** — Trello's native board-export format. Native map: cards → issues, lists → status columns, labels → labels, checklists → issue body appendix.
+5. **GitHub Issues** — REST API + user's PAT. Fetch open + closed issues, comments, labels, milestones (→ boards? or ignored?), assignees (unlinked; map manually).
+
+**Architecture — the honest split:**
+
+- **Client-side fetch, server-side commit.** The browser (or a CLI) uses the user's API key to fetch from Linear/Jira/GitHub, converts to Evenflow's event shape, then POSTs a bulk-import payload to `/api/v0/boards/:slug/import`. This keeps third-party API keys client-side (never touches Evenflow's Worker), sidesteps CORS surprises (the user's browser has whatever access), and puts the parsing/mapping logic somewhere users can inspect and modify.
+- **Server-side atomic commit.** The `/api/v0/boards/:slug/import` endpoint accepts `{ boards: [BoardCreate], issues: [IssueCreate], comments: [CommentCreate], statusChanges: [StatusChangeCreate] }` as one payload, validates it, and applies in a single D1 transaction. Duplicate detection via source-tag lookup (`["linear", "..."]` or `["jira", "..."]`); re-runs are idempotent.
+- **CSV path is different**: server-side because CSV is a file upload, not an API fetch. Server accepts multipart, parses in the Worker, applies a user-supplied column map, atomically imports.
+
+**UI shape:**
+- Board settings → Import → source picker (Linear / Jira / CSV / Trello / GitHub)
+- For API-fetch sources: paste API key, pick source project/board, preview mapped issues, confirm import.
+- For CSV: upload file, map columns via UI, preview first 20 rows, confirm.
+- **Preserve source references**: every imported issue carries the source tag (`["linear","kb-42"]`, `["jira","PROJ-100"]`, etc.) so re-runs match and update instead of duplicating.
+
+**Reference tags become link-back**: because the source tag is on the issue event, an outbound webhook can push status updates back to Linear/Jira ("this issue moved to Done in Evenflow, close it in Linear too"). Two-way sync isn't the default posture (creates ambiguity about source of truth), but the primitives are there if a team wants it.
+
+**Migration friction is why teams stay on Linear paying $10/user/month.** Nailing import is worth more than any one product feature.
+
 ## Non-goals for v1
 
 - **Sprints, cycles, roadmaps, custom workflows.** Kanban only. Sprints reserved but not shipped.
