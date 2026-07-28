@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
+import { Effect } from "effect";
+import { AuditLog, bootstrap, type WorkerEnv } from "./effects";
 
-type Bindings = Record<string, never>;
-
-const app = new Hono<{ Bindings: Bindings }>();
+const app = new Hono<{ Bindings: WorkerEnv }>();
 
 app.get("/", (c) => {
   return c.html(html`<!DOCTYPE html>
@@ -66,7 +66,17 @@ app.get("/", (c) => {
 </html>`);
 });
 
-app.get("/healthz", (c) => c.json({ ok: true, service: "evenflow", version: "0.0.1" }));
+// The Effect handler pattern every future route follows: describe the work
+// as an Effect against service Tags, then run it against the per-request
+// Live environment from `bootstrap(c.env)`.
+app.get("/healthz", async (c) => {
+  const healthz = Effect.gen(function* () {
+    const audit = yield* AuditLog;
+    yield* audit.record({ event_type: "healthz_check", details: { path: c.req.path } });
+    return { ok: true, service: "evenflow", version: "0.0.1" };
+  });
+  return c.json(await Effect.runPromise(Effect.provide(healthz, bootstrap(c.env))));
+});
 
 app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 
