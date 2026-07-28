@@ -74,24 +74,27 @@ export const BoardsList = () => {
             <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
               <For each={page()?.boards}>
                 {(board) => (
-                  <li
-                    style={{
-                      padding: "1.1rem 1.2rem",
-                      "margin-bottom": "0.8rem",
-                      background: "var(--color-paper-raised)",
-                      border: "1px solid var(--color-ink-faint)",
-                      "border-radius": "var(--radius-chamfer)",
-                      display: "flex",
-                      "justify-content": "space-between",
-                      "align-items": "baseline",
-                    }}
-                  >
-                    <span class="serif" style={{ "font-size": "1.25rem" }}>
-                      {board.title}
-                    </span>
-                    <span class="muted" style={{ "font-size": "0.85rem" }}>
-                      {new Date(board.updated_at_ms).toLocaleDateString()}
-                    </span>
+                  <li style={{ "margin-bottom": "0.8rem" }}>
+                    <a
+                      href={`/boards/${board.slug}`}
+                      style={{
+                        padding: "1.1rem 1.2rem",
+                        background: "var(--color-paper-raised)",
+                        border: "1px solid var(--color-ink-faint)",
+                        "border-radius": "var(--radius-chamfer)",
+                        display: "flex",
+                        "justify-content": "space-between",
+                        "align-items": "baseline",
+                        "text-decoration": "none",
+                      }}
+                    >
+                      <span class="serif" style={{ "font-size": "1.25rem" }}>
+                        {board.title}
+                      </span>
+                      <span class="muted" style={{ "font-size": "0.85rem" }}>
+                        {new Date(board.updated_at_ms).toLocaleDateString()}
+                      </span>
+                    </a>
                   </li>
                 )}
               </For>
