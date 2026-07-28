@@ -3,22 +3,22 @@ main = "src/index.ts"
 compatibility_date = "2026-07-28"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "evenflow.work", custom_domain = true },
+  { pattern = "api.evenflow.work", custom_domain = true }
+]
+
 # Observability — send logs to Cloudflare's dashboard
 [observability]
 enabled = true
 
-# Custom domain (add via `wrangler deploy` after DNS is set)
-# routes = [
-#   { pattern = "evenflow.work", custom_domain = true },
-#   { pattern = "api.evenflow.work", custom_domain = true }
-# ]
-
 # D1 database — cache + config surface (see migrations/README.md).
-# Run `wrangler d1 create evenflow` and paste the database_id below.
+# Lives on Evan's personal Cloudflare account (same as evenflow.work + 4a).
+# Provisioned 2026-07-28 via `wrangler d1 create evenflow`.
 [[d1_databases]]
 binding = "DB"
 database_name = "evenflow"
-database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
+database_id = "67efa394-dc02-41e3-883a-b2ee885b1190"
 
 # R2 bucket (uncomment after `wrangler r2 bucket create evenflow-artifacts`)
 # [[r2_buckets]]
