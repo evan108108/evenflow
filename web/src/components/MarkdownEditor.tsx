@@ -13,9 +13,12 @@ interface ToolbarAction {
   readonly key: string;
   readonly label: string;
   readonly title: string;
-  /** Wrap the selection (before/after) or prefix each selected line. */
+  /** Wrap the selection (before/after) or prefix each selected line
+   *  or wrap on its own lines (block-level, breaks the current line
+   *  first if the cursor isn't at line start). */
   readonly apply:
     | { readonly wrap: readonly [string, string]; readonly placeholder: string }
+    | { readonly blockWrap: readonly [string, string]; readonly placeholder: string }
     | { readonly linePrefix: string };
 }
 
@@ -23,7 +26,12 @@ const TOOLBAR: ReadonlyArray<ToolbarAction> = [
   { key: "bold", label: "B", title: "Bold", apply: { wrap: ["**", "**"], placeholder: "bold" } },
   { key: "italic", label: "I", title: "Italic", apply: { wrap: ["*", "*"], placeholder: "italic" } },
   { key: "link", label: "link", title: "Link", apply: { wrap: ["[", "](url)"], placeholder: "text" } },
-  { key: "code", label: "code", title: "Inline code", apply: { wrap: ["`", "`"], placeholder: "code" } },
+  {
+    key: "code",
+    label: "code",
+    title: "Code block (fenced) — paste multi-line code inside. Type a language after the ``` for syntax highlighting.",
+    apply: { blockWrap: ["```\n", "\n```"], placeholder: "your code here" },
+  },
   { key: "ul", label: "ul", title: "Bulleted list", apply: { linePrefix: "- " } },
   { key: "task", label: "task", title: "Task list", apply: { linePrefix: "- [ ] " } },
 ];
@@ -42,24 +50,42 @@ export const MarkdownEditor = (props: {
     const end = el.selectionEnd;
     const value = props.value;
     let next: string;
-    let cursor: number;
+    let selStart: number;
+    let selEnd: number;
     if ("wrap" in action.apply) {
       const [before, after] = action.apply.wrap;
-      const selected = value.slice(start, end) || action.apply.placeholder;
+      const hadSelection = end > start;
+      const selected = hadSelection ? value.slice(start, end) : action.apply.placeholder;
       next = value.slice(0, start) + before + selected + after + value.slice(end);
-      cursor = start + before.length + selected.length;
+      // No initial selection? Highlight the placeholder so a keystroke replaces it.
+      selStart = hadSelection ? start + before.length + selected.length : start + before.length;
+      selEnd = start + before.length + selected.length;
+    } else if ("blockWrap" in action.apply) {
+      // Block-level fence: break the current line first if the cursor
+      // isn't at line start, then wrap on its own lines with the fence.
+      const [before, after] = action.apply.blockWrap;
+      const hadSelection = end > start;
+      const atLineStart = start === 0 || value[start - 1] === "\n";
+      const leadingBreak = atLineStart ? "" : "\n";
+      const selected = hadSelection ? value.slice(start, end) : action.apply.placeholder;
+      const insert = leadingBreak + before + selected + after + "\n";
+      next = value.slice(0, start) + insert + value.slice(end);
+      // Select the code body so paste/type immediately replaces the placeholder.
+      selStart = start + leadingBreak.length + before.length;
+      selEnd = selStart + selected.length;
     } else {
       const prefix = action.apply.linePrefix;
       const lineStart = value.lastIndexOf("\n", start - 1) + 1;
       const block = value.slice(lineStart, end);
       const prefixed = block === "" ? prefix : block.split("\n").map((l) => prefix + l).join("\n");
       next = value.slice(0, lineStart) + prefixed + value.slice(end);
-      cursor = lineStart + prefixed.length;
+      selStart = lineStart + prefixed.length;
+      selEnd = selStart;
     }
     props.onInput(next);
     queueMicrotask(() => {
       el.focus();
-      el.setSelectionRange(cursor, cursor);
+      el.setSelectionRange(selStart, selEnd);
     });
   };
 
