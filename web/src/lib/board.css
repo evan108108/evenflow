@@ -687,3 +687,29 @@
   gap: 0.35rem;
   flex: 1;
 }
+
+/* ── profile picture controls (Phase 15) ── */
+.seed-banner {
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px dashed var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  display: inline-block;
+}
+
+.picture-url-advanced {
+  margin-top: 0.35rem;
+}
+
+.picture-url-advanced summary {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.picture-url-advanced input {
+  margin-top: 0.4rem;
+  width: 100%;
+}
