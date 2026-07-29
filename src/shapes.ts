@@ -7,13 +7,21 @@
 // which should never happen at runtime, so they throw their shape error
 // (surfacing as a 500 defect) rather than returning a partial object.
 
+import {
+  COLUMN_CATEGORIES,
+  ISSUE_TYPES,
+  inferCategory,
+  type Column,
+  type IssueType,
+} from "./columns";
+
 export interface BoardShape {
   readonly id: string;
   readonly pubkey: string;
   readonly slug: string;
   readonly title: string;
   readonly description: string | null;
-  readonly columns: ReadonlyArray<string>;
+  readonly columns: ReadonlyArray<Column>;
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
@@ -81,7 +89,12 @@ export interface IssueShape {
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
+  readonly type: IssueType;
   readonly status: string;
+  // Stable column reference (Column.id on the board). status mirrors the
+  // column's display name; column_id is the identity. Null only for rows
+  // awaiting the 0005 backfill.
+  readonly column_id: string | null;
   readonly container: "icebox" | "backlog" | "active";
   readonly assignee_pubkey: string | null;
   readonly priority: number | null;
@@ -230,10 +243,37 @@ export const parseBoardRow = (row: unknown): BoardShape => {
   const description = r["description"] === null ? null : h.json(r["description"], "description");
   if (description !== null && typeof description !== "string") raise("description not a string");
 
-  const columns = h.json(r["columns"], "columns");
-  if (!Array.isArray(columns) || columns.some((c) => typeof c !== "string")) {
-    raise("columns not a string array");
-  }
+  const columnsRaw = h.json(r["columns"], "columns");
+  if (!Array.isArray(columnsRaw)) raise("columns not an array");
+  // Legacy string[] rows (pre-0005-backfill window) coerce in place with
+  // deterministic positional ids — stable across reads of the same row, and
+  // replaced by real UUIDs the moment the backfill touches the row.
+  const columns: Column[] = (columnsRaw as unknown[]).every((c) => typeof c === "string")
+    ? (columnsRaw as string[]).map((name, order) => ({
+        id: `legacy-${order}`,
+        name,
+        order,
+        enabled: true,
+        category: inferCategory(name),
+      }))
+    : (columnsRaw as unknown[]).map((c) => {
+        if (typeof c !== "object" || c === null) raise("columns entry malformed");
+        const col = c as Record<string, unknown>;
+        if (typeof col["id"] !== "string") raise("columns entry id");
+        if (typeof col["name"] !== "string") raise("columns entry name");
+        if (typeof col["order"] !== "number") raise("columns entry order");
+        if (typeof col["enabled"] !== "boolean") raise("columns entry enabled");
+        if (!(COLUMN_CATEGORIES as ReadonlyArray<string>).includes(col["category"] as string)) {
+          raise("columns entry category");
+        }
+        return {
+          id: col["id"] as string,
+          name: col["name"] as string,
+          order: col["order"] as number,
+          enabled: col["enabled"] as boolean,
+          category: col["category"] as Column["category"],
+        };
+      });
 
   const labels = h.json(r["labels"], "labels");
   if (!Array.isArray(labels)) raise("labels not an array");
@@ -248,7 +288,7 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     slug: h.string(r["slug"], "slug"),
     title: h.string(r["title"], "title"),
     description: description as string | null,
-    columns: columns as ReadonlyArray<string>,
+    columns,
     labels: labels as ReadonlyArray<unknown>,
     member_policy: h.string(r["member_policy"], "member_policy"),
     is_encrypted: h.number(r["is_encrypted"], "is_encrypted") !== 0,
@@ -273,6 +313,10 @@ export const parseIssueRow = (row: unknown): IssueShape => {
 
   const container = h.string(r["container"], "container");
   if (!(CONTAINERS as ReadonlyArray<string>).includes(container)) raise("container not a container");
+
+  // Pre-0005 rows lack the column entirely; the migration default is 'task'.
+  const type = h.string(r["type"] ?? "task", "type");
+  if (!(ISSUE_TYPES as ReadonlyArray<string>).includes(type)) raise("type not an issue type");
 
   const labels = h.json(r["labels"], "labels");
   if (!Array.isArray(labels) || labels.some((l) => typeof l !== "string")) {
@@ -300,7 +344,9 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     board_id: h.string(r["board_id"], "board_id"),
     title: h.string(r["title"], "title"),
     body: h.stringOrNull(r["body"], "body"),
+    type: type as IssueType,
     status: h.string(r["status"], "status"),
+    column_id: h.stringOrNull(r["column_id"] ?? null, "column_id"),
     container: container as Container,
     assignee_pubkey: h.stringOrNull(r["assignee_pubkey"], "assignee_pubkey"),
     priority: h.numberOrNull(r["priority"], "priority"),

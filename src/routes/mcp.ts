@@ -106,6 +106,22 @@ const PAGING = {
 
 const CONTAINER = { type: "string", enum: ["icebox", "backlog", "active"] };
 
+const ISSUE_TYPE = {
+  type: "string",
+  enum: ["task", "feature", "bug", "story", "improvement", "chore"],
+  description: "Issue type (defaults to 'task')",
+};
+
+// Structured Column[] since phase 17; a bare string[] of names is still
+// accepted and coerced server-side with inferred categories.
+const COLUMNS = {
+  type: "array",
+  minItems: 1,
+  items: { anyOf: [{ type: "string" }, { type: "object" }] },
+  description:
+    "Column[] of {id, name, order, enabled, category: todo|in_progress|in_review|done|blocked}, or a legacy string[] of names",
+};
+
 // Every issue-scoped tool takes either identifier form; the REST layer
 // resolves both (src/slug.ts asShortId).
 const ISSUE_REF = "Issue UUID or short id like FLOW-42 (case-insensitive)";
@@ -126,13 +142,13 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_board_create",
     description:
-      "Create a kanban board. Columns default to Backlog/Todo/In Progress/In Review/Done; member_policy defaults to 'invite'.",
+      "Create a kanban board. Columns default to Todo/In Progress/In Review/Done; member_policy defaults to 'invite'.",
     inputSchema: schema(
       {
         slug: { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}$" },
         title: { type: "string" },
         description: { type: ["string", "null"] },
-        columns: { type: "array", items: { type: "string" }, minItems: 1 },
+        columns: COLUMNS,
         labels: { type: "array" },
         member_policy: { type: "string", enum: ["open", "invite"] },
       },
@@ -152,7 +168,12 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
         slug: { type: "string", description: "Which board to update (slugs are immutable)" },
         title: { type: "string" },
         description: { type: ["string", "null"] },
-        columns: { type: "array", items: { type: "string" }, minItems: 1 },
+        columns: COLUMNS,
+        column_move_map: {
+          type: "object",
+          description:
+            "When a columns update deletes a column that still has issues: {deleted_column_id: target_column_id} — target must be a surviving enabled column",
+        },
         labels: { type: "array" },
         member_policy: { type: "string", enum: ["open", "invite"] },
       },
@@ -161,7 +182,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     toRequest: (a) => ({
       method: "PATCH",
       path: `/api/v0/boards/${encodeURIComponent(str(a, "slug"))}`,
-      body: pick(a, ["title", "description", "columns", "labels", "member_policy"]),
+      body: pick(a, ["title", "description", "columns", "column_move_map", "labels", "member_policy"]),
     }),
   },
   {
@@ -206,6 +227,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
         board_slug: { type: "string" },
         title: { type: "string" },
         body: { type: ["string", "null"], description: "Markdown body" },
+        type: ISSUE_TYPE,
         status: { type: "string" },
         container: CONTAINER,
         assignee_pubkey: { type: ["string", "null"] },
@@ -218,18 +240,19 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/boards/${encodeURIComponent(str(a, "board_slug"))}/issues`,
-      body: pick(a, ["title", "body", "status", "container", "assignee_pubkey", "priority", "estimate", "labels"]),
+      body: pick(a, ["title", "body", "type", "status", "container", "assignee_pubkey", "priority", "estimate", "labels"]),
     }),
   },
   {
     name: "kanban_issue_update",
     description:
-      "Partially update an issue (title, body, status, assignee_pubkey, priority, estimate, labels). Container moves use the dedicated tools.",
+      "Partially update an issue (title, body, type, status, assignee_pubkey, priority, estimate, labels). Container moves use the dedicated tools.",
     inputSchema: schema(
       {
         id: { type: "string", description: ISSUE_REF },
         title: { type: "string" },
         body: { type: ["string", "null"] },
+        type: ISSUE_TYPE,
         status: { type: "string", description: "Must be one of the board's columns" },
         assignee_pubkey: { type: ["string", "null"] },
         priority: { type: ["integer", "null"] },
@@ -241,17 +264,25 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     toRequest: (a) => ({
       method: "PATCH",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}`,
-      body: pick(a, ["title", "body", "status", "assignee_pubkey", "priority", "estimate", "labels"]),
+      body: pick(a, ["title", "body", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"]),
     }),
   },
   {
     name: "kanban_issue_transition",
-    description: "Move an issue to another status column (the drag-drop verb).",
-    inputSchema: schema({ id: { type: "string", description: ISSUE_REF }, to_status: { type: "string" } }, ["id", "to_status"]),
+    description:
+      "Move an issue to another status column (the drag-drop verb). Address the target by column_id (stable across renames, preferred) or by name via `to`; column_id wins when both are given.",
+    inputSchema: schema(
+      {
+        id: { type: "string", description: ISSUE_REF },
+        column_id: { type: "string", description: "Target Column.id on the issue's board" },
+        to: { type: "string", description: "Target column by exact name (legacy)" },
+      },
+      ["id"],
+    ),
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/transition`,
-      body: { to_status: str(a, "to_status") },
+      body: pick(a, ["column_id", "to", "to_status"]),
     }),
   },
   {
