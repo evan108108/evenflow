@@ -14,7 +14,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
+import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
+import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -137,7 +138,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, CommentsFailure, Db | AuditLog | BoardEmitter>,
+    program: Effect.Effect<unknown, CommentsFailure, Db | AuditLog | BoardEmitter | Audience>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -232,7 +233,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id, comment: comment.id },
       });
-      yield* emitBoardEvent(issue.board_id, {
+      yield* emitSecureBoardEvent(issue.board_id, {
         kind: "comment.created",
         board_id: issue.board_id,
         issue_id: issue.id,
@@ -343,7 +344,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       if (issueRow !== null) {
         const issue = parseIssueRow(issueRow);
         const now = yield* Clock.currentTimeMillis;
-        yield* emitBoardEvent(issue.board_id, {
+        yield* emitSecureBoardEvent(issue.board_id, {
           kind: "comment.deleted",
           board_id: issue.board_id,
           issue_id: issue.id,

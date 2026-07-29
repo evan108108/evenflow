@@ -18,7 +18,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap } from "../effects";
+import { AuditLog, Audience, Db, DbError, bootstrap } from "../effects";
+import { AudienceKeyError, initializeBoardAudience } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -255,6 +256,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         labels,
         member_policy,
         is_encrypted: false,
+        audience_epoch: 1,
+        audience_pubkey: null,
         issue_prefix,
         next_issue_number: 1,
         org_id: org.id,
@@ -404,7 +407,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
-      for (const immutable of ["slug", "pubkey", "id", "is_encrypted", "org_id"]) {
+      for (const immutable of ["slug", "pubkey", "id", "org_id", "audience_epoch", "audience_pubkey"]) {
         if (body[immutable] !== undefined) {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
@@ -418,6 +421,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         "issue_prefix",
         "visibility",
         "default_sprint_days",
+        "is_encrypted",
       ].some((k) => body[k] !== undefined);
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
@@ -462,6 +466,35 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["default_sprint_days"] === undefined
           ? current.default_sprint_days
           : yield* validateSprintDays(body["default_sprint_days"]);
+
+      // One-way privacy flip (phase 16.5). false→true mints the board's 4a
+      // audience below; true→false is a v1 409 (unwrap-and-clear is future
+      // work); an encrypted board can never be publicly visible.
+      let flipToPrivate = false;
+      if (body["is_encrypted"] !== undefined) {
+        if (typeof body["is_encrypted"] !== "boolean") {
+          return yield* new ValidationError({ reason: "is_encrypted" });
+        }
+        if (body["is_encrypted"] === false && current.is_encrypted) {
+          return yield* new ConflictError({ reason: "unsupported-private-to-public" });
+        }
+        flipToPrivate = body["is_encrypted"] && !current.is_encrypted;
+      }
+      if ((current.is_encrypted || flipToPrivate) && visibility === "public") {
+        return yield* new ConflictError({ reason: "encrypted-board-must-stay-private" });
+      }
+      if (flipToPrivate) {
+        // The flip itself is owner-only (the rest of the PATCH stays admin).
+        yield* resolveBoardScope(
+          { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
+          callerPubkey(claims),
+          "owner",
+        );
+        const audienceSvc = yield* Audience;
+        if (audienceSvc.serverKeys() === null) {
+          return yield* new ConflictError({ reason: "audience-not-configured" });
+        }
+      }
 
       const db = yield* Db;
 
@@ -535,6 +568,24 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           ...(visibility === current.visibility ? {} : { visibility }),
         },
       });
+      let audienceState = {
+        audience_epoch: current.audience_epoch,
+        audience_pubkey: current.audience_pubkey,
+      };
+      if (flipToPrivate) {
+        audienceState = yield* initializeBoardAudience({ ...current, visibility }).pipe(
+          Effect.mapError((e) =>
+            e instanceof AudienceKeyError
+              ? new ConflictError({ reason: "audience-init-failed" })
+              : e,
+          ),
+        );
+        yield* audit.record({
+          event_type: "board_flipped_private",
+          actor: claims.login,
+          details: { slug: current.slug },
+        });
+      }
       const board: BoardShape = {
         ...current,
         title,
@@ -545,6 +596,9 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         issue_prefix,
         visibility,
         default_sprint_days,
+        is_encrypted: current.is_encrypted || flipToPrivate,
+        audience_epoch: audienceState.audience_epoch,
+        audience_pubkey: audienceState.audience_pubkey,
         updated_at_ms: now,
       };
       return { board };

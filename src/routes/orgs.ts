@@ -37,8 +37,50 @@ import {
   roleAtLeast,
 } from "../roles";
 import { ConflictError, NotFoundError, ValidationError, errorResponse, readJsonBody } from "./errors";
+import { AudienceKeyError, grantMemberOnJoin, rotateBoardAudience } from "../audiences";
+import type { BoardShape } from "../shapes";
+
 
 const ORG_NAME_MAX = 128;
+
+// ── phase 16.5: private-board key hooks ───────────────────────────────────
+
+/** Every encrypted board owned by an org. */
+const privateBoardsOfOrg = (orgId: string) =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const rows = yield* db.queryAll(
+      "SELECT * FROM boardCache WHERE org_id = ? AND is_encrypted = 1",
+      [orgId],
+    );
+    return rows.map(parseBoardRow);
+  });
+
+/** Grant issuance on join is best-effort: a member without a grant can
+ *  always request-regrant, so key trouble must not fail the add. */
+const grantOnJoinBestEffort = (board: BoardShape, memberPubkey: string) =>
+  grantMemberOnJoin(board, memberPubkey).pipe(
+    Effect.catchAll((e) =>
+      Effect.sync(() => {
+        console.log(
+          JSON.stringify({
+            warn: "member-grant-deferred",
+            board_id: board.id,
+            reason: e instanceof AudienceKeyError ? e.reason : "db",
+          }),
+        );
+      }),
+    ),
+  );
+
+/** Rotation on removal is NOT best-effort — honest crypto means the epoch
+ *  bump must land before the roster shrinks; failures abort the removal. */
+const rotateOnRemoval = (board: BoardShape, removedPubkey: string) =>
+  rotateBoardAudience(board, removedPubkey).pipe(
+    Effect.mapError((e) =>
+      e instanceof AudienceKeyError ? new ConflictError({ reason: `audience-${e.reason}` }) : e,
+    ),
+  );
 const ORG_BIO_MAX = 4000;
 const ORG_AVATAR_URL_MAX = 512;
 
@@ -387,6 +429,11 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         token,
         grant: { scope: "org", target: org.slug },
       });
+      // Org membership projects onto every board — grant the joiner into
+      // each of the org's private boards at their current epochs.
+      for (const board of yield* privateBoardsOfOrg(org.id)) {
+        yield* grantOnJoinBestEffort(board, memberPubkey);
+      }
       const audit = yield* AuditLog;
       yield* audit.record({
         event_type: "org_member_added",
@@ -471,6 +518,17 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         );
         if ((owners?.n ?? 0) <= 1) return yield* new ConflictError({ reason: "last-owner" });
       }
+      // An org kick strips projected access to every org board. For each
+      // private board where the target holds NO surviving explicit grant,
+      // rotate before the roster shrinks (explicit boardMemberCache rows
+      // deliberately survive an org kick — those boards keep their epoch).
+      for (const board of yield* privateBoardsOfOrg(org.id)) {
+        const explicit = yield* db.queryFirst(
+          "SELECT role FROM boardMemberCache WHERE board_id = ? AND pubkey = ?",
+          [board.id, targetPubkey],
+        );
+        if (explicit === null) yield* rotateOnRemoval(board, targetPubkey);
+      }
       yield* removeMembership({
         table: "orgMemberCache",
         scopeId: org.id,
@@ -535,6 +593,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         token,
         grant: { scope: "board", target: `${orgSlug}/${board.slug}` },
       });
+      if (board.is_encrypted) yield* grantOnJoinBestEffort(board, memberPubkey);
       return { added: true, pubkey: memberPubkey, role };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -588,10 +647,25 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "admin",
       );
+      const targetPubkey = c.req.param("pubkey");
+      // Rotate FIRST: if the epoch bump fails, the removal fails with it
+      // and stays retryable — a removed member must never keep a live key.
+      if (board.is_encrypted) {
+        const existing = yield* Db.pipe(
+          Effect.flatMap((db) =>
+            db.queryFirst("SELECT role FROM boardMemberCache WHERE board_id = ? AND pubkey = ?", [
+              board.id,
+              targetPubkey,
+            ]),
+          ),
+        );
+        if (existing === null) return yield* new NotFoundError({ reason: "member" });
+        yield* rotateOnRemoval(board, targetPubkey);
+      }
       const result = yield* removeMembership({
         table: "boardMemberCache",
         scopeId: board.id,
-        pubkey: c.req.param("pubkey"),
+        pubkey: targetPubkey,
         token,
       });
       if (!result.removed) return yield* new NotFoundError({ reason: "member" });

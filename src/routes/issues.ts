@@ -15,7 +15,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
+import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
+import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -316,7 +317,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, IssuesFailure, Db | AuditLog | BoardEmitter>,
+    program: Effect.Effect<unknown, IssuesFailure, Db | AuditLog | BoardEmitter | Audience>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -458,7 +459,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { board: board.slug, issue: id },
       });
-      yield* emitBoardEvent(board.id, {
+      yield* emitSecureBoardEvent(board.id, {
         kind: "issue.created",
         board_id: board.id,
         issue_id: id,
@@ -692,7 +693,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         updated_at_ms: now,
         completed_at_ms: completed,
       };
-      yield* emitBoardEvent(current.board_id, {
+      yield* emitSecureBoardEvent(current.board_id, {
         kind: "issue.updated",
         board_id: current.board_id,
         issue_id: current.id,
@@ -719,7 +720,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         details: { issue: issue.id },
       });
       const now = yield* Clock.currentTimeMillis;
-      yield* emitBoardEvent(issue.board_id, {
+      yield* emitSecureBoardEvent(issue.board_id, {
         kind: "issue.deleted",
         board_id: issue.board_id,
         issue_id: issue.id,
@@ -760,7 +761,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         details: { issue: issue.id, to_status: to.name },
       });
       if (updated.status !== issue.status || updated.column_id !== issue.column_id) {
-        yield* emitBoardEvent(issue.board_id, {
+        yield* emitSecureBoardEvent(issue.board_id, {
           kind: "issue.transitioned",
           board_id: issue.board_id,
           issue_id: issue.id,
@@ -896,7 +897,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id },
       });
-      yield* emitBoardEvent(issue.board_id, {
+      yield* emitSecureBoardEvent(issue.board_id, {
         kind: "issue.updated",
         board_id: issue.board_id,
         issue_id: issue.id,
@@ -923,7 +924,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           details: { issue: issue.id },
         });
         if (updated.container !== issue.container) {
-          yield* emitBoardEvent(issue.board_id, {
+          yield* emitSecureBoardEvent(issue.board_id, {
             kind: "issue.container_changed",
             board_id: issue.board_id,
             issue_id: issue.id,

@@ -73,3 +73,13 @@ export {
   type S3Target,
   type S3TestHandle,
 } from "./S3";
+export {
+  Audience,
+  AudienceError,
+  AudienceLive,
+  AUDIENCE_TEST_SECRET,
+  bestEffortAudience,
+  makeAudienceTest,
+  type AudienceService,
+  type AudienceTestHandle,
+} from "./Audience";
