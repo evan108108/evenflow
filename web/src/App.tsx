@@ -1,6 +1,6 @@
 // Router + layout shell. Pages own their content; this owns the routes.
-// /auth/callback is where 4a's AS returns with the JWT; everything unknown
-// drifts to the 404.
+// /signin is where the Worker's /auth/callback lands with #jwt= after the
+// code exchange; everything unknown drifts to the 404.
 
 import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
@@ -19,7 +19,7 @@ const Drifting = () => (
 export const App = () => (
   <Router>
     <Route path="/" component={Landing} />
-    <Route path="/auth/callback" component={SignIn} />
+    <Route path="/signin" component={SignIn} />
     <Route path="/boards" component={BoardsList} />
     <Route path="/boards/:slug" component={BoardPage} />
     <Route path="/boards/:slug/backlog" component={BoardPage} />

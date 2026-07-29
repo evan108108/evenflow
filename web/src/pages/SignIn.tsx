@@ -1,6 +1,7 @@
-// SignIn — the /auth/callback pit stop. 4a's AS returns here with the JWT
-// in the query (?jwt= / ?token=) or the fragment (#jwt=); we persist it via
-// AuthManager and move on to /boards. No UI beyond a transitional line.
+// SignIn — the /signin pit stop. The Worker's /auth/callback exchanges the
+// auth code with 4a and redirects here with the JWT in the fragment (#jwt=;
+// query ?jwt= / ?token= also accepted); we persist it via AuthManager and
+// move on to /boards. No UI beyond a transitional line.
 
 import { useNavigate } from "@solidjs/router";
 import { createSignal, onMount } from "solid-js";
