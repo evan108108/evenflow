@@ -21,16 +21,33 @@
 }
 
 .topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-family: var(--font-serif);
   font-size: 1.4rem;
   letter-spacing: -0.01em;
   color: var(--color-ink);
   text-decoration: none;
   line-height: 1;
+  /* Pin the wordmark to a display cut of the opsz axis — at 1.4rem the
+     auto optical size would pick the softer text cut. (Bodoni Moda has no
+     ss01 set; opsz IS its display variant.) */
+  font-variation-settings: "opsz" 48;
 }
 .topbar-brand:hover {
   color: var(--color-ink);
   opacity: 0.75;
+}
+
+/* The one-line butterfly mark, sized to sit beside the wordmark. */
+.topbar-mark {
+  display: inline-flex;
+}
+.topbar-mark svg {
+  width: 24px;
+  height: 18px;
+  display: block;
 }
 
 .topbar-crumbs {
@@ -1741,6 +1758,7 @@
 
 .issue-card.reorder-after {
   box-shadow: 0 3px 0 0 var(--color-ink);
+}
 
 /* ── phase 19: docs page + API keys ── */
 .docs-page {
@@ -1929,4 +1947,125 @@
   border: 1px solid var(--color-ink-faint);
   border-radius: 6px;
   padding: 0.55rem 0.7rem;
+}
+
+/* ── phase 20: sprints ── */
+.sprints-block {
+  margin-bottom: 1.4rem;
+}
+
+.sprint-section {
+  border: 1.5px dashed var(--color-ink-faint);
+  background: rgba(23, 35, 59, 0.045);
+  margin-bottom: 0.9rem;
+}
+
+.sprint-section.started {
+  background: transparent;
+}
+
+.sprint-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+
+.sprint-header .spacer {
+  flex: 1;
+}
+
+.sprint-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 0 0 0.15rem;
+  min-width: 0;
+  max-width: 14rem;
+}
+
+input.sprint-name:hover,
+input.sprint-name:focus {
+  border-bottom-color: var(--color-ink-faint);
+}
+
+.sprint-name.as-button {
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+.sprint-caret {
+  font-size: 0.75rem;
+  color: var(--color-ink-soft);
+  margin-left: 0.4rem;
+}
+
+.sprint-goal {
+  display: block;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--color-ink-soft);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 0.1rem 0 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.sprint-goal:hover,
+.sprint-goal:focus {
+  border-bottom-color: var(--color-ink-faint);
+}
+
+.sprint-goal-line {
+  font-size: 0.85rem;
+  font-style: italic;
+  margin: 0.1rem 0 0.5rem;
+}
+
+.btn-small {
+  padding: 0.3rem 0.9rem;
+  font-size: 0.8rem;
+}
+
+.sprint-new {
+  margin-left: 0.9rem;
+  vertical-align: middle;
+}
+
+/* Tabs-row badge for the running sprint. */
+.sprint-badge {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  padding: 0.35rem 1rem;
+  border: 1.5px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.sprint-badge:hover {
+  border-color: rgba(23, 35, 59, 0.4);
+  color: var(--color-ink);
+}
+
+.sprint-badge.on {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  background: rgba(23, 35, 59, 0.06);
+}
+
+/* Spotlighted cards while the badge is on — subtle, not shouty. */
+.issue-card.sprint-spotlight {
+  border-color: rgba(23, 35, 59, 0.55);
+  box-shadow: 0 0 0 1px rgba(23, 35, 59, 0.35);
 }

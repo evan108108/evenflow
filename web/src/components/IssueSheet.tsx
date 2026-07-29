@@ -310,7 +310,7 @@ export const IssueSheet = (props: {
                 when={props.issue.body !== null}
                 fallback={
                   <span class="muted">
-                    {readOnly() ? "No body." : "No body. Double-click to write one."}
+                    {readOnly() ? "Nothing written yet." : "Nothing written yet. Double-click to begin."}
                   </span>
                 }
               >

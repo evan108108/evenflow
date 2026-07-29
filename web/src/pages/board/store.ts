@@ -16,6 +16,7 @@ import {
   type ContainerMove,
   type FeedItem,
   type Issue,
+  type Sprint,
 } from "../../lib/types";
 import type { Column } from "../../lib/columns";
 import type { Attachment } from "../../lib/attachments";
@@ -83,6 +84,7 @@ export const createBoardStore = (
 ) => {
   const [board, setBoard] = createSignal<Board | null>(null);
   const [issues, setIssues] = createSignal<Issue[]>([]);
+  const [sprints, setSprints] = createSignal<Sprint[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [lastError, setLastError] = createSignal<string | null>(null);
   const [statusFeed, setStatusFeed] = createSignal<FeedItem[]>([]);
@@ -109,12 +111,14 @@ export const createBoardStore = (
   const load = async () => {
     setLoading(true);
     try {
-      const [b, list] = await Promise.all([
+      const [b, list, sp] = await Promise.all([
         api((c) => c.get<{ board: Board }>(apiBase)),
         api((c) => c.get<{ issues: Issue[] }>(`${apiBase}/issues?limit=100`)),
+        api((c) => c.get<{ sprints: Sprint[] }>(`${apiBase}/sprints`)),
       ]);
       setBoard(b.board);
       setIssues(list.issues);
+      setSprints(sp.sprints);
       setLastError(null);
     } catch (e) {
       setLastError(errorText(e));
@@ -187,6 +191,81 @@ export const createBoardStore = (
     });
     void refetchIssues();
   };
+
+  // ── sprints (phase 20) ──────────────────────────────────────────────────
+
+  const refetchSprints = async () => {
+    try {
+      const res = await api((c) => c.get<{ sprints: Sprint[] }>(`${apiBase}/sprints`));
+      setSprints(res.sprints);
+    } catch {
+      // Quiet refresh — same posture as refetchIssues.
+    }
+  };
+
+  const replaceSprint = (updated: Sprint) =>
+    setSprints((list) => list.map((s) => (s.id === updated.id ? updated : s)));
+
+  const createSprint = async (name: string): Promise<Sprint | null> => {
+    try {
+      const res = await api((c) => c.post<{ sprint: Sprint }>(`${apiBase}/sprints`, { name }));
+      setSprints((list) => [...list, res.sprint]);
+      setLastError(null);
+      return res.sprint;
+    } catch (e) {
+      setLastError(errorText(e));
+      return null;
+    }
+  };
+
+  const patchSprint = async (id: string, patch: { name?: string; goal?: string | null }) => {
+    try {
+      const res = await api((c) => c.patch<{ sprint: Sprint }>(`${apiBase}/sprints/${id}`, patch));
+      replaceSprint(res.sprint);
+      setLastError(null);
+    } catch (e) {
+      setLastError(errorText(e));
+    }
+  };
+
+  /** Kickoff: the server moves the sprint's backlog issues to active. */
+  const startSprint = async (id: string) => {
+    try {
+      const res = await api((c) => c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/start`, {}));
+      replaceSprint(res.sprint);
+      setLastError(null);
+    } catch (e) {
+      setLastError(errorText(e));
+    }
+    void refetchIssues();
+  };
+
+  const completeSprint = async (id: string) => {
+    try {
+      const res = await api((c) =>
+        c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/complete`, {}),
+      );
+      replaceSprint(res.sprint);
+      setLastError(null);
+    } catch (e) {
+      setLastError(errorText(e));
+    }
+  };
+
+  const setSprintMembership = (issue: Issue, sprintId: string | null) => {
+    if ((issue.sprint_id ?? null) === sprintId) return Promise.resolve();
+    const verb = sprintId === null ? "remove-issue" : "add-issue";
+    const target = sprintId ?? issue.sprint_id;
+    return optimistic(issue.id, { sprint_id: sprintId }, async () => {
+      const res = await api((c) =>
+        c.post<{ issue: Issue }>(`${apiBase}/sprints/${target}/${verb}`, { issue_id: issue.id }),
+      );
+      return res.issue;
+    });
+  };
+
+  const addIssueToSprint = (issue: Issue, sprintId: string) => setSprintMembership(issue, sprintId);
+  const removeIssueFromSprint = (issue: Issue) => setSprintMembership(issue, null);
 
   const moveContainer = (issue: Issue, move: ContainerMove) => {
     if (CONTAINER_OF_MOVE[move] === issue.container) return Promise.resolve();
@@ -296,12 +375,20 @@ export const createBoardStore = (
     apiBase,
     board,
     issues,
+    sprints,
     loading,
     lastError,
     statusFeed,
     load,
     refetchIssues,
     refetchStatusFeed,
+    refetchSprints,
+    createSprint,
+    patchSprint,
+    startSprint,
+    completeSprint,
+    addIssueToSprint,
+    removeIssueFromSprint,
     transition,
     moveContainer,
     reorderIssue,

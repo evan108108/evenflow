@@ -57,6 +57,8 @@ export const IssueCard = (props: {
   zone?: string;
   /** Insertion-slot indicator while a drag hovers this card. */
   indicator?: "before" | "after" | null;
+  /** Sprint spotlight (phase 20) — subtle ink border while the badge is on. */
+  highlight?: boolean;
 }) => {
   // Compact mode skips the tall portrait cover. If the issue still HAS a cover,
   // we render it as a small square thumbnail on the left instead (list-view
@@ -86,6 +88,7 @@ export const IssueCard = (props: {
         "has-thumb": thumb() !== null,
         "reorder-before": props.indicator === "before",
         "reorder-after": props.indicator === "after",
+        "sprint-spotlight": props.highlight === true,
       }}
       data-issue-id={props.issue.id}
       data-dropzone={props.zone}

@@ -112,9 +112,24 @@ export interface IssueShape {
   // Intra-column fractional sort key (phase 18d). NULL = legacy row —
   // sorts after every positioned row, by updated_at_ms DESC.
   readonly position: number | null;
+  // Owning sprint (sprintCache.id), phase 20. Soft link — null when the
+  // issue is not in a sprint (or the row predates migration 0010).
+  readonly sprint_id: string | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
+}
+
+/** Mirrors sprintCache (phase 20) — a startable batch of backlog issues. */
+export interface SprintShape {
+  readonly id: string;
+  readonly board_id: string;
+  readonly name: string;
+  readonly goal: string | null;
+  readonly status: SprintStatus;
+  readonly started_at_ms: number | null;
+  readonly completed_at_ms: number | null;
+  readonly created_at_ms: number;
 }
 
 /** Mirrors commentCache (soft-FK projection of kind:30552 fa:KanbanComment). */
@@ -176,6 +191,14 @@ export class StatusChangeShapeError extends Error {
   }
 }
 
+export class SprintShapeError extends Error {
+  readonly _tag = "SprintShapeError";
+  constructor(readonly reason: string) {
+    super(`malformed sprintCache row: ${reason}`);
+    this.name = "SprintShapeError";
+  }
+}
+
 export class OrgShapeError extends Error {
   readonly _tag = "OrgShapeError";
   constructor(readonly reason: string) {
@@ -202,6 +225,9 @@ export class MemberShapeError extends Error {
 
 export const CONTAINERS = ["icebox", "backlog", "active"] as const;
 export type Container = (typeof CONTAINERS)[number];
+
+export const SPRINT_STATUSES = ["planning", "active", "completed"] as const;
+export type SprintStatus = (typeof SPRINT_STATUSES)[number];
 
 // ── shared field helpers, parameterized by the shape's error class ────────
 
@@ -371,9 +397,37 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     labels: labels as ReadonlyArray<string>,
     github_links: github_links as IssueShape["github_links"],
     position: h.numberOrNull(r["position"] ?? null, "position"),
+    sprint_id: h.stringOrNull(r["sprint_id"] ?? null, "sprint_id"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"], "completed_at_ms"),
+  };
+};
+
+// ── sprintCache ───────────────────────────────────────────────────────────
+
+/** Convert a raw D1 sprintCache row into the canonical wire shape. */
+export const parseSprintRow = (row: unknown): SprintShape => {
+  const raise: Raise = (reason) => {
+    throw new SprintShapeError(reason);
+  };
+  const h = makeHelpers(raise);
+  const r = h.object(row);
+
+  const status = h.string(r["status"], "status");
+  if (!(SPRINT_STATUSES as ReadonlyArray<string>).includes(status)) {
+    raise("status not a sprint status");
+  }
+
+  return {
+    id: h.string(r["id"], "id"),
+    board_id: h.string(r["board_id"], "board_id"),
+    name: h.string(r["name"], "name"),
+    goal: h.stringOrNull(r["goal"] ?? null, "goal"),
+    status: status as SprintStatus,
+    started_at_ms: h.numberOrNull(r["started_at_ms"] ?? null, "started_at_ms"),
+    completed_at_ms: h.numberOrNull(r["completed_at_ms"] ?? null, "completed_at_ms"),
+    created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
   };
 };
 

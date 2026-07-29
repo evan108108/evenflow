@@ -6,6 +6,7 @@
 import { useNavigate } from "@solidjs/router";
 import { onMount } from "solid-js";
 import { Effect } from "effect";
+import { ButterflyMark } from "../components/TopBar";
 import { AuthManager, appRuntime } from "../effects";
 
 export const Landing = () => {
@@ -27,6 +28,7 @@ export const Landing = () => {
     }}
   >
     <div style={{ "max-width": "var(--measure)", "text-align": "center" }}>
+      <ButterflyMark class="landing-mark" />
       <h1 style={{ "font-size": "clamp(3.5rem, 14vw, 7.5rem)" }}>Evenflow</h1>
       <p
         class="muted"
