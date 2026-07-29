@@ -14,6 +14,7 @@ import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
+import { UserNav } from "../../components/UserNav";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
 import { KanbanView } from "./KanbanView";
@@ -177,6 +178,9 @@ export const BoardPage = () => {
         >
           {(board) => (
             <>
+              <nav class="crumb muted">
+                <a href="/boards">← Boards</a>
+              </nav>
               <header class="board-header">
                 <h1>{board().title}</h1>
                 <Show when={board().issue_prefix}>
@@ -188,9 +192,7 @@ export const BoardPage = () => {
                   <span class="figure">{velocityTotal()}</span>
                 </div>
                 <div class="spacer" />
-                <a class="btn" href="/profile">
-                  Profile
-                </a>
+                <UserNav />
                 <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
                   + New issue
                 </button>

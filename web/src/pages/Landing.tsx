@@ -1,8 +1,23 @@
 // Landing — the editorial front door. Big serif wordmark on cream, two
 // sign-in buttons that hand off to the Worker's /auth/oauth/start (which
-// 302s to 4a's AS).
+// 302s to 4a's AS). If the visitor is already signed in, bounces to
+// /boards on mount — no sense making a returning user re-tap Sign in.
 
-export const Landing = () => (
+import { useNavigate } from "@solidjs/router";
+import { onMount } from "solid-js";
+import { Effect } from "effect";
+import { AuthManager, appRuntime } from "../effects";
+
+export const Landing = () => {
+  const navigate = useNavigate();
+  onMount(() => {
+    void appRuntime
+      .runPromise(Effect.flatMap(AuthManager, (a) => a.get()))
+      .then((jwt) => {
+        if (jwt !== null) navigate("/boards", { replace: true });
+      });
+  });
+  return (
   <main
     style={{
       display: "grid",
@@ -59,4 +74,5 @@ export const Landing = () => (
       </p>
     </div>
   </main>
-);
+  );
+};

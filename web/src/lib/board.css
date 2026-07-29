@@ -8,6 +8,20 @@
   padding: 2.5rem 1.5rem 4rem;
 }
 
+/* Small back-link above the board title. */
+.crumb {
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.6rem;
+}
+.crumb a {
+  color: var(--color-ink-soft);
+  text-decoration: none;
+}
+.crumb a:hover {
+  color: var(--color-ink);
+}
+
 .board-header {
   display: flex;
   align-items: baseline;

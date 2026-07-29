@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import type { ApiError } from "../effects";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { NewBoardModal, type CreatedBoard, type NewBoardInput } from "../components/NewBoardModal";
+import { UserNav } from "../components/UserNav";
 
 interface BoardRow {
   id: string;
@@ -74,9 +75,7 @@ export const BoardsList = () => {
       >
         <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
         <div style={{ display: "flex", gap: "0.6rem", "align-items": "baseline" }}>
-          <a class="btn" href="/profile">
-            Profile
-          </a>
+          <UserNav />
           <button class="btn btn-solid" onClick={() => setShowModal(true)}>
             Create board
           </button>
