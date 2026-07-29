@@ -18,6 +18,7 @@
     "effect": "^3.11.10",
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
+    "nostr-tools": "^2.24.1",
     "rehype-parse": "^9.0.1",
     "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",

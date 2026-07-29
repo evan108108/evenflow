@@ -9,6 +9,7 @@ import {
   JWT_TEST_TOKEN,
   makeAuditLogTest,
   makeBlossomTest,
+  makeS3Test,
   makeBoardEmitterTest,
   makeFourATest,
   type AppServices,
@@ -53,6 +54,7 @@ const makeHarness = (opts?: { fourAFails?: boolean }) => {
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     makeEmailTest().layer,
     makeBlossomTest().layer,
+    makeS3Test().layer,
     JwtTest,
     db.layer,
     audit.layer,

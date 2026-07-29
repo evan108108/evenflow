@@ -11,6 +11,7 @@ import { pubkeyOfJwt } from "../lib/jwt";
 import { bootstrap } from "../lib/orgStore";
 import { InviteModal } from "../components/InviteModal";
 import { MembersPanel, type MemberRow } from "../components/MembersPanel";
+import { StorageSection } from "../components/StorageSection";
 import { UserNav } from "../components/UserNav";
 import { ProfileEditor } from "./Profile";
 import "../lib/board.css";
@@ -228,6 +229,9 @@ export const OrgSettings = () => {
               </div>
             </form>
           </section>
+          <Show when={isOwner()}>
+            <StorageSection handle={handle()} />
+          </Show>
         </Show>
 
         <Show when={!isPersonal()}>
@@ -338,6 +342,7 @@ export const OrgSettings = () => {
           </Show>
 
           <Show when={isOwner()}>
+            <StorageSection handle={handle()} />
             <section class="settings-section">
               <div class="danger-zone">
                 <h3>Danger zone</h3>

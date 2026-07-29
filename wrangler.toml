@@ -17,6 +17,10 @@ enabled = true
 # blossom.band: BUD-01/02 compliant, free, public, no account gate — see
 # src/effects/Blossom.ts for the rationale. The BUD-01 signing key lives in
 # the EVENFLOW_BLOSSOM_SECRET Worker secret (set via `wrangler secret put`).
+# Phase 18b adds a second secret, EVENFLOW_STORAGE_SECRET (32-byte hex):
+# derives the static server pubkey that BYO-S3 credentials are
+# NIP-44-encrypted to (src/lib/nostr-keys.ts). Deliberately separate from
+# the Blossom signing key — no key reuse across schnorr and ECDH.
 EVENFLOW_DEFAULT_BLOSSOM_URL = "https://blossom.band"
 
 # Static SPA assets (web/ → dist/web via `cd web && npm run build`).

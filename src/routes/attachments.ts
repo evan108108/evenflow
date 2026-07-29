@@ -25,8 +25,12 @@ import {
   BoardEmitter,
   Db,
   DbError,
+  S3,
+  S3Error,
   bootstrap,
   emitBoardEvent,
+  sha256Hex,
+  type S3Target,
 } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
@@ -42,10 +46,14 @@ import {
 import { parseAttachmentRow, parseIssueRow, type AttachmentShape, type IssueShape } from "../shapes";
 import {
   BLOSSOM_DEFAULT_MAX_BYTES,
+  BYO_S3_MAX_BYTES,
   MAX_ATTACHMENTS_PER_ISSUE,
   formatBytes,
   isAllowedContentType,
+  type StorageKind,
 } from "../attachments";
+import { deriveServerStorageKeys, decryptS3Creds } from "../lib/nostr-keys";
+import { getOrgStorageConfig, type OrgStorageConfigShape } from "../storage-config";
 import { asShortId } from "../slug";
 
 class ValidationError extends Data.TaggedError("ValidationError")<{
@@ -60,6 +68,10 @@ class RejectedError extends Data.TaggedError("RejectedError")<{
   readonly message: string;
   readonly link: string;
 }> {}
+/** The org's saved BYO-S3 credentials could not be unwrapped at upload time. */
+class StorageCredsError extends Data.TaggedError("StorageCredsError")<{
+  readonly reason: string;
+}> {}
 
 type AttachmentsFailure =
   | ValidationError
@@ -69,6 +81,8 @@ type AttachmentsFailure =
   | UnauthorizedError
   | ForbiddenError
   | BlossomError
+  | S3Error
+  | StorageCredsError
   | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<AttachmentsFailure>) => {
@@ -88,6 +102,10 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<AttachmentsFai
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
       case "BlossomError":
+        return c.json({ error: "storage-unavailable", reason: f.reason }, 502);
+      case "S3Error":
+        return c.json({ error: "storage-unavailable", reason: f.code ?? f.reason }, 502);
+      case "StorageCredsError":
         return c.json({ error: "storage-unavailable", reason: f.reason }, 502);
       case "DbError":
         return c.json({ error: "internal", reason: `db-${f.reason}` }, 500);
@@ -223,12 +241,69 @@ const listLiveAttachments = (issueId: string, issueLevelOnly = false) =>
     return rows.map(parseAttachmentRow);
   });
 
+/**
+ * Route the blob to wherever the org configured (phase 18b): the default
+ * Blossom host, the org's own Blossom, or the org's S3-compatible bucket
+ * (creds NIP-44-unwrapped here, held only for the duration of the PUT).
+ * The returned URL is where the blob actually lives — no proxying.
+ */
+const uploadToConfiguredStorage = (
+  storageSecret: string | undefined,
+  cfg: OrgStorageConfigShape | null,
+  upload: UploadInput,
+): Effect.Effect<
+  { url: string; sha256: string; storage_kind: StorageKind },
+  BlossomError | S3Error | StorageCredsError,
+  Blossom | S3
+> =>
+  Effect.gen(function* () {
+    if (cfg !== null && cfg.kind === "blossom" && cfg.blossom_url !== null) {
+      const blossom = yield* Blossom;
+      const result = yield* blossom.uploadTo(
+        cfg.blossom_url,
+        upload.bytes,
+        upload.contentType,
+        upload.filename,
+      );
+      return { ...result, storage_kind: "blossom_byo" as StorageKind };
+    }
+    if (cfg !== null && cfg.kind === "s3") {
+      const keys = deriveServerStorageKeys(storageSecret);
+      if (keys === null) return yield* new StorageCredsError({ reason: "server-key" });
+      if (cfg.s3_creds_ciphertext === null || cfg.s3_creds_sender_pubkey === null) {
+        return yield* new StorageCredsError({ reason: "missing-creds" });
+      }
+      const creds = decryptS3Creds(keys, cfg.s3_creds_ciphertext, cfg.s3_creds_sender_pubkey);
+      if (creds === null) return yield* new StorageCredsError({ reason: "creds-unreadable" });
+      const target: S3Target = {
+        endpoint: cfg.s3_endpoint ?? "",
+        region: cfg.s3_region ?? "",
+        bucket: cfg.s3_bucket ?? "",
+        pathStyle: cfg.s3_path_style,
+        accessKeyId: creds.access_key_id,
+        secretAccessKey: creds.secret_access_key,
+      };
+      const sha256 = yield* Effect.promise(() => sha256Hex(upload.bytes));
+      const s3 = yield* S3;
+      const { url } = yield* s3.putObject(
+        target,
+        `evenflow/${cfg.org_id}/${sha256}`,
+        upload.bytes,
+        upload.contentType,
+      );
+      return { url, sha256, storage_kind: "s3_byo" as StorageKind };
+    }
+    const blossom = yield* Blossom;
+    const result = yield* blossom.upload(upload.bytes, upload.contentType, upload.filename);
+    return { ...result, storage_kind: "blossom_default" as StorageKind };
+  });
+
 export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   const attachments = new Hono<AppHonoEnv>();
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, AttachmentsFailure, Db | AuditLog | BoardEmitter | Blossom>,
+    program: Effect.Effect<unknown, AttachmentsFailure, Db | AuditLog | BoardEmitter | Blossom | S3>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -245,10 +320,20 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
       const upload = yield* readUpload(c);
       const link = STORAGE_SETTINGS_HINT(org?.slug ?? null);
 
-      if (upload.bytes.byteLength > BLOSSOM_DEFAULT_MAX_BYTES) {
+      // Phase 18b: the board's org may route blobs to its own Blossom or S3
+      // bucket. Lookup keys off board.org_id — the legacy (org-less) mount
+      // can't see the org row but the board always knows its org.
+      const storageCfg =
+        board.org_id === null ? null : yield* getOrgStorageConfig(board.org_id);
+      const byob = storageCfg !== null && storageCfg.kind !== "default";
+
+      const maxBytes = byob ? BYO_S3_MAX_BYTES : BLOSSOM_DEFAULT_MAX_BYTES;
+      if (upload.bytes.byteLength > maxBytes) {
         return yield* new RejectedError({
           code: "size_exceeded",
-          message: `This file is ${formatBytes(upload.bytes.byteLength)} — Evenflow's default storage caps at ${formatBytes(BLOSSOM_DEFAULT_MAX_BYTES)} per file. Set up your own bucket to upload larger files.`,
+          message: byob
+            ? `This file is ${formatBytes(upload.bytes.byteLength)} — Evenflow caps uploads to your storage at ${formatBytes(BYO_S3_MAX_BYTES)} per file.`
+            : `This file is ${formatBytes(upload.bytes.byteLength)} — Evenflow's default storage caps at ${formatBytes(BLOSSOM_DEFAULT_MAX_BYTES)} per file. Set up your own bucket to upload larger files.`,
           link,
         });
       }
@@ -270,8 +355,11 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         });
       }
 
-      const blossom = yield* Blossom;
-      const { url, sha256 } = yield* blossom.upload(upload.bytes, upload.contentType, upload.filename);
+      const { url, sha256, storage_kind } = yield* uploadToConfiguredStorage(
+        c.env.EVENFLOW_STORAGE_SECRET,
+        storageCfg,
+        upload,
+      );
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -286,7 +374,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         filename: upload.filename,
         content_type: upload.contentType,
         size_bytes: upload.bytes.byteLength,
-        storage_kind: "blossom_default",
+        storage_kind,
         is_cover: false,
         uploaded_by: pubkey,
         uploaded_at_ms: now,
@@ -294,7 +382,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
       };
       yield* db.execute(
         "INSERT INTO issueAttachmentCache (id, issue_id, comment_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, issue.id, null, url, sha256, upload.filename, upload.contentType, upload.bytes.byteLength, "blossom_default", 0, pubkey, now, null],
+        [id, issue.id, null, url, sha256, upload.filename, upload.contentType, upload.bytes.byteLength, storage_kind, 0, pubkey, now, null],
       );
       yield* audit.record({
         event_type: "attachment_uploaded",

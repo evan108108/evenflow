@@ -60,6 +60,16 @@ export {
   BlossomError,
   BlossomLive,
   makeBlossomTest,
+  sha256Hex,
   type BlossomService,
   type BlossomTestHandle,
 } from "./Blossom";
+export {
+  S3,
+  S3Error,
+  S3Live,
+  makeS3Test,
+  type S3Service,
+  type S3Target,
+  type S3TestHandle,
+} from "./S3";

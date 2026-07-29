@@ -18,6 +18,7 @@ import {
   JWT_TEST_TOKEN,
   makeAuditLogTest,
   makeBlossomTest,
+  makeS3Test,
   makeBoardEmitterTest,
   makeEmailTest,
   makeFourATest,
@@ -37,6 +38,7 @@ import { makeMcpRouter } from "../src/routes/mcp";
 import { makeOrgsRouter } from "../src/routes/orgs";
 import { makeSessionRouter } from "../src/routes/session";
 import { makeSprintsRouter } from "../src/routes/sprints";
+import { makeStorageRouter } from "../src/routes/storage";
 import { makeWellKnownRouter } from "../src/routes/wellknown";
 import type { IssueShape } from "../src/shapes";
 import { makeDbMock } from "./dbMock";
@@ -75,6 +77,7 @@ export const makeHarness = () => {
   const fourA = makeFourATest();
   const email = makeEmailTest();
   const blossom = makeBlossomTest();
+  const s3 = makeS3Test();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtMultiTest,
     db.layer,
@@ -83,6 +86,7 @@ export const makeHarness = () => {
     fourA.layer,
     email.layer,
     blossom.layer,
+    s3.layer,
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", optionalAuth(() => layer));
@@ -90,6 +94,7 @@ export const makeHarness = () => {
   app.route("/api/v0", makeOrgsRouter(() => layer));
   app.route("/api/v0", makeInvitesRouter(() => layer));
   app.route("/api/v0", makeKeysRouter(() => layer));
+  app.route("/api/v0", makeStorageRouter(() => layer));
   app.route("/api/v0", makeBoardsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeSprintsRouter(() => layer));
@@ -104,7 +109,7 @@ export const makeHarness = () => {
   app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter(() => layer));
   app.route("/", makeWellKnownRouter());
   app.route("/", makeMcpRouter(() => layer));
-  return { app, db, audit, emitter, fourA, email, blossom };
+  return { app, db, audit, emitter, fourA, email, blossom, s3 };
 };
 
 export type Harness = ReturnType<typeof makeHarness>;
