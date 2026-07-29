@@ -29,6 +29,7 @@ export interface NewIssueInput {
   readonly container?: string;
   readonly estimate?: number;
   readonly labels?: ReadonlyArray<string>;
+  readonly assignee_pubkey?: string;
 }
 
 export type IssuePatch = Partial<{

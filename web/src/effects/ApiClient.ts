@@ -28,6 +28,7 @@ export const ApiConfigLive: Layer.Layer<ApiConfig> = Layer.succeed(ApiConfig, { 
 export interface ApiClientService {
   readonly get: <T>(path: string) => Effect.Effect<T, ApiError>;
   readonly post: <T>(path: string, body: unknown) => Effect.Effect<T, ApiError>;
+  readonly put: <T>(path: string, body: unknown) => Effect.Effect<T, ApiError>;
   readonly patch: <T>(path: string, body: unknown) => Effect.Effect<T, ApiError>;
   readonly delete: <T>(path: string) => Effect.Effect<T, ApiError>;
 }
@@ -74,6 +75,7 @@ export const ApiClientLive: Layer.Layer<ApiClient, never, ApiConfig | AuthManage
     return {
       get: <T>(path: string) => request<T>("GET", path),
       post: <T>(path: string, body: unknown) => request<T>("POST", path, body),
+      put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
       patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
       delete: <T>(path: string) => request<T>("DELETE", path),
     };

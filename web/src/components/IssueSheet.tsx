@@ -7,8 +7,8 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
-import { shortPubkey } from "../lib/jwt";
 import type { BoardStore } from "../pages/board/store";
+import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
@@ -134,7 +134,11 @@ export const IssueSheet = (props: {
         <div class="sheet-row">
           <span class="key">Assignee</span>
           <span>
-            {props.issue.assignee_pubkey === null ? "—" : shortPubkey(props.issue.assignee_pubkey)}
+            {props.issue.assignee_pubkey === null ? (
+              "—"
+            ) : (
+              <Author pubkey={props.issue.assignee_pubkey} />
+            )}
           </span>
         </div>
 
@@ -245,7 +249,7 @@ export const IssueSheet = (props: {
                 <div class="comment" id={`comment-${comment.id.slice(0, 8)}`}>
                   <div class="meta">
                     <span>
-                      {shortPubkey(comment.author_pubkey)} · {when(comment.created_at_ms)}
+                      <Author pubkey={comment.author_pubkey} /> · {when(comment.created_at_ms)}
                     </span>
                     <Show when={comment.author_pubkey === props.callerPubkey}>
                       <button
@@ -284,6 +288,8 @@ export const IssueSheet = (props: {
                   <strong class="serif">{item.issue_short_id}</strong>
                   {" "}
                 </Show>
+                <Author pubkey={item.actor_pubkey} />
+                {" "}
                 {item.kind === "creation"
                   ? `created as ${item.to ?? "?"}`
                   : `${item.kind}: ${item.from ?? "—"} → ${item.to ?? "—"}`}

@@ -1,11 +1,28 @@
 // + New Issue modal. Submits through the onCreate callback (BoardPage wires
 // it to store.createIssue and releases the butterfly on success).
 
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createMemo, createRenderEffect, createSignal } from "solid-js";
 import type { Board } from "../lib/types";
 import type { NewIssueInput } from "../pages/board/store";
+import { decodeJwtClaims, pubkeyOfJwt } from "../lib/jwt";
+import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
+
+/** Assignee choices: just the signed-in user for now — member search comes
+ *  with the membership phase; the option label resolves via profileStore. */
+const selfAssignee = (): { pubkey: string; login: string } | null => {
+  let jwt: string | null = null;
+  try {
+    jwt = window.localStorage.getItem("evenflow.jwt");
+  } catch {
+    return null;
+  }
+  if (jwt === null) return null;
+  const claims = decodeJwtClaims(jwt);
+  const pubkey = pubkeyOfJwt(jwt);
+  return claims === null || pubkey === null ? null : { pubkey, login: claims.login };
+};
 
 export const NewIssueModal = (props: {
   board: Board;
@@ -18,7 +35,16 @@ export const NewIssueModal = (props: {
   const [container, setContainer] = createSignal("backlog");
   const [estimate, setEstimate] = createSignal("");
   const [labels, setLabels] = createSignal("");
+  const [assignee, setAssignee] = createSignal("");
   const [busy, setBusy] = createSignal(false);
+
+  const me = selfAssignee();
+  createRenderEffect(() => {
+    if (me !== null) requestProfile(me.pubkey);
+  });
+  const meLabel = createMemo(() =>
+    me === null ? "" : authorLabel(profileFor(me.pubkey), me.pubkey, me),
+  );
 
   const submit = async (e: Event) => {
     e.preventDefault();
@@ -35,6 +61,7 @@ export const NewIssueModal = (props: {
       container: container(),
       ...(estimate() === "" ? {} : { estimate: Number(estimate()) }),
       ...(labelList.length === 0 ? {} : { labels: labelList }),
+      ...(assignee() === "" ? {} : { assignee_pubkey: assignee() }),
     };
     try {
       await props.onCreate(input);
@@ -84,6 +111,17 @@ export const NewIssueModal = (props: {
           <option value="">—</option>
           <For each={ESTIMATES}>{(n) => <option value={String(n)}>{n}</option>}</For>
         </select>
+        <Show when={me !== null}>
+          <label for="ni-assignee">Assignee</label>
+          <select
+            id="ni-assignee"
+            value={assignee()}
+            onInput={(e) => setAssignee(e.currentTarget.value)}
+          >
+            <option value="">Unassigned</option>
+            <option value={me!.pubkey}>{meLabel()}</option>
+          </select>
+        </Show>
         <label for="ni-labels">Labels (comma-separated)</label>
         <input
           id="ni-labels"

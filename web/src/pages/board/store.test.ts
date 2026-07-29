@@ -31,6 +31,7 @@ const makeTestRun = (routes: Record<string, unknown>) => {
   const layer = Layer.succeed(ApiClient, {
     get: (p) => respond("GET", p),
     post: (p, b) => respond("POST", p, b),
+    put: (p, b) => respond("PUT", p, b),
     patch: (p, b) => respond("PATCH", p, b),
     delete: (p) => respond("DELETE", p),
   });

@@ -6,6 +6,7 @@ import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardsList } from "./pages/BoardsList";
 import { Landing } from "./pages/Landing";
+import { Profile } from "./pages/Profile";
 import { SignIn } from "./pages/SignIn";
 
 const Drifting = () => (
@@ -20,6 +21,7 @@ export const App = () => (
   <Router>
     <Route path="/" component={Landing} />
     <Route path="/signin" component={SignIn} />
+    <Route path="/profile" component={Profile} />
     <Route path="/boards" component={BoardsList} />
     <Route path="/boards/:slug" component={BoardPage} />
     <Route path="/boards/:slug/backlog" component={BoardPage} />

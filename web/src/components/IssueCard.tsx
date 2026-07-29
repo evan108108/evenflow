@@ -4,7 +4,7 @@
 import { For, Show } from "solid-js";
 import type { Issue } from "../lib/types";
 import type { DndHandle } from "../lib/dnd";
-import { shortPubkey } from "../lib/jwt";
+import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
 
 export const IssueCard = (props: {
@@ -33,7 +33,9 @@ export const IssueCard = (props: {
         <span class="chip priority">P{props.issue.priority}</span>
       </Show>
       <Show when={props.issue.assignee_pubkey !== null}>
-        <span class="chip">{shortPubkey(props.issue.assignee_pubkey as string)}</span>
+        <span class="chip">
+          <Author pubkey={props.issue.assignee_pubkey as string} class="" />
+        </span>
       </Show>
       <For each={props.issue.labels}>{(label) => <span class="chip">{label}</span>}</For>
     </div>

@@ -73,9 +73,14 @@ export const BoardsList = () => {
         }}
       >
         <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
-        <button class="btn btn-solid" onClick={() => setShowModal(true)}>
-          Create board
-        </button>
+        <div style={{ display: "flex", gap: "0.6rem", "align-items": "baseline" }}>
+          <a class="btn" href="/profile">
+            Profile
+          </a>
+          <button class="btn btn-solid" onClick={() => setShowModal(true)}>
+            Create board
+          </button>
+        </div>
       </header>
 
       <Show when={!page.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
