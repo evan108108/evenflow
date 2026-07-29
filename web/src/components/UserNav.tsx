@@ -15,7 +15,7 @@ import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { pubkeyOfJwt } from "../lib/jwt";
 import { primeProfile, type ProfileData } from "../lib/profileStore";
 
-const AVATAR_PX = 34;
+const AVATAR_PX = 40;
 
 interface MeResponse {
   profile: ProfileData;

@@ -12,11 +12,12 @@
 .user-nav {
   position: relative;
   display: inline-block;
+  align-self: center;
 }
 
 .user-nav-btn {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: 1px solid var(--color-ink-faint);
   padding: 0;
