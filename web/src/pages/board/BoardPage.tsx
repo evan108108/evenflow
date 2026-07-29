@@ -13,6 +13,12 @@ import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effec
 import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { doneNames } from "../../lib/columns";
+import {
+  LAYOUT_STORAGE_KEY,
+  effectiveKanbanLayout,
+  resolveKanbanLayout,
+  type KanbanLayout,
+} from "../../lib/layout";
 import { issuesInColumn } from "../../lib/order";
 import { sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
@@ -93,6 +99,32 @@ export const BoardPage = () => {
   const [callerPubkey, setCallerPubkey] = createSignal<string | null>(null);
   const [showNewIssue, setShowNewIssue] = createSignal(false);
   const [highlightSprintId, setHighlightSprintId] = createSignal<string | null>(null);
+
+  // Kanban layout: explicit preference from localStorage, else the
+  // viewport decides (narrow = vertical). Below the force breakpoint the
+  // render is vertical no matter what — the preference itself is never
+  // rewritten by a viewport change, only by the toggle.
+  const storedLayout = (): string | null => {
+    try {
+      return window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  };
+  const [layoutPref, setLayoutPref] = createSignal<KanbanLayout>(
+    resolveKanbanLayout(storedLayout(), window.innerWidth),
+  );
+  const [viewportWidth, setViewportWidth] = createSignal(window.innerWidth);
+  const kanbanLayout = () => effectiveKanbanLayout(layoutPref(), viewportWidth());
+  const toggleLayout = () => {
+    const next: KanbanLayout = layoutPref() === "vertical" ? "columns" : "vertical";
+    setLayoutPref(next);
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE_KEY, next);
+    } catch {
+      // Preference persistence is best-effort; the session keeps the signal.
+    }
+  };
   const [flutter, setFlutter] = createSignal<{ x: number; y: number } | null>(null);
   const [commentsVersion, setCommentsVersion] = createSignal(0);
   const [uploadNotice, setUploadNotice] = createSignal<string | null>(null);
@@ -203,7 +235,11 @@ export const BoardPage = () => {
       });
   });
 
+  const onResize = () => setViewportWidth(window.innerWidth);
+  onMount(() => window.addEventListener("resize", onResize));
+
   onCleanup(() => {
+    window.removeEventListener("resize", onResize);
     if (sseFiber !== undefined) appRuntime.runFork(Fiber.interrupt(sseFiber));
   });
 
@@ -327,6 +363,39 @@ export const BoardPage = () => {
                   }}
                 </Show>
                 <div class="spacer" />
+                <Show when={view() === "kanban"}>
+                  <button
+                    class="layout-toggle"
+                    title={kanbanLayout() === "vertical" ? "Column view" : "Vertical view"}
+                    aria-label={
+                      kanbanLayout() === "vertical" ? "Switch to column view" : "Switch to vertical view"
+                    }
+                    onClick={toggleLayout}
+                  >
+                    <Show
+                      when={kanbanLayout() === "vertical"}
+                      fallback={
+                        // Rows glyph — the vertical view this click switches to.
+                        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                          <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                            <rect x="2" y="2.5" width="12" height="2.6" rx="1" />
+                            <rect x="2" y="6.7" width="12" height="2.6" rx="1" />
+                            <rect x="2" y="10.9" width="12" height="2.6" rx="1" />
+                          </g>
+                        </svg>
+                      }
+                    >
+                      {/* Columns glyph — the column view this click switches to. */}
+                      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                        <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                          <rect x="2.5" y="2" width="2.6" height="12" rx="1" />
+                          <rect x="6.7" y="2" width="2.6" height="12" rx="1" />
+                          <rect x="10.9" y="2" width="2.6" height="12" rx="1" />
+                        </g>
+                      </svg>
+                    </Show>
+                  </button>
+                </Show>
                 <div class="current" title="Estimate points completed from Active, trailing 7 days">
                   <span class="label">The Current</span>
                   <Sparkline buckets={buckets()} />
@@ -351,6 +420,7 @@ export const BoardPage = () => {
                   dnd={dnd}
                   onOpen={(id) => navigate(`${base()}/issues/${id}`)}
                   highlightSprintId={highlightSprintId()}
+                  layout={kanbanLayout()}
                 />
               </Show>
               <Show when={view() === "backlog"}>

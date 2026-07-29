@@ -18,6 +18,10 @@ export const KanbanView = (props: {
   onOpen: (id: string) => void;
   /** Sprint id to spotlight (phase 20's badge toggle); null = no spotlight. */
   highlightSprintId?: string | null;
+  /** Horizontal columns (default) or the Linear-style vertical stack. The
+   *  DOM is identical either way — zones, indicators, and drops are
+   *  layout-agnostic; only the CSS class changes. */
+  layout?: "columns" | "vertical";
 }) => {
   const active = () => props.store.issues().filter((i) => i.container === "active");
   const columns = () => enabledColumns(props.store.board()?.columns ?? []);
@@ -49,7 +53,7 @@ export const KanbanView = (props: {
       when={active().length > 0}
       fallback={<p class="empty-state">Still waters. What flows next?</p>}
     >
-      <div class="kanban">
+      <div class="kanban" classList={{ "layout-vertical": props.layout === "vertical" }}>
         <For each={columns()}>
           {(column) => {
             const zone = transitionZone(column.id);
