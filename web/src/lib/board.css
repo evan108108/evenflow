@@ -263,16 +263,18 @@
   flex: 1 1 260px;
   min-width: 260px;
   /* Reserve real drop-target height even when a column is empty. The
-     outer column is transparent + dashed — the drop-zone shape. The
-     inner .kanban-column-content carries the paper tint and hugs the
-     header + card content, so tinting stays around the actual work
-     and the empty stretch below stays visually quiet. */
+     outer column is invisible at rest — dashed outline reveals on
+     hover, then goes solid-ink during a drag. Quiet by default,
+     responsive on intent. */
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
   background: transparent;
-  border: 1.5px dashed rgba(23, 35, 59, 0.14);
-  transition: border-color 120ms ease, background 120ms ease;
+  border: 1.5px dashed transparent;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.kanban-column:hover {
+  border-color: rgba(23, 35, 59, 0.16);
 }
 
 .kanban-column-content {
