@@ -381,18 +381,45 @@ describe("DELETE /api/v0/issues/:id", () => {
 describe("auth gating", () => {
   it.each([
     ["POST", "/api/v0/boards/kb/issues"],
-    ["GET", "/api/v0/boards/kb/issues"],
-    ["GET", "/api/v0/issues/x"],
     ["PATCH", "/api/v0/issues/x"],
     ["DELETE", "/api/v0/issues/x"],
     ["POST", "/api/v0/issues/x/transition"],
     ["POST", "/api/v0/issues/x/promote_to_backlog"],
     ["POST", "/api/v0/issues/x/promote_to_active"],
     ["POST", "/api/v0/issues/x/send_to_icebox"],
-  ])("%s %s rejects unauthenticated requests", async (method, path) => {
+  ])("%s %s rejects unauthenticated mutations with 401", async (method, path) => {
     const h = makeHarness();
     const res = await h.app.request(path, { method }, {});
     expect(res.status).toBe(401);
+  });
+
+  // Reads run behind optionalAuth since phase 16: anonymous is allowed
+  // through, and an unknown/private resource answers 404 (invisible), not
+  // 401 — public boards are the only anonymous-readable surface.
+  it.each([
+    ["GET", "/api/v0/boards/kb/issues"],
+    ["GET", "/api/v0/issues/x"],
+  ])("%s %s answers 404 to anonymous callers on private/unknown resources", async (method, path) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request(path, { method }, {});
+    expect(res.status).toBe(404);
+  });
+
+  it("serves board issues to anonymous callers once the board is public", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    await createIssue(h);
+    const patched = await h.app.request(
+      "/api/v0/boards/kb",
+      jsonReq("PATCH", { visibility: "public" }),
+      {},
+    );
+    expect(patched.status).toBe(200);
+    const res = await h.app.request("/api/v0/boards/kb/issues", {}, {});
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issues: unknown[] };
+    expect(body.issues).toHaveLength(1);
   });
 });
 

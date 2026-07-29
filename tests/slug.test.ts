@@ -29,13 +29,20 @@ describe("derivePrefix", () => {
     });
   }
 
-  it("always yields a valid prefix, even for degenerate titles", () => {
+  it("yields a valid prefix or the documented empty string for degenerate titles", () => {
+    // "No more XX placeholder": derivePrefix deliberately returns "" when a
+    // title has no derivable identity — the caller must demand an explicit
+    // issue_prefix. Non-degenerate inputs still derive a real 2-5 char one.
     for (const title of ["!!!", "x", "-", "a b", "ThisIsOneVeryLongSingleWord"]) {
       const p = derivePrefix(title);
-      expect(p.length).toBeGreaterThanOrEqual(PREFIX_MIN_LEN);
-      expect(p.length).toBeLessThanOrEqual(PREFIX_MAX_LEN);
-      expect(p).toMatch(/^[A-Z0-9X]+$/);
+      if (p !== "") {
+        expect(p.length).toBeGreaterThanOrEqual(PREFIX_MIN_LEN);
+        expect(p.length).toBeLessThanOrEqual(PREFIX_MAX_LEN);
+        expect(p).toMatch(/^[A-Z0-9]+$/);
+      }
     }
+    expect(derivePrefix("!!!")).toBe("");
+    expect(derivePrefix("ThisIsOneVeryLongSingleWord")).not.toBe("");
   });
 });
 

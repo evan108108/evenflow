@@ -141,11 +141,17 @@ describe("DELETE /api/v0/comments/:id", () => {
 describe("auth gating", () => {
   it.each([
     ["POST", "/api/v0/issues/x/comments"],
-    ["GET", "/api/v0/issues/x/comments"],
     ["DELETE", "/api/v0/comments/x"],
-  ])("%s %s rejects unauthenticated requests", async (method, path) => {
+  ])("%s %s rejects unauthenticated mutations with 401", async (method, path) => {
     const h = makeHarness();
     const res = await h.app.request(path, { method }, {});
     expect(res.status).toBe(401);
+  });
+
+  // Anonymous reads pass optionalAuth and 404 on invisible resources.
+  it("GET /api/v0/issues/x/comments answers 404 to anonymous callers", async () => {
+    const h = makeHarness();
+    const res = await h.app.request("/api/v0/issues/x/comments", {}, {});
+    expect(res.status).toBe(404);
   });
 });
