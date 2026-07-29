@@ -1,13 +1,13 @@
 // BoardsList — first protected page. Redirects home when signed out, then
 // runs the ApiClient Effect for GET /api/v0/boards and lists what came
-// back. Deliberately unpolished: Phase 8 owns the real board UI; this page
-// proves the auth → Effect → REST data flow.
+// back. Deliberately unpolished otherwise: Phase 8 owns the real board UI.
 
 import { useNavigate } from "@solidjs/router";
-import { For, Show, createResource, onMount } from "solid-js";
+import { For, Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import type { ApiError } from "../effects";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
+import { NewBoardModal, type NewBoardInput } from "../components/NewBoardModal";
 
 interface BoardRow {
   id: string;
@@ -28,8 +28,17 @@ const fetchBoards = (): Promise<BoardsPage> =>
     }),
   );
 
+const createBoard = (input: NewBoardInput): Promise<{ board: BoardRow }> =>
+  appRuntime.runPromise(
+    Effect.gen(function* () {
+      const client = yield* ApiClient;
+      return yield* client.post<{ board: BoardRow }>("/api/v0/boards", input);
+    }),
+  );
+
 export const BoardsList = () => {
   const navigate = useNavigate();
+  const [showModal, setShowModal] = createSignal(false);
 
   onMount(() => {
     void appRuntime
@@ -39,7 +48,14 @@ export const BoardsList = () => {
       });
   });
 
-  const [page] = createResource(fetchBoards);
+  const [page, { refetch }] = createResource(fetchBoards);
+
+  const onCreate = async (input: NewBoardInput) => {
+    const { board } = await createBoard(input);
+    void refetch();
+    setShowModal(false);
+    navigate(`/boards/${board.slug}`);
+  };
 
   return (
     <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem" }}>
@@ -52,7 +68,7 @@ export const BoardsList = () => {
         }}
       >
         <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
-        <button class="btn" disabled title="Coming in Phase 8">
+        <button class="btn btn-solid" onClick={() => setShowModal(true)}>
           Create board
         </button>
       </header>
@@ -101,6 +117,10 @@ export const BoardsList = () => {
             </ul>
           </Show>
         </Show>
+      </Show>
+
+      <Show when={showModal()}>
+        <NewBoardModal onClose={() => setShowModal(false)} onCreate={onCreate} />
       </Show>
     </main>
   );
