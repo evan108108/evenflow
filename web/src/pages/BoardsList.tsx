@@ -75,10 +75,10 @@ export const BoardsList = () => {
       >
         <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
         <div style={{ display: "flex", gap: "0.6rem", "align-items": "baseline" }}>
-          <UserNav />
           <button class="btn btn-solid" onClick={() => setShowModal(true)}>
             Create board
           </button>
+          <UserNav />
         </div>
       </header>
 

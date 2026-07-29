@@ -192,10 +192,10 @@ export const BoardPage = () => {
                   <span class="figure">{velocityTotal()}</span>
                 </div>
                 <div class="spacer" />
-                <UserNav />
                 <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
                   + New issue
                 </button>
+                <UserNav />
               </header>
 
               <nav class="view-tabs">

@@ -5,9 +5,9 @@
 import { useNavigate } from "@solidjs/router";
 import { Show, createSignal, createEffect, onCleanup, onMount } from "solid-js";
 import { Effect } from "effect";
-import { AuthManager, appRuntime } from "../effects";
+import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { pubkeyOfJwt } from "../lib/jwt";
-import { profileFor, requestProfile, authorLabel } from "../lib/profileStore";
+import { profileFor, requestProfile, primeProfile, authorLabel, type ProfileData } from "../lib/profileStore";
 
 const AVATAR_PX = 34;
 
@@ -23,10 +23,24 @@ export const UserNav = () => {
     });
   });
 
-  // Trigger a store fetch so the caller's own profile lands.
+  // Fetch /profile/me directly on mount — the batched profileStore only
+  // knows about *published* kind-0 events, so it misses the OAuth-seeded
+  // picture (Google/GitHub avatar shown before first Save). Priming the
+  // store with the seed lets the nav render immediately, and every
+  // <Author pubkey={me}> chip elsewhere gets it too.
   createEffect(() => {
     const p = pubkey();
-    if (p !== null) requestProfile(p);
+    if (p === null) return;
+    requestProfile(p);
+    void appRuntime
+      .runPromise(
+        Effect.gen(function* () {
+          const client = yield* ApiClient;
+          return yield* client.get<{ profile: ProfileData }>("/api/v0/profile/me");
+        }),
+      )
+      .then((r) => primeProfile(r.profile))
+      .catch(() => {});
   });
 
   // Outside-click close.
