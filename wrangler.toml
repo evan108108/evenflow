@@ -12,6 +12,13 @@ routes = [
 [observability]
 enabled = true
 
+[vars]
+# Default Evenflow-managed Blossom host for issue attachments (phase 18a).
+# blossom.band: BUD-01/02 compliant, free, public, no account gate — see
+# src/effects/Blossom.ts for the rationale. The BUD-01 signing key lives in
+# the EVENFLOW_BLOSSOM_SECRET Worker secret (set via `wrangler secret put`).
+EVENFLOW_DEFAULT_BLOSSOM_URL = "https://blossom.band"
+
 # Static SPA assets (web/ → dist/web via `cd web && npm run build`).
 # Requests matching a built file are served directly; everything else falls
 # through to the Worker, whose catch-all GET serves index.html (SPA routing).

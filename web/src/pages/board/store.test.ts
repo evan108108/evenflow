@@ -77,6 +77,7 @@ const issue = (over: Partial<Issue> = {}): Issue => ({
   board_id: "b1",
   title: "An issue",
   body: null,
+  body_format: "markdown",
   type: "task",
   status: "Backlog",
   column_id: "c1",

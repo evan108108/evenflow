@@ -15,6 +15,7 @@ import { Jwt, JwtLive } from "./Jwt";
 import { AuditLog, AuditLogLive } from "./AuditLog";
 import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
 import { Email, EmailLive } from "./Email";
+import { Blossom, BlossomLive } from "./Blossom";
 
 /**
  * Raw Cloudflare Worker bindings. Members are optional while their
@@ -28,12 +29,16 @@ export interface WorkerEnv {
   readonly JWT_SIGNING_KEY?: string;
   readonly OAUTH_CLIENT_SECRET_4A?: string;
   readonly AGENTMAIL_API_KEY?: string;
+  /** Default Evenflow-managed Blossom host (phase 18a attachments). */
+  readonly EVENFLOW_DEFAULT_BLOSSOM_URL?: string;
+  /** 32-byte hex Nostr secret for the service key that signs BUD-01 uploads. */
+  readonly EVENFLOW_BLOSSOM_SECRET?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
 
 /** Union of every service a handler can require. */
-export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter | Email;
+export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter | Email | Blossom;
 
 /** All Live services merged, still awaiting the per-request AppEnv. */
 export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
@@ -43,6 +48,7 @@ export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
   AuditLogLive,
   BoardEmitterLive,
   EmailLive,
+  BlossomLive,
 );
 
 /** Compose the full Live environment for one request from Hono's `c.env`. */

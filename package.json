@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "effect": "^3.11.10",
     "hono": "^4.6.14"
   },

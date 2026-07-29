@@ -8,10 +8,14 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
+import type { Attachment } from "../lib/attachments";
 import type { BoardStore } from "../pages/board/store";
+import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
 import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
+import { MarkdownEditor } from "./MarkdownEditor";
+import { MarkdownView } from "./MarkdownView";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 const PRIORITIES = [1, 2, 3, 4];
@@ -42,6 +46,36 @@ export const IssueSheet = (props: {
     () => props.issue.id,
     (id) => props.store.fetchIssueActivity(id),
   );
+  const [attachments, { refetch: refetchAttachments }] = createResource(
+    () => props.issue.id,
+    (id) => props.store.fetchAttachments(id),
+  );
+
+  // Anonymous viewers (public boards) get the read-only sheet: attachments
+  // list without upload/delete/set-cover.
+  const readOnly = () => props.callerPubkey === null;
+
+  const uploadAttachment = async (file: File): Promise<AttachmentActionError | null> => {
+    const { rejection } = await props.store.uploadAttachment(props.issue.id, file);
+    if (rejection !== null) return rejection;
+    void refetchAttachments();
+    void props.store.refetchIssues();
+    return null;
+  };
+
+  const setCover = (attachment: Attachment, is_cover: boolean) => {
+    void props.store.setAttachmentCover(attachment.id, is_cover).then(() => {
+      void refetchAttachments();
+      void props.store.refetchIssues();
+    });
+  };
+
+  const deleteAttachment = (attachment: Attachment) => {
+    void props.store.deleteAttachment(attachment.id).then(() => {
+      void refetchAttachments();
+      void props.store.refetchIssues();
+    });
+  };
 
   const saveTitle = (value: string) => {
     const title = value.trim();
@@ -52,7 +86,8 @@ export const IssueSheet = (props: {
 
   const saveBody = async () => {
     const body = bodyDraft().trim() === "" ? null : bodyDraft();
-    await props.store.patchIssue(props.issue.id, { body });
+    // Editing through the markdown editor upgrades plain-format bodies.
+    await props.store.patchIssue(props.issue.id, { body, body_format: "markdown" });
     setEditingBody(false);
   };
 
@@ -239,18 +274,28 @@ export const IssueSheet = (props: {
         <Show
           when={editingBody()}
           fallback={
-            <div class="issue-body" onDblClick={() => (setBodyDraft(props.issue.body ?? ""), setEditingBody(true))}>
-              <Show when={props.issue.body !== null} fallback={<span class="muted">No body. Double-click to write one.</span>}>
-                {props.issue.body}
+            <div
+              class="issue-body"
+              onDblClick={() => {
+                if (readOnly()) return;
+                setBodyDraft(props.issue.body ?? "");
+                setEditingBody(true);
+              }}
+            >
+              <Show
+                when={props.issue.body !== null}
+                fallback={
+                  <span class="muted">
+                    {readOnly() ? "No body." : "No body. Double-click to write one."}
+                  </span>
+                }
+              >
+                <MarkdownView source={props.issue.body ?? ""} format={props.issue.body_format} />
               </Show>
             </div>
           }
         >
-          <textarea
-            class="issue-body-edit"
-            value={bodyDraft()}
-            onInput={(e) => setBodyDraft(e.currentTarget.value)}
-          />
+          <MarkdownEditor value={bodyDraft()} onInput={setBodyDraft} />
           <div class="actions" style={{ display: "flex", gap: "0.5rem", "margin-top": "0.5rem" }}>
             <button class="btn" onClick={() => setEditingBody(false)}>
               Cancel
@@ -260,6 +305,14 @@ export const IssueSheet = (props: {
             </button>
           </div>
         </Show>
+
+        <AttachmentsPanel
+          attachments={attachments() ?? []}
+          readOnly={readOnly()}
+          onUpload={uploadAttachment}
+          onSetCover={setCover}
+          onDelete={deleteAttachment}
+        />
 
         <section class="sheet-section">
           <h3>Comments</h3>

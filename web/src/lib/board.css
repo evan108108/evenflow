@@ -1249,3 +1249,359 @@
 .actions .grow {
   flex: 1;
 }
+
+/* ── phase 18a: card cover images ── */
+.issue-card.has-cover {
+  padding: 0;
+  overflow: hidden;
+}
+
+.issue-cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+}
+
+.issue-cover img {
+  width: 100%;
+  height: calc(100% + 30px);
+  object-fit: cover;
+  object-position: center;
+  will-change: transform;
+}
+
+/* Meta overlays the bottom third above a bottom-up legibility gradient. */
+.issue-cover .cover-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 2.2rem 0.8rem 0.7rem;
+  background: linear-gradient(to top, rgba(23, 35, 59, 0.55), rgba(23, 35, 59, 0));
+  color: var(--color-cream);
+}
+
+.issue-cover .cover-overlay .title,
+.issue-cover .cover-overlay .type-badge,
+.issue-cover .cover-overlay .chip,
+.issue-cover .cover-overlay .issue-ref {
+  color: var(--color-cream);
+}
+
+.issue-cover .cover-overlay .chip {
+  border-color: rgba(245, 242, 236, 0.5);
+}
+
+.issue-cover .cover-overlay .card-ref-row {
+  position: static;
+  margin-bottom: 0.3rem;
+}
+
+.issue-card.has-cover .title {
+  padding-right: 0;
+}
+
+/* ── phase 18a: markdown body ── */
+.markdown-body {
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-family: var(--font-serif);
+  margin: 1.1em 0 0.4em;
+  line-height: 1.2;
+}
+
+.markdown-body h1 { font-size: 1.5rem; }
+.markdown-body h2 { font-size: 1.25rem; }
+.markdown-body h3 { font-size: 1.05rem; }
+
+.markdown-body p {
+  margin: 0.55em 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.55em 0;
+  padding-left: 1.4em;
+}
+
+.markdown-body li {
+  margin: 0.2em 0;
+}
+
+.markdown-body blockquote {
+  margin: 0.7em 0;
+  padding: 0.1em 0 0.1em 0.9em;
+  border-left: 2px solid var(--color-ink-faint);
+  color: var(--color-ink-soft);
+}
+
+.markdown-body a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-body a.issue-ref {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+
+.markdown-body code {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.84em;
+  background: rgba(23, 35, 59, 0.06);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.88rem;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--color-ink-faint);
+  padding: 0.35em 0.7em;
+  text-align: left;
+}
+
+.markdown-body th {
+  font-family: var(--font-serif);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-ink-faint);
+  margin: 1.2em 0;
+}
+
+.markdown-body input[type="checkbox"] {
+  margin-right: 0.4em;
+}
+
+.markdown-body .plain-body {
+  white-space: pre-wrap;
+}
+
+/* ── phase 18a: code blocks ── */
+.code-block {
+  position: relative;
+  margin: 0.7em 0;
+}
+
+.code-block pre,
+.code-block .shiki-host pre {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  background: rgba(23, 35, 59, 0.045) !important;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+}
+
+.code-block code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.code-block .code-copy {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  outline: none;
+}
+
+.code-block:hover .code-copy {
+  opacity: 1;
+}
+
+/* ── phase 18a: markdown editor ── */
+.markdown-editor .editor-tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.markdown-editor .editor-tabs button {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.8rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  outline: none;
+}
+
+.markdown-editor .editor-tabs button.active {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-cream);
+}
+
+.markdown-editor .editor-toolbar {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.35rem;
+}
+
+.markdown-editor .editor-toolbar button {
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  outline: none;
+}
+
+.markdown-editor .editor-toolbar button:hover {
+  color: var(--color-ink);
+  border-color: rgba(23, 35, 59, 0.4);
+}
+
+.markdown-editor .editor-textarea {
+  width: 100%;
+  min-height: 10rem;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.84rem;
+  line-height: 1.7;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 8px;
+  background: var(--color-paper-raised);
+  color: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.markdown-editor .editor-preview {
+  border: 1px dashed var(--color-ink-faint);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  min-height: 6rem;
+}
+
+/* ── phase 18a: attachments panel ── */
+.attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.attachment-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.1rem;
+  border-bottom: 1px solid var(--color-ink-faint);
+}
+
+.attachment-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--color-ink-faint);
+}
+
+.attachment-row .file-card {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  color: var(--color-ink-soft);
+  font-size: 1.1rem;
+}
+
+.attachment-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88rem;
+}
+
+.attachment-size {
+  font-size: 0.78rem;
+}
+
+.cover-chip {
+  font-family: var(--font-serif);
+}
+
+.attachment-action {
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1;
+  border: none;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  outline: none;
+}
+
+.attachment-action.star.on {
+  color: #9c7c3c;
+}
+
+.attachment-action.delete:hover {
+  color: #9b2c2c;
+}
+
+.attachment-upload {
+  margin-top: 0.8rem;
+}
+
+.attachment-error {
+  font-size: 0.85rem;
+  color: #7a5c1e;
+  background: rgba(203, 161, 53, 0.12);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.6rem;
+}
+
+.attachment-error a {
+  color: inherit;
+  font-weight: 600;
+}

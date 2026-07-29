@@ -13,6 +13,7 @@ import {
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
   makeAuditLogTest,
+  makeBlossomTest,
   makeBoardEmitterTest,
   makeFourATest,
   type AppServices,
@@ -63,6 +64,7 @@ const makeHarness = () => {
   const fourA = makeFourATest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     makeEmailTest().layer,
+    makeBlossomTest().layer,
     JwtTest,
     db.layer,
     audit.layer,

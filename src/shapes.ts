@@ -14,6 +14,7 @@ import {
   type Column,
   type IssueType,
 } from "./columns";
+import { BODY_FORMATS, STORAGE_KINDS, type BodyFormat, type StorageKind } from "./attachments";
 
 export interface BoardShape {
   readonly id: string;
@@ -89,6 +90,9 @@ export interface IssueShape {
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
+  // 'markdown' (GFM) for bodies written since phase 18a; rows that predate
+  // migration 0006 are pinned 'plain' and render white-space: pre-wrap.
+  readonly body_format: BodyFormat;
   readonly type: IssueType;
   readonly status: string;
   // Stable column reference (Column.id on the board). status mirrors the
@@ -318,6 +322,12 @@ export const parseIssueRow = (row: unknown): IssueShape => {
   const type = h.string(r["type"] ?? "task", "type");
   if (!(ISSUE_TYPES as ReadonlyArray<string>).includes(type)) raise("type not an issue type");
 
+  // Pre-0006 rows lack the column; existing bodies were backfilled 'plain'.
+  const body_format = h.string(r["body_format"] ?? "markdown", "body_format");
+  if (!(BODY_FORMATS as ReadonlyArray<string>).includes(body_format)) {
+    raise("body_format not a body format");
+  }
+
   const labels = h.json(r["labels"], "labels");
   if (!Array.isArray(labels) || labels.some((l) => typeof l !== "string")) {
     raise("labels not a string array");
@@ -344,6 +354,7 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     board_id: h.string(r["board_id"], "board_id"),
     title: h.string(r["title"], "title"),
     body: h.stringOrNull(r["body"], "body"),
+    body_format: body_format as BodyFormat,
     type: type as IssueType,
     status: h.string(r["status"], "status"),
     column_id: h.stringOrNull(r["column_id"] ?? null, "column_id"),
@@ -472,5 +483,60 @@ export const parseMemberRow = (row: unknown): MemberShape => {
     added_by: h.string(r["added_by"], "added_by"),
     added_at_ms: h.number(r["added_at_ms"], "added_at_ms"),
     substrate_event_id: h.stringOrNull(r["substrate_event_id"], "substrate_event_id"),
+  };
+};
+
+// ── issueAttachmentCache ──────────────────────────────────────────────────
+
+/** Mirrors issueAttachmentCache (blob metadata; blobs live on Blossom). */
+export interface AttachmentShape {
+  readonly id: string;
+  readonly issue_id: string;
+  readonly blob_url: string;
+  readonly sha256: string;
+  readonly filename: string;
+  readonly content_type: string;
+  readonly size_bytes: number;
+  readonly storage_kind: StorageKind;
+  readonly is_cover: boolean;
+  readonly uploaded_by: string;
+  readonly uploaded_at_ms: number;
+  readonly deleted_at_ms: number | null;
+}
+
+export class AttachmentShapeError extends Error {
+  readonly _tag = "AttachmentShapeError";
+  constructor(readonly reason: string) {
+    super(`malformed issueAttachmentCache row: ${reason}`);
+    this.name = "AttachmentShapeError";
+  }
+}
+
+/** Convert a raw D1 issueAttachmentCache row into the canonical wire shape. */
+export const parseAttachmentRow = (row: unknown): AttachmentShape => {
+  const raise: Raise = (reason) => {
+    throw new AttachmentShapeError(reason);
+  };
+  const h = makeHelpers(raise);
+  const r = h.object(row);
+
+  const storage_kind = h.string(r["storage_kind"], "storage_kind");
+  if (!(STORAGE_KINDS as ReadonlyArray<string>).includes(storage_kind)) {
+    raise("storage_kind not a storage kind");
+  }
+
+  return {
+    id: h.string(r["id"], "id"),
+    issue_id: h.string(r["issue_id"], "issue_id"),
+    blob_url: h.string(r["blob_url"], "blob_url"),
+    sha256: h.string(r["sha256"], "sha256"),
+    filename: h.string(r["filename"], "filename"),
+    content_type: h.string(r["content_type"], "content_type"),
+    size_bytes: h.number(r["size_bytes"], "size_bytes"),
+    storage_kind: storage_kind as StorageKind,
+    is_cover: h.number(r["is_cover"], "is_cover") !== 0,
+    uploaded_by: h.string(r["uploaded_by"], "uploaded_by"),
+    uploaded_at_ms: h.number(r["uploaded_at_ms"], "uploaded_at_ms"),
+    deleted_at_ms: h.numberOrNull(r["deleted_at_ms"], "deleted_at_ms"),
   };
 };

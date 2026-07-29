@@ -18,6 +18,7 @@ import {
   type Issue,
 } from "../../lib/types";
 import type { Column } from "../../lib/columns";
+import type { Attachment } from "../../lib/attachments";
 
 export type RunApi = <A, E>(effect: Effect.Effect<A, E, ApiClient>) => Promise<A>;
 
@@ -37,6 +38,7 @@ export interface NewIssueInput {
 export type IssuePatch = Partial<{
   title: string;
   body: string | null;
+  body_format: string;
   type: string;
   status: string;
   assignee_pubkey: string | null;
@@ -44,6 +46,12 @@ export type IssuePatch = Partial<{
   estimate: number | null;
   labels: ReadonlyArray<string>;
 }>;
+
+/** Upload rejections carry the server's actionable copy + settings link. */
+export interface UploadRejection {
+  readonly message: string;
+  readonly link: string | null;
+}
 
 /** runPromise rejects with a FiberFailure wrapper — dig the ApiError back out. */
 export const unwrapApiError = (e: unknown): ApiError | null => {
@@ -201,6 +209,51 @@ export const createBoardStore = (
       (r) => r.activity,
     );
 
+  // ── attachments (phase 18a) ─────────────────────────────────────────────
+
+  const fetchAttachments = (issueId: string) =>
+    api((c) =>
+      c.get<{ attachments: Attachment[] }>(`${apiBase}/issues/${issueId}/attachments`),
+    ).then((r) => r.attachments);
+
+  /** Base64 file → JSON upload. Returns the actionable rejection, if any. */
+  const uploadAttachment = async (
+    issueId: string,
+    file: File,
+  ): Promise<{ attachment: Attachment | null; rejection: UploadRejection | null }> => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    try {
+      const res = await api((c) =>
+        c.post<{ attachment: Attachment }>(`${apiBase}/issues/${issueId}/attachments`, {
+          file_b64: btoa(binary),
+          filename: file.name,
+          content_type: file.type === "" ? "application/octet-stream" : file.type,
+        }),
+      );
+      return { attachment: res.attachment, rejection: null };
+    } catch (e) {
+      const err = unwrapApiError(e);
+      const body = (err?.body ?? null) as { message?: string; link?: string } | null;
+      return {
+        attachment: null,
+        rejection: {
+          message: typeof body?.message === "string" ? body.message : errorText(e),
+          link: typeof body?.link === "string" ? body.link : null,
+        },
+      };
+    }
+  };
+
+  const setAttachmentCover = (attachmentId: string, is_cover: boolean) =>
+    api((c) => c.patch<{ attachment: Attachment }>(`/api/v0/attachments/${attachmentId}`, { is_cover }));
+
+  const deleteAttachment = (attachmentId: string) =>
+    api((c) => c.delete<{ deleted: boolean }>(`/api/v0/attachments/${attachmentId}`));
+
   return {
     slug,
     apiBase,
@@ -221,6 +274,10 @@ export const createBoardStore = (
     postComment,
     deleteComment,
     fetchIssueActivity,
+    fetchAttachments,
+    uploadAttachment,
+    setAttachmentCover,
+    deleteAttachment,
   };
 };
 

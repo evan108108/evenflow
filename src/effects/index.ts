@@ -55,3 +55,11 @@ export {
   type BoardEvent,
   type BoardEventKind,
 } from "./BoardEmitter";
+export {
+  Blossom,
+  BlossomError,
+  BlossomLive,
+  makeBlossomTest,
+  type BlossomService,
+  type BlossomTestHandle,
+} from "./Blossom";
