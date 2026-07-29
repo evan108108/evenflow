@@ -45,7 +45,7 @@ export const BacklogView = (props: {
                 <div class="status-group">
                   <h4>{column.name}</h4>
                   <For each={activeInColumn(column)}>
-                    {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />}
+                    {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
                   </For>
                 </div>
               </Show>
@@ -67,7 +67,7 @@ export const BacklogView = (props: {
           fallback={<p class="empty-state">Nothing on your mind. What are you thinking about?</p>}
         >
           <For each={backlog()}>
-            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />}
+            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
           </For>
         </Show>
       </section>

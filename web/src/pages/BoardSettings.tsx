@@ -283,21 +283,7 @@ export const BoardSettings = () => {
 
       <Show when={tab() === "General"}>
         <section class="settings-section">
-          <h2>Visibility</h2>
-          <p>
-            This board is{" "}
-            <strong>{board()?.board.visibility === "public" ? "Public" : "Private"}</strong>.
-          </p>
-          <Show when={board()?.board.visibility === "public"}>
-            <p class="visibility-warning">
-              Anyone with the URL can view this board — no sign-in required to read.
-            </p>
-          </Show>
-          <div style={{ "margin-top": "0.8rem" }}>
-            <button type="button" class="btn" onClick={toggleVisibility}>
-              Make {board()?.board.visibility === "public" ? "private" : "public"}
-            </button>
-          </div>
+          <p class="muted">More board settings will land here — title, description, avatar.</p>
         </section>
       </Show>
 
@@ -470,6 +456,23 @@ export const BoardSettings = () => {
       </Show>
 
       <Show when={tab() === "Danger zone"}>
+        <section class="settings-section">
+          <h2>Visibility</h2>
+          <p>
+            This board is{" "}
+            <strong>{board()?.board.visibility === "public" ? "Public" : "Private"}</strong>.
+          </p>
+          <Show when={board()?.board.visibility === "public"}>
+            <p class="visibility-warning">
+              Anyone with the URL can view this board — no sign-in required to read.
+            </p>
+          </Show>
+          <div style={{ "margin-top": "0.8rem" }}>
+            <button type="button" class="btn" onClick={toggleVisibility}>
+              Make {board()?.board.visibility === "public" ? "private" : "public"}
+            </button>
+          </div>
+        </section>
         <section class="settings-section">
           <div class="danger-zone">
             <h3>Danger zone</h3>

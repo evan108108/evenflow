@@ -50,7 +50,7 @@ export const IceboxView = (props: {
           fallback={<p class="empty-state">Cold storage. Thoughts on ice.</p>}
         >
           <For each={iced()}>
-            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />}
+            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
           </For>
         </Show>
       </section>

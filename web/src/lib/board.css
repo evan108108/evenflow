@@ -813,7 +813,11 @@
   border: 1px solid var(--color-ink-faint);
   border-radius: 999px;
   padding: 0.12rem 0.6rem;
-  align-self: center;
+  /* Sits at the bottom baseline of the h1 — next to the last letter of
+     the title rather than vertically centered against the giant serif. */
+  align-self: flex-end;
+  margin-bottom: 0.6rem;
+  margin-left: -0.6rem;
 }
 
 /* New Board modal live preview line. */
@@ -1261,12 +1265,11 @@
   width: auto;
   aspect-ratio: 3 / 4;
   overflow: hidden;
-  /* Bleed to the card edges — cancel the .issue-card top+side padding so
-     the cover meets the card's border with no cream sliver above. Bottom
-     margin keeps a small gap before any body content. */
-  margin: -0.7rem -0.8rem 0.45rem;
-  border-top-left-radius: calc(var(--radius-chamfer) - 1px);
-  border-top-right-radius: calc(var(--radius-chamfer) - 1px);
+  /* Bleed on all four sides — cancel .issue-card's padding so the cover
+     fills the whole card, edge to edge. When a card has a cover, the
+     overlay carries all the text; there IS no body content below. */
+  margin: -0.7rem -0.8rem;
+  border-radius: calc(var(--radius-chamfer) - 1px);
 }
 
 .issue-cover img {
@@ -1283,7 +1286,7 @@
 .issue-cover .cover-overlay {
   position: absolute;
   inset: auto 0 0 0;
-  padding: 2.2rem 0.8rem 0.7rem;
+  padding: 2.2rem 1.2rem 1rem;
   background: linear-gradient(
     to top,
     rgba(23, 35, 59, 0.78) 0%,

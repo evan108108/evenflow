@@ -49,8 +49,11 @@ export const IssueCard = (props: {
   issue: Issue;
   dnd: DndHandle;
   onOpen: (ref: string) => void;
+  /** When true, skips the tall cover-image treatment. Used by list views
+   *  (Backlog / Icebox) where a full-width 3:4 cover would eat the page. */
+  compact?: boolean;
 }) => {
-  const cover = () => props.issue.cover_url ?? null;
+  const cover = () => (props.compact === true ? null : props.issue.cover_url ?? null);
 
   let cardEl: HTMLDivElement | undefined;
   let coverImg: HTMLImageElement | undefined;
