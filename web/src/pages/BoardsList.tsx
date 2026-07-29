@@ -7,12 +7,13 @@ import { For, Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import type { ApiError } from "../effects";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
-import { NewBoardModal, type NewBoardInput } from "../components/NewBoardModal";
+import { NewBoardModal, type CreatedBoard, type NewBoardInput } from "../components/NewBoardModal";
 
 interface BoardRow {
   id: string;
   slug: string;
   title: string;
+  issue_prefix: string | null;
   updated_at_ms: number;
 }
 interface BoardsPage {
@@ -50,9 +51,13 @@ export const BoardsList = () => {
 
   const [page, { refetch }] = createResource(fetchBoards);
 
-  const onCreate = async (input: NewBoardInput) => {
+  const onCreate = async (input: NewBoardInput): Promise<CreatedBoard> => {
     const { board } = await createBoard(input);
     void refetch();
+    return board;
+  };
+
+  const onDone = (board: CreatedBoard) => {
     setShowModal(false);
     navigate(`/boards/${board.slug}`);
   };
@@ -120,7 +125,7 @@ export const BoardsList = () => {
       </Show>
 
       <Show when={showModal()}>
-        <NewBoardModal onClose={() => setShowModal(false)} onCreate={onCreate} />
+        <NewBoardModal onClose={() => setShowModal(false)} onCreate={onCreate} onDone={onDone} />
       </Show>
     </main>
   );

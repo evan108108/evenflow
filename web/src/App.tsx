@@ -24,7 +24,7 @@ export const App = () => (
     <Route path="/boards/:slug" component={BoardPage} />
     <Route path="/boards/:slug/backlog" component={BoardPage} />
     <Route path="/boards/:slug/icebox" component={BoardPage} />
-    <Route path="/boards/:slug/issues/:id" component={BoardPage} />
+    <Route path="/boards/:slug/issues/:issueRef" component={BoardPage} />
     <Route path="*" component={Drifting} />
   </Router>
 );

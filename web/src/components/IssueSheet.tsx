@@ -9,6 +9,7 @@ import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { shortPubkey } from "../lib/jwt";
 import type { BoardStore } from "../pages/board/store";
+import { IssueRef } from "./IssueRef";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 const PRIORITIES = [1, 2, 3, 4];
@@ -76,6 +77,24 @@ export const IssueSheet = (props: {
         <button class="close" onClick={props.onClose} aria-label="Close">
           ×
         </button>
+
+        <Show when={props.issue.short_id}>
+          {(shortId) => (
+            <div class="sheet-ref-row">
+              <IssueRef shortId={shortId()} class="sheet-ref" />
+              <button
+                class="copy-url"
+                onClick={() =>
+                  void navigator.clipboard.writeText(
+                    `${window.location.origin}/boards/${props.board.slug}/issues/${shortId()}`,
+                  )
+                }
+              >
+                copy URL
+              </button>
+            </div>
+          )}
+        </Show>
 
         <input
           class="title-input"
@@ -223,7 +242,7 @@ export const IssueSheet = (props: {
           <Show when={(comments() ?? []).length > 0} fallback={<p class="muted">Quiet so far.</p>}>
             <For each={comments()}>
               {(comment: Comment) => (
-                <div class="comment">
+                <div class="comment" id={`comment-${comment.id.slice(0, 8)}`}>
                   <div class="meta">
                     <span>
                       {shortPubkey(comment.author_pubkey)} · {when(comment.created_at_ms)}
@@ -261,6 +280,10 @@ export const IssueSheet = (props: {
           <For each={activity() ?? []}>
             {(item) => (
               <div class="activity-line">
+                <Show when={item.issue_short_id}>
+                  <strong class="serif">{item.issue_short_id}</strong>
+                  {" "}
+                </Show>
                 {item.kind === "creation"
                   ? `created as ${item.to ?? "?"}`
                   : `${item.kind}: ${item.from ?? "—"} → ${item.to ?? "—"}`}

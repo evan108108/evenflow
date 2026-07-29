@@ -511,3 +511,111 @@
     transform: rotateY(-70deg) rotate(8deg);
   }
 }
+
+/* ── short issue references (FLOW-42) ── */
+.issue-ref-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.issue-ref {
+  font-family: var(--font-serif);
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-soft);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: copy;
+}
+
+.issue-ref:hover {
+  color: var(--color-ink);
+}
+
+/* Card placement: ref floats top-right, above the title. */
+.issue-card {
+  position: relative;
+}
+
+.issue-ref-wrap.card-ref {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.7rem;
+}
+
+.issue-card .title {
+  padding-right: 3.4rem;
+}
+
+.copied-toast {
+  position: absolute;
+  top: -1.35rem;
+  right: 0;
+  font-family: var(--font-sans);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-paper);
+  background: var(--color-ink);
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  pointer-events: none;
+  animation: copied-fade 1.2s ease forwards;
+}
+
+@keyframes copied-fade {
+  0% { opacity: 0; transform: translateY(3px); }
+  15% { opacity: 1; transform: translateY(0); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Sheet header: ref in small caps above the title, with the copy-URL aside. */
+.sheet-ref-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  margin: 0.2rem 0 0.1rem;
+}
+
+.sheet-ref .issue-ref {
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.copy-url {
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  color: var(--color-ink-soft);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.copy-url:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+}
+
+/* Board header prefix chip. */
+.prefix-chip {
+  font-family: var(--font-serif);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 999px;
+  padding: 0.12rem 0.6rem;
+  align-self: center;
+}
+
+/* New Board modal live preview line. */
+.prefix-preview {
+  font-size: 0.8rem;
+  margin: -0.4rem 0 0.4rem;
+}

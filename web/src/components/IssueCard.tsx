@@ -5,19 +5,25 @@ import { For, Show } from "solid-js";
 import type { Issue } from "../lib/types";
 import type { DndHandle } from "../lib/dnd";
 import { shortPubkey } from "../lib/jwt";
+import { IssueRef } from "./IssueRef";
 
 export const IssueCard = (props: {
   issue: Issue;
   dnd: DndHandle;
-  onOpen: (id: string) => void;
+  onOpen: (ref: string) => void;
 }) => (
   <div
     class="issue-card"
     data-issue-id={props.issue.id}
     onPointerDown={(e) =>
-      props.dnd.startDrag(e, props.issue.id, () => props.onOpen(props.issue.id))
+      props.dnd.startDrag(e, props.issue.id, () =>
+        props.onOpen(props.issue.short_id ?? props.issue.id),
+      )
     }
   >
+    <Show when={props.issue.short_id}>
+      {(shortId) => <IssueRef shortId={shortId()} class="card-ref" />}
+    </Show>
     <div class="title">{props.issue.title}</div>
     <div class="chips">
       <Show when={props.issue.estimate !== null}>

@@ -49,12 +49,15 @@ const board: Board = {
   labels: [],
   member_policy: "invite",
   is_encrypted: false,
+  issue_prefix: "KB",
+  next_issue_number: 2,
   created_at_ms: 1,
   updated_at_ms: 1,
 };
 
 const issue = (over: Partial<Issue> = {}): Issue => ({
   id: "i1",
+  short_id: "KB-1",
   board_id: "b1",
   title: "An issue",
   body: null,

@@ -14,12 +14,18 @@ export interface Board {
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
+  // Short-id prefix (FLOW) + next unclaimed issue number. Prefix is null
+  // only for boards that predate the 0003 backfill.
+  readonly issue_prefix: string | null;
+  readonly next_issue_number: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }
 
 export interface Issue {
   readonly id: string;
+  // FLOW-42 — null only for issues awaiting the 0003 backfill.
+  readonly short_id: string | null;
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
@@ -48,6 +54,7 @@ export interface FeedItem {
   readonly id: string;
   readonly issue_id: string;
   readonly issue_title: string | null;
+  readonly issue_short_id: string | null;
   readonly actor_pubkey: string;
   readonly kind: "creation" | "status" | "container";
   readonly from: string | null;

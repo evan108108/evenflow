@@ -5,7 +5,7 @@
 // and the butterfly.
 
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Effect, Fiber, Stream } from "effect";
 import type { RuntimeFiber } from "effect/Fiber";
 import "../../lib/board.css";
@@ -64,7 +64,7 @@ const Sparkline = (props: { buckets: number[] }) => {
 };
 
 export const BoardPage = () => {
-  const params = useParams<{ slug: string; id?: string }>();
+  const params = useParams<{ slug: string; issueRef?: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   const store = createBoardStore(params.slug);
@@ -84,9 +84,22 @@ export const BoardPage = () => {
     return "kanban";
   };
 
-  const openIssue = createMemo(() =>
-    params.id === undefined ? null : (store.issues().find((i) => i.id === params.id) ?? null),
-  );
+  // The deep-link segment is a short id (FLOW-42, preferred) or a UUID
+  // (pre-migration bookmarks, SSE payloads).
+  const openIssue = createMemo(() => {
+    const ref = params.issueRef;
+    if (ref === undefined) return null;
+    const upper = ref.toUpperCase();
+    return store.issues().find((i) => i.short_id === upper || i.id === ref) ?? null;
+  });
+
+  // Canonicalize UUID (or lowercase) URLs to the short-id form in place.
+  createEffect(() => {
+    const issue = openIssue();
+    if (issue?.short_id != null && params.issueRef !== issue.short_id) {
+      navigate(`/boards/${params.slug}/issues/${issue.short_id}`, { replace: true });
+    }
+  });
 
   const dnd = createDnd((issueId, zone) => {
     const issue = store.issues().find((i) => i.id === issueId);
@@ -166,6 +179,9 @@ export const BoardPage = () => {
             <>
               <header class="board-header">
                 <h1>{board().title}</h1>
+                <Show when={board().issue_prefix}>
+                  {(prefix) => <span class="prefix-chip">{prefix()}</span>}
+                </Show>
                 <div class="current" title="Estimate points completed from Active, trailing 7 days">
                   <span class="label">The Current</span>
                   <Sparkline buckets={buckets()} />
