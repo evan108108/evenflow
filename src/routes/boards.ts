@@ -23,7 +23,12 @@ import { parseBoardRow, type BoardShape } from "../shapes";
 
 const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MEMBER_POLICIES = ["open", "invite"] as const;
-const DEFAULT_COLUMNS = ["Backlog", "Todo", "In Progress", "In Review", "Done"];
+// Status columns are lifecycle only (Todo → In Progress → In Review → Done).
+// "Backlog" is intentionally NOT a status — it lives on the CONTAINER axis
+// (icebox / backlog / active), a separate dimension. Overlapping vocabulary
+// creates a "which Backlog do I pick?" trap in the New Issue modal — see
+// PLAN.md "Icebox, Backlog, Active — two orthogonal dimensions".
+const DEFAULT_COLUMNS = ["Todo", "In Progress", "In Review", "Done"];
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
