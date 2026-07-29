@@ -631,7 +631,8 @@
 /* New Board modal live preview line. */
 .prefix-preview {
   font-size: 0.8rem;
-  margin: -0.4rem 0 0.4rem;
+  margin: 0.45rem 0 0.4rem;
+  color: var(--color-ink-soft);
 }
 
 /* ── /profile form (full-page, not a modal) ── */
