@@ -299,10 +299,17 @@
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+  transition: box-shadow 180ms ease, transform 180ms ease, border-color 120ms ease;
 }
 
 .issue-card:hover {
   border-color: rgba(23, 35, 59, 0.4);
+  /* Editorial lift — sits the card slightly off the page. See ERA
+     RESIDENCE apartments listing for the visual reference. */
+  box-shadow:
+    0 10px 26px rgba(23, 35, 59, 0.09),
+    0 2px 6px rgba(23, 35, 59, 0.06);
+  transform: translateY(-2px);
 }
 
 .issue-card .title {
