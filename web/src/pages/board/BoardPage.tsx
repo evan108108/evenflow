@@ -14,8 +14,7 @@ import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
-import { OrgSwitcher } from "../../components/OrgSwitcher";
-import { UserNav } from "../../components/UserNav";
+import { TopBar } from "../../components/TopBar";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
 import { KanbanView } from "./KanbanView";
@@ -188,32 +187,22 @@ export const BoardPage = () => {
         >
           {(board) => (
             <>
-              <nav class="crumb muted">
-                <a href="/boards">← Boards</a>
-                <Show when={orgHandle()}>
-                  {(handle) => (
-                    <>
-                      {" / "}
-                      <a href={`/@${handle()}`}>@{handle()}</a>
-                      {" / "}
-                      <a href={base()}>{board().title}</a>
-                    </>
-                  )}
-                </Show>
-              </nav>
+              <TopBar
+                crumbs={[
+                  { label: "Boards", href: "/boards" },
+                  ...(orgHandle() !== null
+                    ? [
+                        { label: `@${orgHandle()}`, href: `/@${orgHandle()}` },
+                        { label: board().title },
+                      ]
+                    : [{ label: board().title }]),
+                ]}
+              />
               <header class="board-header">
-                <Show when={orgHandle()}>
-                  <OrgSwitcher current={orgHandle() ?? undefined} />
-                </Show>
                 <h1>{board().title}</h1>
                 <Show when={board().issue_prefix}>
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
                 </Show>
-                <div class="current" title="Estimate points completed from Active, trailing 7 days">
-                  <span class="label">The Current</span>
-                  <Sparkline buckets={buckets()} />
-                  <span class="figure">{velocityTotal()}</span>
-                </div>
                 <div class="spacer" />
                 <Show when={orgHandle()}>
                   <a class="btn" href={`${base()}/settings`} title="Board settings">
@@ -223,20 +212,27 @@ export const BoardPage = () => {
                 <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
                   + New issue
                 </button>
-                <UserNav />
               </header>
 
-              <nav class="view-tabs">
-                <a href={base()} classList={{ active: view() === "kanban" }}>
-                  Kanban
-                </a>
-                <a href={`${base()}/backlog`} classList={{ active: view() === "backlog" }}>
-                  Backlog
-                </a>
-                <a href={`${base()}/icebox`} classList={{ active: view() === "icebox" }}>
-                  Icebox
-                </a>
-              </nav>
+              <div class="tabs-row">
+                <nav class="view-tabs">
+                  <a href={base()} classList={{ active: view() === "kanban" }}>
+                    Kanban
+                  </a>
+                  <a href={`${base()}/backlog`} classList={{ active: view() === "backlog" }}>
+                    Backlog
+                  </a>
+                  <a href={`${base()}/icebox`} classList={{ active: view() === "icebox" }}>
+                    Icebox
+                  </a>
+                </nav>
+                <div class="spacer" />
+                <div class="current" title="Estimate points completed from Active, trailing 7 days">
+                  <span class="label">The Current</span>
+                  <Sparkline buckets={buckets()} />
+                  <span class="figure">{velocityTotal()}</span>
+                </div>
+              </div>
 
               <Show when={store.lastError()}>
                 <p class="muted" role="alert">

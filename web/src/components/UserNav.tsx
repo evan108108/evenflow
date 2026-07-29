@@ -1,19 +1,23 @@
-// User nav pill — the caller's avatar (or initials fallback) as a small
-// circle. Click reveals a dropdown with Profile + Sign out. Closes on
-// outside click.
-//
-// The profile fetch is local (own signal) rather than routed through the
-// shared profileStore, because /profile/me includes an OAuth-seed picture
-// that isn't in the store until the user Saves — the store only knows
-// about published kind-0 events. Priming the store is done as a courtesy
-// so other <Author> chips also see it.
+// User + org menu. Avatar pill collapses TWO controls that used to be
+// separate (OrgSwitcher on the left, avatar on the right) into one
+// top-right dropdown. Slack/Notion pattern: the same menu shows the org
+// list (with a chip for role) and the account actions (Profile, Sign out).
+// On a personal org the two collapsed into a "who am I twice?" duplication
+// on screen; folding here removes it.
 
 import { useNavigate } from "@solidjs/router";
-import { Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { pubkeyOfJwt } from "../lib/jwt";
 import { primeProfile, type ProfileData } from "../lib/profileStore";
+import {
+  bootstrap,
+  currentMe,
+  lastActiveOrg,
+  setLastActiveOrg,
+  type OrgSummary,
+} from "../lib/orgStore";
 
 const AVATAR_PX = 48;
 
@@ -30,9 +34,10 @@ export const UserNav = () => {
   let root: HTMLDivElement | undefined;
 
   onMount(() => {
+    // Kick off /session/bootstrap so the orgs list is in the menu on first click.
+    void bootstrap();
     void appRuntime.runPromise(Effect.flatMap(AuthManager, (a) => a.get())).then((jwt) => {
       if (jwt === null) return;
-      // Read the login from the JWT — used for the initials fallback.
       try {
         const claims = JSON.parse(atob(jwt.split(".")[1]!.replaceAll("-", "+").replaceAll("_", "/"))) as {
           login?: string;
@@ -50,15 +55,12 @@ export const UserNav = () => {
         )
         .then((r) => {
           setProfile(r.profile);
-          // Courtesy prime so <Author pubkey={me}> chips elsewhere also
-          // render the pfp without a second fetch.
           primeProfile(r.profile);
         })
         .catch(() => {});
     });
   });
 
-  // Outside-click close.
   const onDocClick = (e: MouseEvent) => {
     if (open() && root && !root.contains(e.target as Node)) setOpen(false);
   };
@@ -72,14 +74,9 @@ export const UserNav = () => {
   };
 
   const picture = () => profile()?.picture ?? null;
-
   const initials = () => {
     const p = profile();
-    const raw =
-      p?.display_name?.trim() ||
-      p?.name?.trim() ||
-      login().split("@")[0] ||
-      "";
+    const raw = p?.display_name?.trim() || p?.name?.trim() || login().split("@")[0] || "";
     if (raw === "") return "";
     return raw
       .split(/[\s_@.:-]+/)
@@ -87,6 +84,16 @@ export const UserNav = () => {
       .slice(0, 2)
       .map((s) => s[0]!.toUpperCase())
       .join("");
+  };
+
+  const orgs = (): OrgSummary[] => currentMe()?.orgs ?? [];
+  const activeSlug = (): string | null =>
+    lastActiveOrg() ?? currentMe()?.handle ?? null;
+
+  const pickOrg = (org: OrgSummary) => {
+    setOpen(false);
+    setLastActiveOrg(org.slug);
+    navigate(`/@${org.slug}`);
   };
 
   return (
@@ -97,7 +104,7 @@ export const UserNav = () => {
         onClick={() => setOpen(!open())}
         aria-haspopup="menu"
         aria-expanded={open()}
-        title="Account"
+        title="Account & orgs"
       >
         <Show
           when={picture() !== null && picture() !== ""}
@@ -114,7 +121,35 @@ export const UserNav = () => {
       </button>
       <Show when={open()}>
         <div class="user-nav-menu" role="menu">
-          <a class="user-nav-item" href="/profile" onClick={() => setOpen(false)}>
+          <Show when={orgs().length > 0}>
+            <div class="user-nav-section-label">Orgs</div>
+            <For each={orgs()}>
+              {(org) => (
+                <button
+                  type="button"
+                  class="user-nav-item user-nav-org"
+                  onClick={() => pickOrg(org)}
+                  aria-current={org.slug === activeSlug() ? "true" : undefined}
+                >
+                  <span class="user-nav-org-name">@{org.slug}</span>
+                  <span class="chip user-nav-role">{org.role}</span>
+                </button>
+              )}
+            </For>
+            <a
+              class="user-nav-item user-nav-org-create"
+              href="/o/new"
+              onClick={() => setOpen(false)}
+            >
+              + Create org
+            </a>
+            <div class="user-nav-divider" />
+          </Show>
+          <a
+            class="user-nav-item"
+            href="/profile"
+            onClick={() => setOpen(false)}
+          >
             Profile
           </a>
           <button

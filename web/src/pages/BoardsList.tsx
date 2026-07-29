@@ -8,8 +8,7 @@ import { For, Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { NewBoardModal, type CreatedBoard, type NewBoardInput } from "../components/NewBoardModal";
-import { OrgSwitcher } from "../components/OrgSwitcher";
-import { UserNav } from "../components/UserNav";
+import { TopBar } from "../components/TopBar";
 import { bootstrap, type BootstrapMe, type OrgSummary } from "../lib/orgStore";
 
 interface BoardRow {
@@ -94,25 +93,20 @@ export const BoardsList = () => {
   const totalBoards = () => (groups() ?? []).reduce((n, g) => n + g.boards.length, 0);
 
   return (
-    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem" }}>
+    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
+      <TopBar crumbs={[{ label: "Boards" }]} />
       <header
         style={{
           display: "flex",
           "align-items": "center",
           "justify-content": "space-between",
-          "margin-bottom": "2.5rem",
+          "margin": "1.6rem 0 2.5rem",
         }}
       >
-        <div style={{ display: "flex", "align-items": "center", gap: "1rem" }}>
-          <OrgSwitcher />
-          <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
-        </div>
-        <div style={{ display: "flex", gap: "0.6rem", "align-items": "center" }}>
-          <button class="btn btn-solid" onClick={() => setShowModal(true)}>
-            Create board
-          </button>
-          <UserNav />
-        </div>
+        <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
+        <button class="btn btn-solid" onClick={() => setShowModal(true)}>
+          Create board
+        </button>
       </header>
 
       <Show

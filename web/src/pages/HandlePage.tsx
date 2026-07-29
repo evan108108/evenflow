@@ -9,8 +9,7 @@ import { For, Show, createResource } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
 import { unwrapApiError } from "./board/store";
-import { OrgSwitcher } from "../components/OrgSwitcher";
-import { UserNav } from "../components/UserNav";
+import { TopBar } from "../components/TopBar";
 import { currentMe, bootstrap, setLastActiveOrg, stashClaimedHandle } from "../lib/orgStore";
 import "../lib/board.css";
 
@@ -112,15 +111,20 @@ export const HandlePage = () => {
   return (
     <Show when={page() !== NOT_FOUND} fallback={<ClaimCta handle={handle()} />}>
       <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem" }}>
+        <TopBar
+          crumbs={[
+            { label: "Boards", href: "/boards" },
+            { label: `@${handle()}` },
+          ]}
+        />
         <header
           style={{
             display: "flex",
             "align-items": "center",
-            "justify-content": "space-between",
-            "margin-bottom": "2rem",
+            "justify-content": "flex-end",
+            "margin": "1.6rem 0 2rem",
           }}
         >
-          <OrgSwitcher current={handle()} />
           <div style={{ display: "flex", gap: "0.6rem", "align-items": "center" }}>
             <Show when={isMember()}>
               <a class="btn" href={`/@${handle()}/members`}>
@@ -130,8 +134,8 @@ export const HandlePage = () => {
                 Settings
               </a>
             </Show>
-            <Show when={currentMe() !== null}>
-              <UserNav />
+            <Show when={false}>
+              <span />
             </Show>
           </div>
         </header>

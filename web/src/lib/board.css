@@ -8,6 +8,63 @@
   padding: 2.5rem 1.5rem 4rem;
 }
 
+/* ── persistent top bar (Evenflow wordmark + breadcrumb + user nav) ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.topbar-brand {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  text-decoration: none;
+  line-height: 1;
+}
+.topbar-brand:hover {
+  color: var(--color-ink);
+  opacity: 0.75;
+}
+
+.topbar-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.topbar-crumbs a {
+  color: var(--color-ink-soft);
+  text-decoration: none;
+}
+.topbar-crumbs a:hover {
+  color: var(--color-ink);
+}
+.topbar-crumb-sep {
+  color: var(--color-ink-faint);
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+/* Row that carries view tabs on the left + The Current on the right. */
+.tabs-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.4rem;
+}
+.tabs-row .spacer {
+  flex: 1;
+}
+
 /* ── user nav (avatar pill + dropdown) ── */
 .user-nav {
   position: relative;
@@ -49,13 +106,21 @@
   position: absolute;
   right: 0;
   top: calc(100% + 0.4rem);
-  min-width: 10rem;
+  min-width: 15rem;
   background: var(--color-cream);
   border: 1px solid var(--color-ink-faint);
   border-radius: var(--radius-chamfer);
   box-shadow: 0 12px 28px rgba(23, 35, 59, 0.14);
   padding: 0.3rem 0;
   z-index: 80;
+}
+
+.user-nav-section-label {
+  padding: 0.4rem 0.9rem 0.2rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
 }
 
 .user-nav-item {
@@ -73,6 +138,37 @@
 }
 .user-nav-item:hover {
   background: rgba(23, 35, 59, 0.05);
+}
+
+.user-nav-org {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+.user-nav-org[aria-current="true"] .user-nav-org-name {
+  font-weight: 600;
+}
+.user-nav-org[aria-current="true"] {
+  background: rgba(23, 35, 59, 0.04);
+}
+.user-nav-org-name {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+}
+.user-nav-role {
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.user-nav-org-create {
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+}
+.user-nav-divider {
+  height: 1px;
+  background: var(--color-ink-faint);
+  margin: 0.3rem 0;
 }
 
 /* Small back-link above the board title. */
