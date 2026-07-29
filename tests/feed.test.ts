@@ -67,8 +67,8 @@ describe("GET /api/v0/boards/:slug/activity", () => {
       from: "backlog",
       to: "icebox",
     });
-    expect(body.activity[1]).toMatchObject({ from: "Backlog", to: "In Progress" });
-    expect(body.activity[2]).toMatchObject({ from: null, to: "Backlog" });
+    expect(body.activity[1]).toMatchObject({ from: "Todo", to: "In Progress" });
+    expect(body.activity[2]).toMatchObject({ from: null, to: "Todo" });
   });
 
   it("filters by ?type= and rejects unknown types", async () => {
@@ -237,11 +237,11 @@ describe("BoardEmitter wire-up (mutations fan out through the emitter)", () => {
   it("does not emit for a no-op transition or container move", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const issue = await createIssue(h); // status Backlog, container backlog
+    const issue = await createIssue(h); // status Todo, container backlog
     h.emitter.events.length = 0;
     await h.app.request(
       `/api/v0/issues/${issue.id}/transition`,
-      jsonReq("POST", { to_status: "Backlog" }),
+      jsonReq("POST", { to_status: "Todo" }),
       {},
     );
     await h.app.request(`/api/v0/issues/${issue.id}/promote_to_backlog`, jsonReq("POST"), {});

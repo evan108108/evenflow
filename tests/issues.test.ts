@@ -26,7 +26,7 @@ describe("POST /api/v0/boards/:slug/issues", () => {
     expect(issue).toMatchObject({
       title: "An issue",
       body: null,
-      status: "Backlog", // first column of the default board
+      status: "Todo", // first column of the default board
       container: "backlog",
       assignee_pubkey: null,
       priority: null,
@@ -43,7 +43,7 @@ describe("POST /api/v0/boards/:slug/issues", () => {
       issue_id: issue.id,
       actor_pubkey: CALLER,
       from_status: null,
-      to_status: "Backlog",
+      to_status: "Todo",
       from_container: null,
       to_container: "backlog",
       container_at_completion: null,
@@ -129,7 +129,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     await createBoard(h);
     await createIssue(h, { title: "todo-active", status: "Todo", container: "active" });
     vi.setSystemTime(2_000);
-    await createIssue(h, { title: "labeled", labels: ["bug"] });
+    await createIssue(h, { title: "labeled", status: "In Review", labels: ["bug"] });
 
     const byStatus = (await (
       await h.app.request("/api/v0/boards/kb/issues?status=Todo", { headers: bearer }, {})
@@ -197,11 +197,11 @@ describe("PATCH /api/v0/issues/:id", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     vi.setSystemTime(5_000);
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { status: "Todo" }), {});
+    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { status: "In Progress" }), {});
     expect(h.db.statusChanges).toHaveLength(2);
     expect(h.db.statusChanges[1]).toMatchObject({
-      from_status: "Backlog",
-      to_status: "Todo",
+      from_status: "Todo",
+      to_status: "In Progress",
       from_container: null,
       to_container: null,
       occurred_at_ms: 5_000,
@@ -269,7 +269,7 @@ describe("POST /api/v0/issues/:id/transition", () => {
     expect(done.status).toBe("Done");
     expect(done.completed_at_ms).toBe(5_000);
     expect(h.db.statusChanges[1]).toMatchObject({
-      from_status: "Backlog",
+      from_status: "Todo",
       to_status: "Done",
       container_at_completion: "active",
     });

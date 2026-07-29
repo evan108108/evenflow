@@ -156,7 +156,7 @@ describe("tools/call", () => {
       labels: ["mcp"],
     });
     const issue = structured(created.body)["issue"] as { id: string; status: string };
-    expect(issue.status).toBe("Backlog");
+    expect(issue.status).toBe("Todo");
 
     vi.setSystemTime(2_000);
     const moved = await call(h, "kanban_issue_transition", { id: issue.id, to_status: "Done" });
