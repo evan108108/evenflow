@@ -7,6 +7,7 @@ import { useNavigate } from "@solidjs/router";
 import { createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { AuthManager, appRuntime } from "../effects";
+import { bootstrap, stashPendingInvite, takePendingInvite } from "../lib/orgStore";
 
 /** Extract the JWT from a callback URL — query first, then fragment. */
 export const jwtFromCallbackUrl = (url: URL): string | null => {
@@ -34,7 +35,20 @@ export const SignIn = () => {
           yield* auth.set(jwt);
         }),
       )
-      .then(() => navigate("/boards", { replace: true }));
+      .then(async () => {
+        // Bootstrap ensures the personal org exists (forwarding any claimed
+        // handle from the sign-up CTA) before anything renders org UI.
+        await bootstrap({ force: true });
+        // Signed-out invite Accept stashed its code — finish that flow.
+        const pendingInvite = takePendingInvite();
+        if (pendingInvite !== null) {
+          // Re-stash: InvitePreview reads-and-clears it to auto-accept.
+          stashPendingInvite(pendingInvite);
+          navigate(`/i/${pendingInvite}`, { replace: true });
+          return;
+        }
+        navigate("/boards", { replace: true });
+      });
   });
 
   return (

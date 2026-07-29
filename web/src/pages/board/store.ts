@@ -43,7 +43,7 @@ export type IssuePatch = Partial<{
 }>;
 
 /** runPromise rejects with a FiberFailure wrapper — dig the ApiError back out. */
-const unwrapApiError = (e: unknown): ApiError | null => {
+export const unwrapApiError = (e: unknown): ApiError | null => {
   if (e !== null && typeof e === "object" && (e as { _tag?: string })._tag === "ApiError") {
     return e as ApiError;
   }
@@ -62,7 +62,13 @@ const errorText = (e: unknown): string => {
   return "request failed";
 };
 
-export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
+export const createBoardStore = (
+  slug: string,
+  run: RunApi = runOnApp,
+  // Board-scoped API prefix. Legacy default; org-scoped pages pass
+  // /api/v0/orgs/<handle>/boards/<slug> (phase 16 canonical namespace).
+  apiBase: string = `/api/v0/boards/${encodeURIComponent(slug)}`,
+) => {
   const [board, setBoard] = createSignal<Board | null>(null);
   const [issues, setIssues] = createSignal<Issue[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -92,10 +98,8 @@ export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
     setLoading(true);
     try {
       const [b, list] = await Promise.all([
-        api((c) => c.get<{ board: Board }>(`/api/v0/boards/${encodeURIComponent(slug)}`)),
-        api((c) =>
-          c.get<{ issues: Issue[] }>(`/api/v0/boards/${encodeURIComponent(slug)}/issues?limit=100`),
-        ),
+        api((c) => c.get<{ board: Board }>(apiBase)),
+        api((c) => c.get<{ issues: Issue[] }>(`${apiBase}/issues?limit=100`)),
       ]);
       setBoard(b.board);
       setIssues(list.issues);
@@ -109,9 +113,7 @@ export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
 
   const refetchIssues = async () => {
     try {
-      const list = await api((c) =>
-        c.get<{ issues: Issue[] }>(`/api/v0/boards/${encodeURIComponent(slug)}/issues?limit=100`),
-      );
+      const list = await api((c) => c.get<{ issues: Issue[] }>(`${apiBase}/issues?limit=100`));
       setIssues(list.issues);
     } catch {
       // Quiet refresh — a failed background refetch keeps the current view.
@@ -122,9 +124,7 @@ export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
   const refetchStatusFeed = async () => {
     try {
       const res = await api((c) =>
-        c.get<{ activity: FeedItem[] }>(
-          `/api/v0/boards/${encodeURIComponent(slug)}/activity?type=status&limit=100`,
-        ),
+        c.get<{ activity: FeedItem[] }>(`${apiBase}/activity?type=status&limit=100`),
       );
       setStatusFeed(res.activity);
     } catch {
@@ -151,9 +151,7 @@ export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
   };
 
   const createIssue = async (input: NewIssueInput): Promise<Issue> => {
-    const res = await api((c) =>
-      c.post<{ issue: Issue }>(`/api/v0/boards/${encodeURIComponent(slug)}/issues`, input),
-    );
+    const res = await api((c) => c.post<{ issue: Issue }>(`${apiBase}/issues`, input));
     setIssues((list) => [res.issue, ...list]);
     return res.issue;
   };
@@ -201,6 +199,7 @@ export const createBoardStore = (slug: string, run: RunApi = runOnApp) => {
 
   return {
     slug,
+    apiBase,
     board,
     issues,
     loading,

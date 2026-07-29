@@ -14,6 +14,7 @@ import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
+import { OrgSwitcher } from "../../components/OrgSwitcher";
 import { UserNav } from "../../components/UserNav";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
@@ -65,10 +66,21 @@ const Sparkline = (props: { buckets: number[] }) => {
 };
 
 export const BoardPage = () => {
-  const params = useParams<{ slug: string; issueRef?: string }>();
+  // Two addressing modes: canonical /@{handle}/{board_slug} (org-scoped API)
+  // and legacy /boards/{slug} (compat alias; LegacyBoardRedirect usually
+  // bounces before this renders).
+  const params = useParams<{ slug?: string; handle?: string; board_slug?: string; issueRef?: string }>();
   const location = useLocation();
   const navigate = useNavigate();
-  const store = createBoardStore(params.slug);
+  const orgHandle = () => params.handle?.replace(/^@/, "") ?? null;
+  const boardSlug = params.board_slug ?? params.slug ?? "";
+  const apiBase =
+    params.handle !== undefined && params.board_slug !== undefined
+      ? `/api/v0/orgs/${encodeURIComponent(params.handle.replace(/^@/, ""))}/boards/${encodeURIComponent(params.board_slug)}`
+      : `/api/v0/boards/${encodeURIComponent(boardSlug)}`;
+  const store = createBoardStore(boardSlug, undefined, apiBase);
+  const base = () =>
+    orgHandle() !== null ? `/@${orgHandle()}/${boardSlug}` : `/boards/${boardSlug}`;
 
   const [callerPubkey, setCallerPubkey] = createSignal<string | null>(null);
   const [showNewIssue, setShowNewIssue] = createSignal(false);
@@ -98,7 +110,7 @@ export const BoardPage = () => {
   createEffect(() => {
     const issue = openIssue();
     if (issue?.short_id != null && params.issueRef !== issue.short_id) {
-      navigate(`/boards/${params.slug}/issues/${issue.short_id}`, { replace: true });
+      navigate(`${base()}/issues/${issue.short_id}`, { replace: true });
     }
   });
 
@@ -135,7 +147,7 @@ export const BoardPage = () => {
         sseFiber = appRuntime.runFork(
           Effect.flatMap(SseStream, (sse) =>
             Stream.runForEach(
-              sse.subscribe(`/api/v0/boards/${encodeURIComponent(params.slug)}/stream`),
+              sse.subscribe(`${apiBase}/stream`),
               (event) => Effect.sync(() => handleSse(event)),
             ),
           ),
@@ -163,8 +175,6 @@ export const BoardPage = () => {
     }
   };
 
-  const base = () => `/boards/${params.slug}`;
-
   return (
     <main class="board-page">
       <Show when={!store.loading()} fallback={<p class="empty-state">{loadingLine}</p>}>
@@ -180,8 +190,21 @@ export const BoardPage = () => {
             <>
               <nav class="crumb muted">
                 <a href="/boards">← Boards</a>
+                <Show when={orgHandle()}>
+                  {(handle) => (
+                    <>
+                      {" / "}
+                      <a href={`/@${handle()}`}>@{handle()}</a>
+                      {" / "}
+                      <a href={base()}>{board().title}</a>
+                    </>
+                  )}
+                </Show>
               </nav>
               <header class="board-header">
+                <Show when={orgHandle()}>
+                  <OrgSwitcher current={orgHandle() ?? undefined} />
+                </Show>
                 <h1>{board().title}</h1>
                 <Show when={board().issue_prefix}>
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
@@ -192,6 +215,11 @@ export const BoardPage = () => {
                   <span class="figure">{velocityTotal()}</span>
                 </div>
                 <div class="spacer" />
+                <Show when={orgHandle()}>
+                  <a class="btn" href={`${base()}/settings`} title="Board settings">
+                    Settings
+                  </a>
+                </Show>
                 <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
                   + New issue
                 </button>

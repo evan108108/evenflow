@@ -4,13 +4,23 @@
 
 import { describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
+import { MemoryRouter, Route } from "@solidjs/router";
 import { Landing } from "./Landing";
 import { jwtFromCallbackUrl } from "./SignIn";
 
+// Landing calls useNavigate (signed-in bounce), so it must mount inside a
+// router even in jsdom.
 const mount = (component: () => unknown) => {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const dispose = render(component as () => any, container);
+  const dispose = render(
+    () => (
+      <MemoryRouter>
+        <Route path="*rest" component={component as () => any} />
+      </MemoryRouter>
+    ),
+    container,
+  );
   return { container, dispose };
 };
 

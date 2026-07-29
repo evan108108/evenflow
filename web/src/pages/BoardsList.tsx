@@ -1,56 +1,83 @@
-// BoardsList — first protected page. Redirects home when signed out, then
-// runs the ApiClient Effect for GET /api/v0/boards and lists what came
-// back. Deliberately unpolished otherwise: Phase 8 owns the real board UI.
+// /boards — the aggregate: every board the caller can see, grouped by org
+// (personal org first, then teams alphabetically). Board links go to the
+// canonical /@{handle}/{slug} URLs; "Create board" still posts the legacy
+// endpoint, which lands the board in the personal org.
 
 import { useNavigate } from "@solidjs/router";
 import { For, Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
-import type { ApiError } from "../effects";
-import { ApiClient, AuthManager, appRuntime } from "../effects";
+import { ApiClient, AuthManager, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { NewBoardModal, type CreatedBoard, type NewBoardInput } from "../components/NewBoardModal";
+import { OrgSwitcher } from "../components/OrgSwitcher";
 import { UserNav } from "../components/UserNav";
+import { bootstrap, type BootstrapMe, type OrgSummary } from "../lib/orgStore";
 
 interface BoardRow {
   id: string;
   slug: string;
   title: string;
+  visibility?: "private" | "public";
   issue_prefix: string | null;
   updated_at_ms: number;
 }
-interface BoardsPage {
+
+interface OrgGroup {
+  org: OrgSummary;
   boards: BoardRow[];
-  total: number;
 }
 
-const fetchBoards = (): Promise<BoardsPage> =>
-  appRuntime.runPromise(
-    Effect.gen(function* () {
-      const client = yield* ApiClient;
-      return yield* client.get<BoardsPage>("/api/v0/boards");
+const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promise<T> =>
+  appRuntime.runPromise(Effect.flatMap(ApiClient, f));
+
+/** Personal org first, then teams alphabetically by slug. */
+const orderOrgs = (orgs: ReadonlyArray<OrgSummary>): OrgSummary[] =>
+  [...orgs].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "personal" ? -1 : 1;
+    return a.slug.localeCompare(b.slug);
+  });
+
+const fetchGroups = async (me: BootstrapMe | null): Promise<OrgGroup[]> => {
+  if (me === null) return [];
+  const ordered = orderOrgs(me.orgs);
+  const groups = await Promise.all(
+    ordered.map(async (org) => {
+      try {
+        const res = await api<{ boards: BoardRow[] }>((c) =>
+          c.get(`/api/v0/orgs/${encodeURIComponent(org.slug)}/boards`),
+        );
+        return { org, boards: res.boards };
+      } catch {
+        return { org, boards: [] as BoardRow[] };
+      }
     }),
   );
+  return groups;
+};
 
 const createBoard = (input: NewBoardInput): Promise<{ board: BoardRow }> =>
-  appRuntime.runPromise(
-    Effect.gen(function* () {
-      const client = yield* ApiClient;
-      return yield* client.post<{ board: BoardRow }>("/api/v0/boards", input);
-    }),
-  );
+  api((c) => c.post<{ board: BoardRow }>("/api/v0/boards", input));
 
 export const BoardsList = () => {
   const navigate = useNavigate();
   const [showModal, setShowModal] = createSignal(false);
+  const [me, setMe] = createSignal<BootstrapMe | null | undefined>(undefined);
 
   onMount(() => {
     void appRuntime
       .runPromise(Effect.flatMap(AuthManager, (a) => a.get()))
-      .then((jwt) => {
-        if (jwt === null) navigate("/", { replace: true });
+      .then(async (jwt) => {
+        if (jwt === null) {
+          navigate("/", { replace: true });
+          return;
+        }
+        setMe(await bootstrap());
       });
   });
 
-  const [page, { refetch }] = createResource(fetchBoards);
+  const [groups, { refetch }] = createResource(
+    () => me(),
+    (resolved) => fetchGroups(resolved ?? null),
+  );
 
   const onCreate = async (input: NewBoardInput): Promise<CreatedBoard> => {
     const { board } = await createBoard(input);
@@ -60,8 +87,11 @@ export const BoardsList = () => {
 
   const onDone = (board: CreatedBoard) => {
     setShowModal(false);
-    navigate(`/boards/${board.slug}`);
+    const handle = me()?.handle;
+    navigate(handle !== undefined ? `/@${handle}/${board.slug}` : `/boards/${board.slug}`);
   };
+
+  const totalBoards = () => (groups() ?? []).reduce((n, g) => n + g.boards.length, 0);
 
   return (
     <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem" }}>
@@ -73,7 +103,10 @@ export const BoardsList = () => {
           "margin-bottom": "2.5rem",
         }}
       >
-        <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
+        <div style={{ display: "flex", "align-items": "center", gap: "1rem" }}>
+          <OrgSwitcher />
+          <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
+        </div>
         <div style={{ display: "flex", gap: "0.6rem", "align-items": "center" }}>
           <button class="btn btn-solid" onClick={() => setShowModal(true)}>
             Create board
@@ -82,49 +115,68 @@ export const BoardsList = () => {
         </div>
       </header>
 
-      <Show when={!page.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
+      <Show
+        when={me() !== undefined && !groups.loading}
+        fallback={<p class="muted">Finding the rhythm…</p>}
+      >
         <Show
-          when={page.error === undefined}
-          fallback={
-            <p class="muted">
-              The current pushed back ({((page.error as ApiError | undefined)?.status ?? "network")}
-              ). <a href="/boards">Try again</a> or <a href="/">sign in afresh</a>.
-            </p>
-          }
+          when={totalBoards() > 0}
+          fallback={<p class="muted">Still waters. What flows next?</p>}
         >
-          <Show
-            when={(page()?.boards.length ?? 0) > 0}
-            fallback={<p class="muted">Still waters. What flows next?</p>}
-          >
-            <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
-              <For each={page()?.boards}>
-                {(board) => (
-                  <li style={{ "margin-bottom": "0.8rem" }}>
-                    <a
-                      href={`/boards/${board.slug}`}
-                      style={{
-                        padding: "1.1rem 1.2rem",
-                        background: "var(--color-paper-raised)",
-                        border: "1px solid var(--color-ink-faint)",
-                        "border-radius": "var(--radius-chamfer)",
-                        display: "flex",
-                        "justify-content": "space-between",
-                        "align-items": "baseline",
-                        "text-decoration": "none",
-                      }}
-                    >
-                      <span class="serif" style={{ "font-size": "1.25rem" }}>
-                        {board.title}
-                      </span>
-                      <span class="muted" style={{ "font-size": "0.85rem" }}>
-                        {new Date(board.updated_at_ms).toLocaleDateString()}
-                      </span>
+          <For each={groups()}>
+            {(group) => (
+              <Show when={group.boards.length > 0}>
+                <section style={{ "margin-bottom": "2.2rem" }}>
+                  <h2
+                    class="serif"
+                    style={{ "font-size": "1.15rem", "margin-bottom": "0.8rem" }}
+                  >
+                    <a href={`/@${group.org.slug}`} style={{ "text-decoration": "none" }}>
+                      @{group.org.slug}
                     </a>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
+                    <Show when={group.org.kind === "team"}>
+                      <span class="chip role-chip" style={{ "margin-left": "0.6rem" }}>
+                        {group.org.role}
+                      </span>
+                    </Show>
+                  </h2>
+                  <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
+                    <For each={group.boards}>
+                      {(board) => (
+                        <li style={{ "margin-bottom": "0.8rem" }}>
+                          <a
+                            href={`/@${group.org.slug}/${board.slug}`}
+                            style={{
+                              padding: "1.1rem 1.2rem",
+                              background: "var(--color-paper-raised)",
+                              border: "1px solid var(--color-ink-faint)",
+                              "border-radius": "var(--radius-chamfer)",
+                              display: "flex",
+                              "justify-content": "space-between",
+                              "align-items": "baseline",
+                              "text-decoration": "none",
+                            }}
+                          >
+                            <span class="serif" style={{ "font-size": "1.25rem" }}>
+                              {board.title}
+                            </span>
+                            <span class="muted" style={{ "font-size": "0.85rem" }}>
+                              <Show when={board.visibility === "public"}>
+                                <span class="chip" style={{ "margin-right": "0.6rem" }}>
+                                  public
+                                </span>
+                              </Show>
+                              {new Date(board.updated_at_ms).toLocaleDateString()}
+                            </span>
+                          </a>
+                        </li>
+                      )}
+                    </For>
+                  </ul>
+                </section>
+              </Show>
+            )}
+          </For>
         </Show>
       </Show>
 
