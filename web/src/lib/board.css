@@ -3,7 +3,7 @@
 
 /* ── board shell ── */
 .board-page {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 2.5rem 1.5rem 4rem;
 }
@@ -257,7 +257,8 @@
 }
 
 .kanban-column {
-  flex: 0 0 240px;
+  flex: 1 1 260px;
+  min-width: 260px;
   border-radius: var(--radius-chamfer);
   padding: 0.6rem 0.6rem 0.9rem;
   background: rgba(23, 35, 59, 0.035);
