@@ -254,7 +254,7 @@
 .kanban {
   display: flex;
   gap: 1rem;
-  align-items: flex-start;
+  align-items: stretch;
   overflow-x: auto;
   padding-bottom: 1rem;
 }
@@ -262,10 +262,16 @@
 .kanban-column {
   flex: 1 1 260px;
   min-width: 260px;
+  /* Reserve real drop-target height even when a column is empty. Without
+     this, empty columns collapse to just the header row and become
+     impossible to drop cards into. The tint is only around card area
+     (top); a soft dashed outline marks the whole column so an empty
+     column reads as "here's the drop zone" without visual weight. */
+  min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.6rem 0.6rem 0.9rem;
-  background: rgba(23, 35, 59, 0.035);
-  border: 1.5px dashed transparent;
+  background: transparent;
+  border: 1.5px dashed rgba(23, 35, 59, 0.14);
   transition: border-color 120ms ease, background 120ms ease;
 }
 
