@@ -3,6 +3,7 @@
 // client's read-side view of the same JSON).
 
 import type { Column, IssueType } from "./columns";
+import type { BodyFormat } from "./attachments";
 
 export type Container = "icebox" | "backlog" | "active";
 
@@ -35,6 +36,8 @@ export interface Issue {
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
+  // 'markdown' since phase 18a; pre-0006 rows stay 'plain' (pre-wrap render).
+  readonly body_format: BodyFormat;
   readonly type: IssueType;
   readonly status: string;
   // Stable column reference; status mirrors the column's display name.
@@ -49,6 +52,9 @@ export interface Issue {
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
+  // List-endpoint enrichment: the image cover's blob URL, when one is set.
+  // Optional so single-issue responses (no enrichment) still parse.
+  readonly cover_url?: string | null;
 }
 
 export interface Comment {
