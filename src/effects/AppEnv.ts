@@ -14,6 +14,7 @@ import { FourA, FourALive } from "./FourA";
 import { Jwt, JwtLive } from "./Jwt";
 import { AuditLog, AuditLogLive } from "./AuditLog";
 import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
+import { Email, EmailLive } from "./Email";
 
 /**
  * Raw Cloudflare Worker bindings. Members are optional while their
@@ -26,12 +27,13 @@ export interface WorkerEnv {
   readonly ASSETS?: Fetcher;
   readonly JWT_SIGNING_KEY?: string;
   readonly OAUTH_CLIENT_SECRET_4A?: string;
+  readonly AGENTMAIL_API_KEY?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
 
 /** Union of every service a handler can require. */
-export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter;
+export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter | Email;
 
 /** All Live services merged, still awaiting the per-request AppEnv. */
 export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
@@ -40,6 +42,7 @@ export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
   FourALive,
   AuditLogLive,
   BoardEmitterLive,
+  EmailLive,
 );
 
 /** Compose the full Live environment for one request from Hono's `c.env`. */

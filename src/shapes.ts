@@ -22,8 +22,55 @@ export interface BoardShape {
   // and persists a prefix on first use.
   readonly issue_prefix: string | null;
   readonly next_issue_number: number;
+  // Owning org (orgCache.id). Nullable only for rows that predate migration
+  // 0004's backfill; the create path always sets it.
+  readonly org_id: string | null;
+  readonly visibility: "private" | "public";
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
+}
+
+/** Mirrors orgCache (projection of kind:30520 org declarations). */
+export interface OrgShape {
+  readonly id: string;
+  readonly slug: string;
+  readonly display_name: string;
+  readonly avatar_url: string | null;
+  readonly bio: string | null;
+  readonly kind: "personal" | "team";
+  readonly created_by: string;
+  readonly substrate_event_id: string | null;
+  readonly created_at_ms: number;
+  readonly updated_at_ms: number;
+  readonly deleted_at_ms: number | null;
+}
+
+/** Mirrors inviteCache (D1-authoritative invite links + email invites). */
+export interface InviteShape {
+  readonly id: string;
+  readonly code: string;
+  readonly org_id: string;
+  readonly board_id: string | null;
+  readonly role: string;
+  readonly invited_by: string;
+  readonly invited_email: string | null;
+  readonly bind_to_email: boolean;
+  readonly expires_at_ms: number;
+  readonly single_use: boolean;
+  readonly used_by: string | null;
+  readonly used_at_ms: number | null;
+  readonly revoked_at_ms: number | null;
+  readonly declined_at_ms: number | null;
+  readonly created_at_ms: number;
+}
+
+/** Mirrors orgMemberCache / boardMemberCache rows (kind:30521 projections). */
+export interface MemberShape {
+  readonly pubkey: string;
+  readonly role: string;
+  readonly added_by: string;
+  readonly added_at_ms: number;
+  readonly substrate_event_id: string | null;
 }
 
 /** Mirrors issueCache (soft-FK projection of kind:30551 fa:KanbanIssue). */
@@ -106,6 +153,30 @@ export class StatusChangeShapeError extends Error {
   }
 }
 
+export class OrgShapeError extends Error {
+  readonly _tag = "OrgShapeError";
+  constructor(readonly reason: string) {
+    super(`malformed orgCache row: ${reason}`);
+    this.name = "OrgShapeError";
+  }
+}
+
+export class InviteShapeError extends Error {
+  readonly _tag = "InviteShapeError";
+  constructor(readonly reason: string) {
+    super(`malformed inviteCache row: ${reason}`);
+    this.name = "InviteShapeError";
+  }
+}
+
+export class MemberShapeError extends Error {
+  readonly _tag = "MemberShapeError";
+  constructor(readonly reason: string) {
+    super(`malformed member cache row: ${reason}`);
+    this.name = "MemberShapeError";
+  }
+}
+
 export const CONTAINERS = ["icebox", "backlog", "active"] as const;
 export type Container = (typeof CONTAINERS)[number];
 
@@ -167,6 +238,10 @@ export const parseBoardRow = (row: unknown): BoardShape => {
   const labels = h.json(r["labels"], "labels");
   if (!Array.isArray(labels)) raise("labels not an array");
 
+  // Pre-0004 rows default to private; the column has NOT NULL DEFAULT.
+  const visibility = h.string(r["visibility"] ?? "private", "visibility");
+  if (visibility !== "private" && visibility !== "public") raise("visibility not a visibility");
+
   return {
     id: h.string(r["id"], "id"),
     pubkey: h.string(r["pubkey"], "pubkey"),
@@ -179,6 +254,8 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     is_encrypted: h.number(r["is_encrypted"], "is_encrypted") !== 0,
     issue_prefix: h.stringOrNull(r["issue_prefix"] ?? null, "issue_prefix"),
     next_issue_number: h.number(r["next_issue_number"] ?? 1, "next_issue_number"),
+    org_id: h.stringOrNull(r["org_id"] ?? null, "org_id"),
+    visibility: visibility as "private" | "public",
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
   };
@@ -275,5 +352,79 @@ export const parseStatusChangeRow = (row: unknown): StatusChangeShape => {
     to_container: h.stringOrNull(r["to_container"], "to_container"),
     container_at_completion: h.stringOrNull(r["container_at_completion"], "container_at_completion"),
     occurred_at_ms: h.number(r["occurred_at_ms"], "occurred_at_ms"),
+  };
+};
+
+// ── orgCache ──────────────────────────────────────────────────────────────
+
+/** Convert a raw D1 orgCache row into the canonical wire shape. */
+export const parseOrgRow = (row: unknown): OrgShape => {
+  const raise: Raise = (reason) => {
+    throw new OrgShapeError(reason);
+  };
+  const h = makeHelpers(raise);
+  const r = h.object(row);
+
+  const kind = h.string(r["kind"], "kind");
+  if (kind !== "personal" && kind !== "team") raise("kind not an org kind");
+
+  return {
+    id: h.string(r["id"], "id"),
+    slug: h.string(r["slug"], "slug"),
+    display_name: h.string(r["display_name"], "display_name"),
+    avatar_url: h.stringOrNull(r["avatar_url"], "avatar_url"),
+    bio: h.stringOrNull(r["bio"], "bio"),
+    kind: kind as "personal" | "team",
+    created_by: h.string(r["created_by"], "created_by"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"], "substrate_event_id"),
+    created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
+    updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
+    deleted_at_ms: h.numberOrNull(r["deleted_at_ms"], "deleted_at_ms"),
+  };
+};
+
+// ── inviteCache ───────────────────────────────────────────────────────────
+
+/** Convert a raw D1 inviteCache row into the canonical wire shape. */
+export const parseInviteRow = (row: unknown): InviteShape => {
+  const raise: Raise = (reason) => {
+    throw new InviteShapeError(reason);
+  };
+  const h = makeHelpers(raise);
+  const r = h.object(row);
+  return {
+    id: h.string(r["id"], "id"),
+    code: h.string(r["code"], "code"),
+    org_id: h.string(r["org_id"], "org_id"),
+    board_id: h.stringOrNull(r["board_id"], "board_id"),
+    role: h.string(r["role"], "role"),
+    invited_by: h.string(r["invited_by"], "invited_by"),
+    invited_email: h.stringOrNull(r["invited_email"], "invited_email"),
+    bind_to_email: h.number(r["bind_to_email"], "bind_to_email") !== 0,
+    expires_at_ms: h.number(r["expires_at_ms"], "expires_at_ms"),
+    single_use: h.number(r["single_use"], "single_use") !== 0,
+    used_by: h.stringOrNull(r["used_by"], "used_by"),
+    used_at_ms: h.numberOrNull(r["used_at_ms"], "used_at_ms"),
+    revoked_at_ms: h.numberOrNull(r["revoked_at_ms"], "revoked_at_ms"),
+    declined_at_ms: h.numberOrNull(r["declined_at_ms"], "declined_at_ms"),
+    created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
+  };
+};
+
+// ── orgMemberCache / boardMemberCache ─────────────────────────────────────
+
+/** Convert a raw member cache row (either scope) into the wire shape. */
+export const parseMemberRow = (row: unknown): MemberShape => {
+  const raise: Raise = (reason) => {
+    throw new MemberShapeError(reason);
+  };
+  const h = makeHelpers(raise);
+  const r = h.object(row);
+  return {
+    pubkey: h.string(r["pubkey"], "pubkey"),
+    role: h.string(r["role"], "role"),
+    added_by: h.string(r["added_by"], "added_by"),
+    added_at_ms: h.number(r["added_at_ms"], "added_at_ms"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"], "substrate_event_id"),
   };
 };

@@ -8,17 +8,27 @@
 // Container (icebox/backlog/active) is orthogonal to status and only moves
 // through the three dedicated endpoints — PATCH deliberately rejects it.
 //
-// Auth: mounted under /api/v0 (requireAuth applied in index.ts).
+// Auth (phase 16): mounted under /api/v0 AND /api/v0/orgs/:org_slug behind
+// optionalAuth. Reads run at "viewer" (anonymous works on public boards);
+// writes require a caller at "contributor".
 
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent, type Claims } from "../effects";
+import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
+import {
+  ForbiddenError,
+  UnauthorizedError,
+  authorizeBoardById,
+  callerPubkey,
+  callerPubkeyOrNull,
+  requireCaller,
+  resolveBoardScope,
+  type BoardOwnershipError,
+} from "../authz";
 import {
   CONTAINERS,
-  parseBoardRow,
   parseIssueRow,
   type Container,
   type IssueShape,
@@ -40,7 +50,13 @@ class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly reason: string;
 }> {}
 
-type IssuesFailure = ValidationError | NotFoundError | BoardOwnershipError | DbError;
+type IssuesFailure =
+  | ValidationError
+  | NotFoundError
+  | BoardOwnershipError
+  | UnauthorizedError
+  | ForbiddenError
+  | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<IssuesFailure>) => {
   const failure = Cause.failureOption(cause);
@@ -49,6 +65,10 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<IssuesFailure>
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
+      case "UnauthorizedError":
+        return c.json({ error: "unauthorized", reason: f.reason }, 401);
+      case "ForbiddenError":
+        return c.json({ error: "forbidden", reason: f.reason }, 403);
       case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
@@ -110,12 +130,13 @@ const validateLabels = (v: unknown) =>
 // ── shared lookups + writes ───────────────────────────────────────────────
 
 /**
- * Fetch an issue plus its board, AND prove the caller owns that board. The
- * ref is either a short id (FLOW-42, case-insensitive) or a UUID — SSE
- * payloads and pre-migration bookmarks still speak UUID. Missing issue and
- * someone else's issue are both 404 "issue" — existence must not leak.
+ * Fetch an issue plus its board, AND prove the caller holds `minRole` on
+ * that board. The ref is either a short id (FLOW-42, case-insensitive) or a
+ * UUID — SSE payloads and pre-migration bookmarks still speak UUID. Missing
+ * issue and an invisible board are both 404 "issue" — existence must not
+ * leak; a visible board with an under-role caller is 403.
  */
-const fetchOwnIssue = (ref: string, pubkey: string) =>
+const fetchIssue = (ref: string, pubkey: string | null, minRole: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
@@ -125,14 +146,12 @@ const fetchOwnIssue = (ref: string, pubkey: string) =>
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* new NotFoundError({ reason: "issue" });
     const issue = parseIssueRow(row);
-    const boardRow = yield* db.queryFirst<Record<string, unknown>>(
-      "SELECT * FROM boardCache WHERE id = ?",
-      [issue.board_id],
+    const { board } = yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
+      Effect.mapError((e) =>
+        e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
+      ),
     );
-    if (boardRow === null || boardRow["pubkey"] !== pubkey) {
-      return yield* new NotFoundError({ reason: "issue" });
-    }
-    return { issue, board: parseBoardRow(boardRow) };
+    return { issue, board };
   });
 
 interface StatusChangeWrite {
@@ -233,6 +252,12 @@ const applyContainerMove = (issue: IssueShape, to: Container, actor: string) =>
 export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   const issues = new Hono<AppHonoEnv>();
 
+  // The org-scoped mount (/api/v0/orgs/:org_slug) contributes org_slug via
+  // the mount prefix — Hono exposes it at runtime, but the per-route typed
+  // param() only knows keys from the route literal itself.
+  const orgSlugOf = (c: Context<AppHonoEnv>): string | undefined =>
+    (c.req.param() as Record<string, string | undefined>)["org_slug"];
+
   const runJson = async (
     c: Context<AppHonoEnv>,
     program: Effect.Effect<unknown, IssuesFailure, Db | AuditLog | BoardEmitter>,
@@ -245,10 +270,14 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── POST /boards/:slug/issues — create ──────────────────────────────────
   issues.post("/boards/:slug/issues", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const board = yield* assertOwnBoard(c.req.param("slug"), pubkey);
+      const { board } = yield* resolveBoardScope(
+        { org_slug: orgSlugOf(c), slug: c.req.param("slug") },
+        pubkey,
+        "contributor",
+      );
       const body = yield* readJsonBody(c);
 
       const title = yield* validateTitle(body["title"]);
@@ -363,7 +392,6 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /boards/:slug/issues — list with single-filter + keyset ─────────
   issues.get("/boards/:slug/issues", async (c) => {
-    const claims = c.get("claims");
     const q = {
       status: c.req.query("status"),
       container: c.req.query("container"),
@@ -374,7 +402,11 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const after = c.req.query("after");
 
     const program = Effect.gen(function* () {
-      const board = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+      const { board } = yield* resolveBoardScope(
+        { org_slug: orgSlugOf(c), slug: c.req.param("slug") },
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      );
 
       const active = Object.entries(q).filter(([, v]) => v !== undefined);
       if (active.length > 1) return yield* new ValidationError({ reason: "one-filter-at-a-time" });
@@ -437,9 +469,12 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /issues/:id ─────────────────────────────────────────────────────
   issues.get("/issues/:id", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const { issue } = yield* fetchOwnIssue(c.req.param("id"), callerPubkey(claims));
+      const { issue } = yield* fetchIssue(
+        c.req.param("id"),
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      );
       return { issue };
     });
     return runJson(c, program);
@@ -447,8 +482,8 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── PATCH /issues/:id — partial update (container excluded) ─────────────
   issues.patch("/issues/:id", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
       for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "completed_at_ms", "updated_at_ms"]) {
@@ -461,7 +496,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         return yield* new ValidationError({ reason: "empty-patch" });
       }
 
-      const { issue: current, board } = yield* fetchOwnIssue(c.req.param("id"), pubkey);
+      const { issue: current, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
       const db = yield* Db;
 
       const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
@@ -529,9 +564,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── DELETE /issues/:id — cascades comments in code; audit rows stay ─────
   issues.delete("/issues/:id", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const { issue } = yield* fetchOwnIssue(c.req.param("id"), callerPubkey(claims));
+      const claims = yield* requireCaller(c.get("claims"));
+      const { issue } = yield* fetchIssue(c.req.param("id"), callerPubkey(claims), "contributor");
       const db = yield* Db;
       const audit = yield* AuditLog;
       yield* db.execute("DELETE FROM commentCache WHERE issue_id = ?", [issue.id]);
@@ -556,11 +591,11 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── POST /issues/:id/transition — the drag-drop endpoint ────────────────
   issues.post("/issues/:id/transition", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      const { issue, board } = yield* fetchOwnIssue(c.req.param("id"), pubkey);
+      const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
       const toStatus = yield* validateStatus(board.columns, body["to_status"]);
       const updated = yield* applyStatusChange(issue, toStatus, pubkey);
       const audit = yield* AuditLog;
@@ -586,10 +621,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // ── container moves: three verbs, all idempotent ────────────────────────
   const containerEndpoint = (path: `/issues/:id/${string}`, to: Container, event: string) => {
     issues.post(path, async (c) => {
-      const claims = c.get("claims");
       const program = Effect.gen(function* () {
+        const claims = yield* requireCaller(c.get("claims"));
         const pubkey = callerPubkey(claims);
-        const { issue } = yield* fetchOwnIssue(c.req.param("id"), pubkey);
+        const { issue } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
         const updated = yield* applyContainerMove(issue, to, pubkey);
         const audit = yield* AuditLog;
         yield* audit.record({

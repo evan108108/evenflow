@@ -13,6 +13,7 @@ import {
   makeBoardEmitterTest,
   makeFourATest,
   type AppServices,
+  makeEmailTest,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
 import { requireAuth } from "../src/middleware/requireAuth";
@@ -34,6 +35,7 @@ export const makeHarness = () => {
   const emitter = makeBoardEmitterTest();
   const fourA = makeFourATest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
+    makeEmailTest().layer,
     JwtTest,
     db.layer,
     audit.layer,

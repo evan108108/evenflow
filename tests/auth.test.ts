@@ -11,6 +11,7 @@ import {
   makeBoardEmitterTest,
   makeFourATest,
   type AppServices,
+  makeEmailTest,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
 import { requireAuth } from "../src/middleware/requireAuth";
@@ -49,6 +50,7 @@ const makeHarness = (opts?: { fourAFails?: boolean }) => {
   const fourA = makeFourATest();
   fourA.failWhoami = opts?.fourAFails === true;
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
+    makeEmailTest().layer,
     JwtTest,
     db.layer,
     audit.layer,

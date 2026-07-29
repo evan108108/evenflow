@@ -59,6 +59,9 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // pubkey '' sentinel rows the KmsClient-stub era wrote.
   auth.get("/whoami", requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
+    if (claims === undefined) {
+      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+    }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
     const program = Effect.gen(function* () {
       const fourA = yield* FourA;
@@ -143,6 +146,9 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // Drop the caller's session row.
   auth.delete("/session", requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
+    if (claims === undefined) {
+      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+    }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
 
     const program = Effect.gen(function* () {

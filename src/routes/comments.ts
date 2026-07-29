@@ -4,15 +4,27 @@
 //
 // Threads read chronologically, so listing sorts created_at_ms ASC — the
 // opposite of the boards/issues lists — and the keyset cursor walks
-// forward. Deletion is author-only: board ownership grants no moderation
-// power in MVP (that conversation belongs to the membership phase).
+// forward. Deletion stays author-only on top of the phase-16 contributor
+// requirement: board admin rights grant no moderation power yet.
+//
+// Auth (phase 16): behind optionalAuth — thread reads run at "viewer"
+// (anonymous works on public boards); comment writes require a caller at
+// "contributor".
 
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { callerPubkey, type BoardOwnershipError } from "../authz";
+import {
+  ForbiddenError,
+  UnauthorizedError,
+  authorizeBoardById,
+  callerPubkey,
+  callerPubkeyOrNull,
+  requireCaller,
+  type BoardOwnershipError,
+} from "../authz";
 import { parseCommentRow, parseIssueRow, type CommentShape } from "../shapes";
 import { asShortId } from "../slug";
 
@@ -25,14 +37,12 @@ class ValidationError extends Data.TaggedError("ValidationError")<{
 class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly reason: string;
 }> {}
-class ForbiddenError extends Data.TaggedError("ForbiddenError")<{
-  readonly reason: string;
-}> {}
 
 type CommentsFailure =
   | ValidationError
   | NotFoundError
   | ForbiddenError
+  | UnauthorizedError
   | BoardOwnershipError
   | DbError;
 
@@ -43,6 +53,8 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<CommentsFailur
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
+      case "UnauthorizedError":
+        return c.json({ error: "unauthorized", reason: f.reason }, 401);
       case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
@@ -66,8 +78,12 @@ const readJsonBody = (c: Context<AppHonoEnv>) =>
     ),
   );
 
-/** Issue lookup (short id or UUID) + board-ownership proof, 404 "issue" on any miss. */
-const fetchOwnIssueId = (ref: string, pubkey: string) =>
+/**
+ * Issue lookup (short id or UUID) + minRole proof on its board. Missing
+ * issue and an invisible board are both 404 "issue" (no existence leak);
+ * a visible board with an under-role caller is 403.
+ */
+const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
@@ -77,13 +93,11 @@ const fetchOwnIssueId = (ref: string, pubkey: string) =>
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* new NotFoundError({ reason: "issue" });
     const issue = parseIssueRow(row);
-    const board = yield* db.queryFirst<Record<string, unknown>>(
-      "SELECT * FROM boardCache WHERE id = ?",
-      [issue.board_id],
+    yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
+      Effect.mapError((e) =>
+        e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
+      ),
     );
-    if (board === null || board["pubkey"] !== pubkey) {
-      return yield* new NotFoundError({ reason: "issue" });
-    }
     return issue;
   });
 
@@ -102,10 +116,10 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── POST /issues/:id/comments ───────────────────────────────────────────
   comments.post("/issues/:id/comments", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const issue = yield* fetchOwnIssueId(c.req.param("id"), pubkey);
+      const issue = yield* fetchIssueForRole(c.req.param("id"), pubkey, "contributor");
       const body = yield* readJsonBody(c);
 
       const text = body["body"];
@@ -162,11 +176,14 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /issues/:id/comments — chronological with forward keyset ────────
   comments.get("/issues/:id/comments", async (c) => {
-    const claims = c.get("claims");
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
     const program = Effect.gen(function* () {
-      const issue = yield* fetchOwnIssueId(c.req.param("id"), callerPubkey(claims));
+      const issue = yield* fetchIssueForRole(
+        c.req.param("id"),
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      );
 
       let limit = DEFAULT_LIMIT;
       if (limitRaw !== undefined) {
@@ -205,10 +222,10 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program);
   });
 
-  // ── DELETE /comments/:id — author-only ──────────────────────────────────
+  // ── DELETE /comments/:id — author-only, atop the contributor floor ──────
   comments.delete("/comments/:id", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const db = yield* Db;
       const row = yield* db.queryFirst("SELECT * FROM commentCache WHERE id = ?", [
@@ -216,6 +233,21 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       ]);
       if (row === null) return yield* new NotFoundError({ reason: "comment" });
       const comment = parseCommentRow(row);
+      // Comments don't carry board_id — resolve it through the issue. The
+      // issue can only be missing if it was deleted mid-flight (its comment
+      // cascade would have taken this row too); an orphan row still deletes
+      // on the author check alone.
+      const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [
+        comment.issue_id,
+      ]);
+      if (issueRow !== null) {
+        const issue = parseIssueRow(issueRow);
+        yield* authorizeBoardById(issue.board_id, pubkey, "contributor").pipe(
+          Effect.mapError((e) =>
+            e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "comment" }) : e,
+          ),
+        );
+      }
       if (comment.author_pubkey !== pubkey) {
         return yield* new ForbiddenError({ reason: "not-author" });
       }
@@ -226,12 +258,6 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { comment: comment.id },
       });
-      // Comments don't carry board_id — resolve it through the issue. The
-      // issue can only be missing if it was deleted mid-flight (its comment
-      // cascade would have taken this row too), so skip the emit then.
-      const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [
-        comment.issue_id,
-      ]);
       if (issueRow !== null) {
         const issue = parseIssueRow(issueRow);
         const now = yield* Clock.currentTimeMillis;

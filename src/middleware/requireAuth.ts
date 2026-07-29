@@ -1,9 +1,16 @@
-// requireAuth — Hono middleware factory gating routes on a valid 4a JWT.
+// Auth middleware — two flavors over the same JWT verification:
 //
-// Reads `Authorization: Bearer <jwt>`, verifies via the Jwt service (an
-// Effect program run against the per-request environment), and attaches the
-// verified claims to the request context. Failures answer 401 with a typed
-// body: { error: "unauthorized", reason: <JwtError reason | "missing-authorization"> }.
+//   requireAuth()  — hard gate: no (valid) token → 401. Pre-16 behavior,
+//                    still used for /auth/* surfaces.
+//   optionalAuth() — phase-16 gate for /api/v0/*: a PRESENT token must be
+//                    valid (invalid → 401 — never silently downgrade an
+//                    authenticated caller to anonymous), an ABSENT token
+//                    passes through unauthenticated so public boards can be
+//                    read without signing in. Routes gate mutations with
+//                    requireCaller(claims).
+//
+// Both set `claims` (verified) and `token` (raw JWT, forwarded to 4a
+// publish calls) on the request context when a token verifies.
 
 import type { MiddlewareHandler } from "hono";
 import { Cause, Effect, Exit, Option } from "effect";
@@ -12,13 +19,17 @@ import type { AppHonoEnv, LayerFor } from "../http";
 
 const BEARER_PREFIX = "Bearer ";
 
-export const requireAuth = (
-  layerFor: LayerFor = bootstrap,
+const makeAuthMiddleware = (
+  layerFor: LayerFor,
+  tokenRequired: boolean,
 ): MiddlewareHandler<AppHonoEnv> =>
   async (c, next) => {
     const header = c.req.header("Authorization");
     if (header === undefined || !header.startsWith(BEARER_PREFIX)) {
-      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+      if (tokenRequired) {
+        return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+      }
+      return next();
     }
     const token = header.slice(BEARER_PREFIX.length).trim();
 
@@ -37,5 +48,14 @@ export const requireAuth = (
     }
 
     c.set("claims", exit.value);
+    c.set("token", token);
     await next();
   };
+
+export const requireAuth = (
+  layerFor: LayerFor = bootstrap,
+): MiddlewareHandler<AppHonoEnv> => makeAuthMiddleware(layerFor, true);
+
+export const optionalAuth = (
+  layerFor: LayerFor = bootstrap,
+): MiddlewareHandler<AppHonoEnv> => makeAuthMiddleware(layerFor, false);

@@ -6,7 +6,12 @@ import type { Layer } from "effect";
 import type { AppServices, Claims, WorkerEnv } from "./effects";
 
 export interface AuthVariables {
-  claims: Claims;
+  // Both optional since phase 16: /api/v0 runs behind optionalAuth so public
+  // boards can be read anonymously. `claims` is set iff the request carried
+  // a valid JWT; `token` is that raw JWT (routes forward it to 4a publish
+  // calls). Mutations gate on requireCaller(claims).
+  claims?: Claims;
+  token?: string;
 }
 
 export type AppHonoEnv = {
