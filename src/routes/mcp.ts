@@ -106,6 +106,10 @@ const PAGING = {
 
 const CONTAINER = { type: "string", enum: ["icebox", "backlog", "active"] };
 
+// Every issue-scoped tool takes either identifier form; the REST layer
+// resolves both (src/slug.ts asShortId).
+const ISSUE_REF = "Issue UUID or short id like FLOW-42 (case-insensitive)";
+
 export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_board_list",
@@ -189,8 +193,8 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   },
   {
     name: "kanban_issue_get",
-    description: "Fetch a single issue by id.",
-    inputSchema: schema({ id: { type: "string" } }, ["id"]),
+    description: "Fetch a single issue by UUID or short id (e.g. FLOW-42).",
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({ method: "GET", path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}` }),
   },
   {
@@ -223,7 +227,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
       "Partially update an issue (title, body, status, assignee_pubkey, priority, estimate, labels). Container moves use the dedicated tools.",
     inputSchema: schema(
       {
-        id: { type: "string" },
+        id: { type: "string", description: ISSUE_REF },
         title: { type: "string" },
         body: { type: ["string", "null"] },
         status: { type: "string", description: "Must be one of the board's columns" },
@@ -243,7 +247,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_issue_transition",
     description: "Move an issue to another status column (the drag-drop verb).",
-    inputSchema: schema({ id: { type: "string" }, to_status: { type: "string" } }, ["id", "to_status"]),
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF }, to_status: { type: "string" } }, ["id", "to_status"]),
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/transition`,
@@ -253,7 +257,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_issue_promote_to_backlog",
     description: "Move an issue into the backlog container. Idempotent.",
-    inputSchema: schema({ id: { type: "string" } }, ["id"]),
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/promote_to_backlog`,
@@ -263,7 +267,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_issue_promote_to_active",
     description: "Move an issue into the active container. Idempotent.",
-    inputSchema: schema({ id: { type: "string" } }, ["id"]),
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/promote_to_active`,
@@ -273,7 +277,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_issue_send_to_icebox",
     description: "Move an issue into the icebox container. Idempotent.",
-    inputSchema: schema({ id: { type: "string" } }, ["id"]),
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/send_to_icebox`,
@@ -283,7 +287,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_issue_delete",
     description: "Delete an issue and its comments. Activity-feed audit rows are kept.",
-    inputSchema: schema({ id: { type: "string" } }, ["id"]),
+    inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({ method: "DELETE", path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}` }),
   },
   {
@@ -291,7 +295,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     description: "Post a comment on an issue, optionally as a reply to another comment on the same issue.",
     inputSchema: schema(
       {
-        issue_id: { type: "string" },
+        issue_id: { type: "string", description: ISSUE_REF },
         body: { type: "string" },
         in_reply_to: { type: ["string", "null"], description: "Parent comment id on the same issue" },
       },
@@ -306,7 +310,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   {
     name: "kanban_comment_list",
     description: "List an issue's comments in chronological order (forward keyset pagination).",
-    inputSchema: schema({ issue_id: { type: "string" }, ...PAGING }, ["issue_id"]),
+    inputSchema: schema({ issue_id: { type: "string", description: ISSUE_REF }, ...PAGING }, ["issue_id"]),
     toRequest: (a) => ({
       method: "GET",
       path: `/api/v0/issues/${encodeURIComponent(str(a, "issue_id"))}/comments`,

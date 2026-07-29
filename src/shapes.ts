@@ -17,6 +17,11 @@ export interface BoardShape {
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
+  // Short-id prefix (FLOW) + the next unclaimed issue number. Nullable only
+  // for rows that predate migration 0003's backfill; the create path derives
+  // and persists a prefix on first use.
+  readonly issue_prefix: string | null;
+  readonly next_issue_number: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }
@@ -24,6 +29,8 @@ export interface BoardShape {
 /** Mirrors issueCache (soft-FK projection of kind:30551 fa:KanbanIssue). */
 export interface IssueShape {
   readonly id: string;
+  // FLOW-42 — null only for rows awaiting the 0003 backfill.
+  readonly short_id: string | null;
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
@@ -170,6 +177,8 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     labels: labels as ReadonlyArray<unknown>,
     member_policy: h.string(r["member_policy"], "member_policy"),
     is_encrypted: h.number(r["is_encrypted"], "is_encrypted") !== 0,
+    issue_prefix: h.stringOrNull(r["issue_prefix"] ?? null, "issue_prefix"),
+    next_issue_number: h.number(r["next_issue_number"] ?? 1, "next_issue_number"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
   };
@@ -210,6 +219,7 @@ export const parseIssueRow = (row: unknown): IssueShape => {
 
   return {
     id: h.string(r["id"], "id"),
+    short_id: h.stringOrNull(r["short_id"] ?? null, "short_id"),
     board_id: h.string(r["board_id"], "board_id"),
     title: h.string(r["title"], "title"),
     body: h.stringOrNull(r["body"], "body"),

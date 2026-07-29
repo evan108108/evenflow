@@ -17,6 +17,7 @@ import type { AppHonoEnv, LayerFor } from "../http";
 import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
 import { parseIssueRow, parseStatusChangeRow, type StatusChangeShape } from "../shapes";
 import { SSE_HEADERS } from "../durable-objects/BoardDO";
+import { asShortId } from "../slug";
 
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
@@ -44,6 +45,7 @@ interface FeedItem {
   readonly id: string;
   readonly issue_id: string;
   readonly issue_title: string | null;
+  readonly issue_short_id: string | null;
   readonly actor_pubkey: string;
   readonly kind: FeedKind;
   readonly from: string | null;
@@ -54,12 +56,17 @@ interface FeedItem {
   readonly occurred_at_ms: number;
 }
 
-const toFeedItem = (s: StatusChangeShape, issue_title: string | null): FeedItem => {
+const toFeedItem = (
+  s: StatusChangeShape,
+  issue_title: string | null,
+  issue_short_id: string | null,
+): FeedItem => {
   const kind = kindOf(s);
   return {
     id: s.id,
     issue_id: s.issue_id,
     issue_title,
+    issue_short_id,
     actor_pubkey: s.actor_pubkey,
     kind,
     from: kind === "container" ? s.from_container : s.from_status,
@@ -148,20 +155,24 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
       );
       const changes = rows.slice(0, limit).map(parseStatusChangeRow);
 
-      // Enrich with issue titles in code — deleted issues resolve to null.
+      // Enrich with issue titles + short ids in code — deleted issues
+      // resolve to null on both.
       const issueIds = [...new Set(changes.map((s) => s.issue_id))];
-      const titles = new Map<string, string>();
+      const refs = new Map<string, { title: string; short_id: string | null }>();
       if (issueIds.length > 0) {
         const placeholders = issueIds.map(() => "?").join(", ");
-        const titleRows = yield* db.queryAll<{ id: string; title: string }>(
-          `SELECT id, title FROM issueCache WHERE id IN (${placeholders})`,
+        const refRows = yield* db.queryAll<{ id: string; title: string; short_id: string | null }>(
+          `SELECT id, title, short_id FROM issueCache WHERE id IN (${placeholders})`,
           issueIds,
         );
-        for (const t of titleRows) titles.set(t.id, t.title);
+        for (const t of refRows) refs.set(t.id, { title: t.title, short_id: t.short_id });
       }
 
       return {
-        activity: changes.map((s) => toFeedItem(s, titles.get(s.issue_id) ?? null)),
+        activity: changes.map((s) => {
+          const ref = refs.get(s.issue_id);
+          return toFeedItem(s, ref?.title ?? null, ref?.short_id ?? null);
+        }),
         has_more: rows.length > limit,
       };
     });
@@ -178,9 +189,12 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
 
     const program = Effect.gen(function* () {
       const db = yield* Db;
-      const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [
-        c.req.param("id"),
-      ]);
+      const ref = c.req.param("id");
+      const shortId = asShortId(ref);
+      const issueRow =
+        shortId === null
+          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
+          : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
       if (issueRow === null) return yield* new NotFoundError({ reason: "issue" });
       const issue = parseIssueRow(issueRow);
       // Same non-leaking posture as issues.ts: someone else's issue and a
@@ -206,7 +220,7 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
       );
       const changes = rows.slice(0, limit).map(parseStatusChangeRow);
       return {
-        activity: changes.map((s) => toFeedItem(s, issue.title)),
+        activity: changes.map((s) => toFeedItem(s, issue.title, issue.short_id)),
         has_more: rows.length > limit,
       };
     });

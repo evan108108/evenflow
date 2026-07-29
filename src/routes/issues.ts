@@ -23,6 +23,7 @@ import {
   type Container,
   type IssueShape,
 } from "../shapes";
+import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -109,14 +110,19 @@ const validateLabels = (v: unknown) =>
 // ── shared lookups + writes ───────────────────────────────────────────────
 
 /**
- * Fetch an issue plus its board, AND prove the caller owns that board.
- * Missing issue and someone else's issue are both 404 "issue" — existence
- * must not leak.
+ * Fetch an issue plus its board, AND prove the caller owns that board. The
+ * ref is either a short id (FLOW-42, case-insensitive) or a UUID — SSE
+ * payloads and pre-migration bookmarks still speak UUID. Missing issue and
+ * someone else's issue are both 404 "issue" — existence must not leak.
  */
-const fetchOwnIssue = (id: string, pubkey: string) =>
+const fetchOwnIssue = (ref: string, pubkey: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
-    const row = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [id]);
+    const shortId = asShortId(ref);
+    const row =
+      shortId === null
+        ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
+        : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* new NotFoundError({ reason: "issue" });
     const issue = parseIssueRow(row);
     const boardRow = yield* db.queryFirst<Record<string, unknown>>(
@@ -265,10 +271,34 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const db = yield* Db;
       const audit = yield* AuditLog;
+
+      // Board prefix: POST /boards always sets one; boards that predate
+      // migration 0003's backfill self-heal on first issue create.
+      let prefix = board.issue_prefix;
+      if (prefix === null) {
+        const taken = yield* db.queryAll<{ issue_prefix: string }>(
+          "SELECT issue_prefix FROM boardCache WHERE issue_prefix IS NOT NULL",
+        );
+        prefix = uniquePrefix(derivePrefix(board.title), new Set(taken.map((r) => r.issue_prefix)));
+        yield* db.execute(
+          "UPDATE boardCache SET issue_prefix = ? WHERE id = ? AND issue_prefix IS NULL",
+          [prefix, board.id],
+        );
+      }
+      // Atomic claim — a single UPDATE ... RETURNING is D1's concurrency
+      // primitive here, so racing creates can never read the same number.
+      const claimed = yield* db.queryFirst<{ n: number }>(
+        "UPDATE boardCache SET next_issue_number = next_issue_number + 1 WHERE id = ? RETURNING next_issue_number - 1 AS n",
+        [board.id],
+      );
+      if (claimed === null) return yield* new NotFoundError({ reason: "board" });
+      const short_id = `${prefix}-${claimed.n}`;
+
       const now = yield* Clock.currentTimeMillis;
       const id = crypto.randomUUID();
       const issue: IssueShape = {
         id,
+        short_id,
         board_id: board.id,
         title,
         body: issueBody,
@@ -284,9 +314,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         completed_at_ms: status === DONE_STATUS ? now : null,
       };
       yield* db.execute(
-        "INSERT INTO issueCache (id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO issueCache (id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
+          short_id,
           board.id,
           title,
           issueBody,

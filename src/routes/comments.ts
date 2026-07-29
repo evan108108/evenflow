@@ -14,6 +14,7 @@ import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "
 import type { AppHonoEnv, LayerFor } from "../http";
 import { callerPubkey, type BoardOwnershipError } from "../authz";
 import { parseCommentRow, parseIssueRow, type CommentShape } from "../shapes";
+import { asShortId } from "../slug";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -65,11 +66,15 @@ const readJsonBody = (c: Context<AppHonoEnv>) =>
     ),
   );
 
-/** Issue lookup + board-ownership proof, 404 "issue" on any miss. */
-const fetchOwnIssueId = (id: string, pubkey: string) =>
+/** Issue lookup (short id or UUID) + board-ownership proof, 404 "issue" on any miss. */
+const fetchOwnIssueId = (ref: string, pubkey: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
-    const row = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [id]);
+    const shortId = asShortId(ref);
+    const row =
+      shortId === null
+        ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
+        : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* new NotFoundError({ reason: "issue" });
     const issue = parseIssueRow(row);
     const board = yield* db.queryFirst<Record<string, unknown>>(

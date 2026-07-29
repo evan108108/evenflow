@@ -395,3 +395,61 @@ describe("auth gating", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("short ids", () => {
+  it("assigns sequential short_ids from the board prefix and bumps the counter", async () => {
+    const h = makeHarness();
+    await createBoard(h); // title "Board" → derived prefix BOA
+    const first = await createIssue(h, { title: "one" });
+    const second = await createIssue(h, { title: "two" });
+    expect(first.short_id).toBe("BOA-1");
+    expect(second.short_id).toBe("BOA-2");
+    expect(h.db.boards[0]!["next_issue_number"]).toBe(3);
+  });
+
+  it("five concurrent creates yield distinct, gapless numbers", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issues = await Promise.all(
+      Array.from({ length: 5 }, (_, i) => createIssue(h, { title: `c${i}` })),
+    );
+    const shortIds = issues.map((i) => i.short_id).sort();
+    expect(shortIds).toEqual(["BOA-1", "BOA-2", "BOA-3", "BOA-4", "BOA-5"]);
+    expect(h.db.boards[0]!["next_issue_number"]).toBe(6);
+  });
+
+  it("resolves the same issue by short_id, lowercase short_id, and UUID", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    for (const ref of ["BOA-1", "boa-1", issue.id]) {
+      const res = await h.app.request(`/api/v0/issues/${ref}`, { headers: bearer }, {});
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { issue: IssueShape };
+      expect(body.issue.id).toBe(issue.id);
+      expect(body.issue.short_id).toBe("BOA-1");
+    }
+  });
+
+  it("accepts short_ids on mutation endpoints (transition + comments)", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const res = await h.app.request(
+      "/api/v0/issues/BOA-1/transition",
+      jsonReq("POST", { to_status: "Done" }),
+      {},
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issue: IssueShape };
+    expect(body.issue.id).toBe(issue.id);
+    expect(body.issue.status).toBe("Done");
+  });
+
+  it("404s an unknown short id", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request("/api/v0/issues/BOA-99", { headers: bearer }, {});
+    expect(res.status).toBe(404);
+  });
+});

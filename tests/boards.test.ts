@@ -7,9 +7,9 @@ import {
   JwtTest,
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
-  KmsClientTest,
   makeAuditLogTest,
   makeBoardEmitterTest,
+  makeFourATest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
@@ -42,14 +42,14 @@ const makeDbMock = () => {
     execute: (sql, params = []) =>
       Effect.sync(() => {
         if (sql.startsWith("INSERT INTO boardCache")) {
-          const [id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, created_at_ms, updated_at_ms] = params;
-          rows.push({ id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, created_at_ms, updated_at_ms });
+          const [id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms] = params;
+          rows.push({ id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE boardCache SET")) {
-          const [title, description, columns, labels, member_policy, updated_at_ms, id] = params;
+          const [title, description, columns, labels, member_policy, issue_prefix, updated_at_ms, id] = params;
           const row = rows.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, description, columns, labels, member_policy, updated_at_ms });
+          if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, updated_at_ms });
           return;
         }
         if (sql.startsWith("DELETE FROM boardCache")) {
@@ -80,6 +80,11 @@ const makeDbMock = () => {
       }),
     queryAll: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
       Effect.sync(() => {
+        if (sql.startsWith("SELECT issue_prefix FROM boardCache WHERE issue_prefix IS NOT NULL")) {
+          return rows
+            .filter((r) => r["issue_prefix"] != null)
+            .map((r) => ({ issue_prefix: r["issue_prefix"] })) as R[];
+        }
         if (sql.includes("(updated_at_ms < ?")) {
           const [pubkey, upd, , afterId, limit] = params;
           return byPubkeyDesc(pubkey)
@@ -112,7 +117,7 @@ const makeHarness = () => {
     db.layer,
     audit.layer,
     emitter.layer,
-    KmsClientTest,
+    makeFourATest().layer,
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", requireAuth(() => layer));
@@ -149,7 +154,7 @@ describe("POST /api/v0/boards", () => {
       slug: "kb",
       title: "Kanban",
       description: null,
-      columns: ["Backlog", "Todo", "In Progress", "In Review", "Done"],
+      columns: ["Todo", "In Progress", "In Review", "Done"],
       labels: [],
       member_policy: "invite",
       is_encrypted: false,
@@ -321,5 +326,58 @@ describe("auth gating", () => {
     const { app } = makeHarness();
     const res = await app.request(path, { method }, {});
     expect(res.status).toBe(401);
+  });
+});
+
+describe("issue_prefix", () => {
+  it("derives a prefix from the title and starts the counter at 1", async () => {
+    const { app } = makeHarness();
+    const res = await createBoard(app); // "Kanban" → KAN
+    const { board } = (await res.json()) as { board: BoardShape };
+    expect(board.issue_prefix).toBe("KAN");
+    expect(board.next_issue_number).toBe(1);
+  });
+
+  it("accepts an explicit prefix, uppercasing it", async () => {
+    const { app } = makeHarness();
+    const res = await createBoard(app, { issue_prefix: "flow" });
+    const { board } = (await res.json()) as { board: BoardShape };
+    expect(board.issue_prefix).toBe("FLOW");
+  });
+
+  it("rejects a malformed prefix with 400", async () => {
+    const { app } = makeHarness();
+    for (const bad of ["X", "TOOLONG", "FL-OW", ""]) {
+      const res = await createBoard(app, { issue_prefix: bad, slug: `kb-${bad.length}` });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "issue_prefix" });
+    }
+  });
+
+  it("auto-suffixes a taken prefix and returns the finalized value", async () => {
+    const { app } = makeHarness();
+    expect((await createBoard(app, { issue_prefix: "FLOW" })).status).toBe(201);
+    const res = await createBoard(app, { slug: "kb2", issue_prefix: "FLOW" });
+    expect(res.status).toBe(201);
+    const { board } = (await res.json()) as { board: BoardShape };
+    expect(board.issue_prefix).toBe("FLOW2");
+  });
+
+  it("PATCH may change the prefix while no issue exists", async () => {
+    const { app } = makeHarness();
+    await createBoard(app);
+    const res = await app.request("/api/v0/boards/kb", jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
+    expect(res.status).toBe(200);
+    const { board } = (await res.json()) as { board: BoardShape };
+    expect(board.issue_prefix).toBe("ZZ");
+  });
+
+  it("PATCH prefix 409s once an issue number has been claimed", async () => {
+    const { app, db } = makeHarness();
+    await createBoard(app);
+    db.rows[0]!["next_issue_number"] = 2; // an issue exists
+    const res = await app.request("/api/v0/boards/kb", jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "conflict", reason: "prefix-locked-issues-exist" });
   });
 });

@@ -20,6 +20,7 @@ import { AuditLog, Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
 import { parseBoardRow, type BoardShape } from "../shapes";
+import { PREFIX_RE, derivePrefix, uniquePrefix } from "../slug";
 
 const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MEMBER_POLICIES = ["open", "invite"] as const;
@@ -95,6 +96,26 @@ const validateMemberPolicy = (v: unknown) =>
     ? Effect.succeed(v)
     : Effect.fail(new ValidationError({ reason: "member_policy" }));
 
+const validatePrefix = (v: unknown) =>
+  typeof v === "string" && PREFIX_RE.test(v.toUpperCase())
+    ? Effect.succeed(v.toUpperCase())
+    : Effect.fail(new ValidationError({ reason: "issue_prefix" }));
+
+/**
+ * Resolve the requested (or title-derived) prefix against every prefix
+ * already in use — global scope, because short_ids are globally unique.
+ * A conflict auto-suffixes (FLOW → FLOW2) rather than failing; the caller
+ * reads the finalized value off the response.
+ */
+const finalizePrefix = (requested: string) =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const rows = yield* db.queryAll<{ issue_prefix: string }>(
+      "SELECT issue_prefix FROM boardCache WHERE issue_prefix IS NOT NULL",
+    );
+    return uniquePrefix(requested, new Set(rows.map((r) => r.issue_prefix)));
+  });
+
 const readJsonBody = (c: Context<AppHonoEnv>) =>
   Effect.tryPromise({
     try: () => c.req.json() as Promise<Record<string, unknown>>,
@@ -130,6 +151,10 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["member_policy"] === undefined
           ? "invite"
           : yield* validateMemberPolicy(body["member_policy"]);
+      const requestedPrefix =
+        body["issue_prefix"] === undefined
+          ? derivePrefix(title)
+          : yield* validatePrefix(body["issue_prefix"]);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -141,6 +166,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       );
       if (existing !== null) return yield* new ConflictError({ reason: "slug-in-use" });
 
+      const issue_prefix = yield* finalizePrefix(requestedPrefix);
       const now = yield* Clock.currentTimeMillis;
       const id = crypto.randomUUID();
       const board: BoardShape = {
@@ -153,11 +179,13 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         labels,
         member_policy,
         is_encrypted: false,
+        issue_prefix,
+        next_issue_number: 1,
         created_at_ms: now,
         updated_at_ms: now,
       };
       yield* db.execute(
-        "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           pubkey,
@@ -168,6 +196,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           JSON.stringify(labels),
           member_policy,
           0,
+          issue_prefix,
+          1,
           now,
           now,
         ],
@@ -255,12 +285,26 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
       }
-      const hasPatch = ["title", "description", "columns", "labels", "member_policy"].some(
+      const hasPatch = ["title", "description", "columns", "labels", "member_policy", "issue_prefix"].some(
         (k) => body[k] !== undefined,
       );
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
       const current = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+
+      // Renaming a prefix would orphan every FLOW-n URL and reference
+      // already minted, so it is only editable while no issue exists yet.
+      let issue_prefix = current.issue_prefix;
+      if (body["issue_prefix"] !== undefined) {
+        if (current.next_issue_number !== 1) {
+          return yield* new ConflictError({
+            reason: "prefix-locked-issues-exist",
+          });
+        }
+        const requested = yield* validatePrefix(body["issue_prefix"]);
+        issue_prefix =
+          requested === current.issue_prefix ? requested : yield* finalizePrefix(requested);
+      }
 
       const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
       const description =
@@ -280,13 +324,14 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       yield* db.execute(
-        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, updated_at_ms = ? WHERE id = ?",
+        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, updated_at_ms = ? WHERE id = ?",
         [
           title,
           description === null ? null : JSON.stringify(description),
           JSON.stringify(columns),
           JSON.stringify(labels),
           member_policy,
+          issue_prefix,
           now,
           current.id,
         ],
@@ -303,6 +348,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         columns,
         labels,
         member_policy,
+        issue_prefix,
         updated_at_ms: now,
       };
       return { board };

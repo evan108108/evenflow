@@ -75,13 +75,16 @@ export const makeDbMock = (): DbMock => {
     execute: (sql, params = []) =>
       Effect.sync(() => {
         if (sql.startsWith("INSERT INTO boardCache")) {
-          const [id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, created_at_ms, updated_at_ms] = params;
-          boards.push({ id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, created_at_ms, updated_at_ms });
+          const [id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms] = params;
+          boards.push({ id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO issueCache")) {
-          const [id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
-          issues.push({ id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
+          const [id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
+          if (issues.some((r) => r["short_id"] !== null && r["short_id"] === short_id)) {
+            throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
+          }
+          issues.push({ id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO commentCache")) {
@@ -112,10 +115,16 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { title, body, status, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
           return;
         }
+        if (sql.startsWith("UPDATE boardCache SET issue_prefix = ?")) {
+          const [issue_prefix, id] = params;
+          const row = boards.find((r) => r["id"] === id && r["issue_prefix"] == null);
+          if (row) Object.assign(row, { issue_prefix });
+          return;
+        }
         if (sql.startsWith("UPDATE boardCache SET")) {
-          const [title, description, columns, labels, member_policy, updated_at_ms, id] = params;
+          const [title, description, columns, labels, member_policy, issue_prefix, updated_at_ms, id] = params;
           const row = boards.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, description, columns, labels, member_policy, updated_at_ms });
+          if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, updated_at_ms });
           return;
         }
         if (sql.startsWith("DELETE FROM issueCache WHERE id = ?")) {
@@ -143,6 +152,18 @@ export const makeDbMock = (): DbMock => {
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
       Effect.sync(() => {
+        // The atomic issue-number claim (single-statement UPDATE...RETURNING).
+        if (sql.startsWith("UPDATE boardCache SET next_issue_number = next_issue_number + 1")) {
+          const row = boards.find((x) => x["id"] === params[0]);
+          if (!row) return null;
+          const claimed = num(row["next_issue_number"]);
+          row["next_issue_number"] = claimed + 1;
+          return { n: claimed } as R;
+        }
+        if (sql.startsWith("SELECT * FROM issueCache WHERE short_id = ?")) {
+          const r = issues.find((x) => x["short_id"] === params[0]);
+          return (r ? { ...r } : null) as R | null;
+        }
         if (sql.startsWith("SELECT id FROM boardCache WHERE pubkey = ? AND slug = ?")) {
           const r = boards.find((x) => x["pubkey"] === params[0] && x["slug"] === params[1]);
           return (r ? { id: r["id"] } : null) as R | null;
@@ -258,10 +279,15 @@ export const makeDbMock = (): DbMock => {
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
         }
-        if (sql.startsWith("SELECT id, title FROM issueCache WHERE id IN")) {
+        if (sql.startsWith("SELECT id, title, short_id FROM issueCache WHERE id IN")) {
           return issues
             .filter((r) => (params as unknown[]).includes(r["id"]))
-            .map((r) => ({ id: r["id"], title: r["title"] })) as R[];
+            .map((r) => ({ id: r["id"], title: r["title"], short_id: r["short_id"] ?? null })) as R[];
+        }
+        if (sql.startsWith("SELECT issue_prefix FROM boardCache WHERE issue_prefix IS NOT NULL")) {
+          return boards
+            .filter((r) => r["issue_prefix"] != null)
+            .map((r) => ({ issue_prefix: r["issue_prefix"] })) as R[];
         }
         if (sql.startsWith("SELECT * FROM boardCache WHERE pubkey = ? ORDER BY")) {
           const rows = boards
