@@ -19,6 +19,7 @@ export interface DbMock {
   readonly comments: Row[];
   readonly statusChanges: Row[];
   readonly attachments: Row[];
+  readonly apiKeys: Row[];
   readonly orgs: Row[];
   readonly orgMembers: Row[];
   readonly boardMembers: Row[];
@@ -37,6 +38,7 @@ export const makeDbMock = (): DbMock => {
   const comments: Row[] = [];
   const statusChanges: Row[] = [];
   const attachments: Row[] = [];
+  const apiKeys: Row[] = [];
   const orgs: Row[] = [];
   const orgMembers: Row[] = [];
   const boardMembers: Row[] = [];
@@ -121,6 +123,23 @@ export const makeDbMock = (): DbMock => {
             throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
           }
           issues.push({ id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO apiKeys")) {
+          const [id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms] = params;
+          apiKeys.push({ id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE apiKeys SET last_used_at_ms = ?")) {
+          const [last_used_at_ms, id] = params;
+          const row = apiKeys.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { last_used_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE apiKeys SET revoked_at_ms = ?")) {
+          const [revoked_at_ms, id] = params;
+          const row = apiKeys.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { revoked_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO issueAttachmentCache")) {
@@ -427,6 +446,10 @@ export const makeDbMock = (): DbMock => {
           const r = issues.find((x) => x["short_id"] === params[0] && x["board_id"] === params[1]);
           return (r ? { ...r } : null) as R | null;
         }
+        if (sql.startsWith("SELECT id, revoked_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?")) {
+          const r = apiKeys.find((x) => x["id"] === params[0] && x["pubkey"] === params[1]);
+          return (r ? { id: r["id"], revoked_at_ms: r["revoked_at_ms"] } : null) as R | null;
+        }
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND deleted_at_ms IS NULL")) {
           const r = attachments.find((x) => x["id"] === params[0] && x["deleted_at_ms"] === null);
           return (r ? { ...r } : null) as R | null;
@@ -642,6 +665,17 @@ export const makeDbMock = (): DbMock => {
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
         }
+        if (sql.startsWith("SELECT id, pubkey, name, key_hash, last_used_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL")) {
+          return apiKeys
+            .filter((r) => r["prefix"] === params[0] && r["revoked_at_ms"] === null)
+            .map((r) => ({ id: r["id"], pubkey: r["pubkey"], name: r["name"], key_hash: r["key_hash"], last_used_at_ms: r["last_used_at_ms"] })) as R[];
+        }
+        if (sql.startsWith("SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms FROM apiKeys WHERE pubkey = ?")) {
+          return apiKeys
+            .filter((r) => r["pubkey"] === params[0])
+            .sort((a, b) => num(b["created_at_ms"]) - num(a["created_at_ms"]))
+            .map((r) => ({ id: r["id"], name: r["name"], prefix: r["prefix"], created_at_ms: r["created_at_ms"], last_used_at_ms: r["last_used_at_ms"], revoked_at_ms: r["revoked_at_ms"] })) as R[];
+        }
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL")) {
           return attachments
             .filter((r) => r["issue_id"] === params[0] && r["deleted_at_ms"] === null)
@@ -803,6 +837,7 @@ export const makeDbMock = (): DbMock => {
     comments,
     statusChanges,
     attachments,
+    apiKeys,
     orgs,
     orgMembers,
     boardMembers,

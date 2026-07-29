@@ -407,12 +407,15 @@ describe("BoardSettings", () => {
     const { container, dispose } = mountAt("/@acme/roadmap/settings", "/:handle/:board_slug/settings", () => <BoardSettings />);
     await tick(80);
     expect(container.textContent).toContain("Board settings");
-    // Visibility sits on the default General tab; members moved to their own.
+    // Visibility moved to the Danger-zone tab in the phase-18 polish pass.
+    const tabButton = (label: string) =>
+      [...container.querySelectorAll<HTMLButtonElement>(".settings-tabs button")].find(
+        (b) => b.textContent === label,
+      );
+    tabButton("Danger zone")!.click();
+    await tick(20);
     expect(container.textContent).toContain("Private");
-    const membersTab = [...container.querySelectorAll<HTMLButtonElement>(".settings-tabs button")].find(
-      (b) => b.textContent === "Members",
-    );
-    membersTab!.click();
+    tabButton("Members")!.click();
     await tick(20);
     const select = container.querySelector<HTMLSelectElement>(".member-row select");
     expect(select).not.toBeNull();
