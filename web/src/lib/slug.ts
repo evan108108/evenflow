@@ -25,5 +25,9 @@ export const derivePrefix = (title: string): string => {
     const letters = words.join("");
     prefix = (prefix + letters.slice(prefix.length)).slice(0, PREFIX_MAX_LEN);
   }
-  return prefix.slice(0, PREFIX_MAX_LEN).padEnd(PREFIX_MIN_LEN, "X");
+  // No title yet → no derivation. UI shows an empty preview until the user
+  // types something. Don't invent "XX" as a placeholder — that's a real
+  // usable prefix and users were saving boards with it by accident.
+  if (prefix.length < PREFIX_MIN_LEN) return "";
+  return prefix.slice(0, PREFIX_MAX_LEN);
 };

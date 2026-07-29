@@ -19,7 +19,9 @@ const STOPWORDS = new Set(["THE", "A", "AN", "MY"]);
 /**
  * Derive a default prefix from a board title. Multi-word titles initialize
  * ("Evan's Flow" → EF, ignoring fragments under 2 chars); single words
- * truncate ("Foo" → FOO). Degenerate titles pad to the minimum with X.
+ * truncate ("Foo" → FOO). Returns an empty string for degenerate input —
+ * the caller must handle that (typically by requiring the client to supply
+ * an explicit issue_prefix). No more "XX" placeholder.
  */
 export const derivePrefix = (title: string): string => {
   const words = title
@@ -38,7 +40,8 @@ export const derivePrefix = (title: string): string => {
     const letters = words.join("");
     prefix = (prefix + letters.slice(prefix.length)).slice(0, PREFIX_MAX_LEN);
   }
-  return prefix.slice(0, PREFIX_MAX_LEN).padEnd(PREFIX_MIN_LEN, "X");
+  if (prefix.length < PREFIX_MIN_LEN) return "";
+  return prefix.slice(0, PREFIX_MAX_LEN);
 };
 
 /** First free prefix: the base itself, else digit-suffixed (FLOW → FLOW2 → FLOW3), trimming the base to stay within PREFIX_MAX_LEN. */

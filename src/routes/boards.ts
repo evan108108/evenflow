@@ -151,10 +151,17 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["member_policy"] === undefined
           ? "invite"
           : yield* validateMemberPolicy(body["member_policy"]);
-      const requestedPrefix =
+      const derived =
         body["issue_prefix"] === undefined
           ? derivePrefix(title)
-          : yield* validatePrefix(body["issue_prefix"]);
+          : null;
+      if (derived === "") {
+        return yield* new ValidationError({ reason: "issue_prefix" });
+      }
+      const requestedPrefix =
+        derived !== null
+          ? derived
+          : yield* validatePrefix(body["issue_prefix"] as string);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
