@@ -12,6 +12,10 @@ export interface Claims {
   readonly provider: string;
   readonly oauth_id: string;
   readonly login: string;
+  // OAuth-provider avatar URL (Google userinfo picture / GitHub avatar_url),
+  // minted into the token by the 4a AS since 2026-07-29. Absent on older
+  // tokens and when the provider returned none.
+  readonly picture?: string;
   readonly iat: number;
   readonly exp: number;
 }
@@ -68,10 +72,18 @@ const parseClaims = (value: unknown): Claims | null => {
   ) {
     return null;
   }
+  // Same claims-safe gate the gateway mints with: https-only, bounded.
+  const picture =
+    typeof c["picture"] === "string" &&
+    c["picture"].startsWith("https://") &&
+    c["picture"].length <= 512
+      ? c["picture"]
+      : undefined;
   return {
     provider: c["provider"],
     oauth_id: c["oauth_id"],
     login: c["login"],
+    ...(picture === undefined ? {} : { picture }),
     iat: c["iat"],
     exp: c["exp"],
   };
@@ -162,9 +174,19 @@ export const JWT_TEST_CLAIMS: Claims = {
   exp: 4102444800, // 2100-01-01
 };
 
+/** Variant carrying an OAuth avatar claim, for picture-seed tests. */
+export const JWT_TEST_TOKEN_WITH_PICTURE = "evenflow-test-token-with-picture";
+
+export const JWT_TEST_CLAIMS_WITH_PICTURE: Claims = {
+  ...JWT_TEST_CLAIMS,
+  picture: "https://avatars.example/me.png",
+};
+
 export const JwtTest: Layer.Layer<Jwt> = Layer.succeed(Jwt, {
   verify: (token) =>
     token === JWT_TEST_TOKEN
       ? Effect.succeed(JWT_TEST_CLAIMS)
-      : Effect.fail(new JwtError({ reason: "bad-signature" })),
+      : token === JWT_TEST_TOKEN_WITH_PICTURE
+        ? Effect.succeed(JWT_TEST_CLAIMS_WITH_PICTURE)
+        : Effect.fail(new JwtError({ reason: "bad-signature" })),
 });

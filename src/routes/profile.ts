@@ -28,6 +28,12 @@ const ABOUT_MAX = 4000;
 
 const BEARER_PREFIX = "Bearer ";
 
+// Picture uploads (proxied to 4a's POST /v0/blob). Server-side downscale /
+// re-encode (512px + JPEG) is a follow-up; v1 trusts the client to send a
+// reasonable size under the hard cap.
+export const MAX_UPLOAD_BYTES = 256 * 1024;
+export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
@@ -176,14 +182,96 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
     const claims = c.get("claims");
     const program = Effect.gen(function* () {
       const me = yield* resolveProfile(callerPubkey(claims));
+      let out = me;
       // Fresh-user display seed: no kind 0 and nothing named yet → show the
       // login-prefix instead of the raw provider:oauth_id. Response-only —
       // never cached, never published — so the substrate stays exactly what
       // the user chose to write.
       if (me.event_id === null && me.display_name === null && me.name === null) {
-        return { profile: { ...me, display_name: claims.login.split("@")[0] ?? null } };
+        out = { ...out, display_name: claims.login.split("@")[0] ?? null };
       }
-      return { profile: me };
+      // OAuth avatar seed, same response-only posture: an unset picture
+      // shows the provider avatar riding in the JWT until the user Saves
+      // (which publishes it) or replaces it. seeded_from tells the UI to
+      // badge it as "your Google/GitHub avatar — save to keep it".
+      let seeded_from: "oauth" | null = null;
+      if (out.picture === null && claims.picture !== undefined) {
+        out = { ...out, picture: claims.picture };
+        seeded_from = "oauth";
+      }
+      return { profile: out, seeded_from };
+    });
+    return runJson(c, program);
+  });
+
+  // ── POST /profile/picture ───────────────────────────────────────────────
+  // Stage a profile picture: validate, proxy the bytes to 4a's blob store,
+  // return the immutable URL. Deliberately does NOT publish a kind 0 — the
+  // URL only reaches the substrate when the user Saves (PUT /profile/me),
+  // so the UI can preview before anything goes public.
+  profile.post("/profile/picture", async (c) => {
+    const claims = c.get("claims");
+    const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
+    const contentTypeHeader = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+
+    const program = Effect.gen(function* () {
+      let bytes: Uint8Array;
+      let imageType: string;
+
+      if (contentTypeHeader === "multipart/form-data") {
+        const form = yield* Effect.tryPromise({
+          try: () => c.req.formData(),
+          catch: () => new ValidationError({ reason: "expected-multipart" }),
+        });
+        // FormDataEntryValue is string | File; workers-types has no global
+        // File to instanceof against, so duck-type on the Blob surface.
+        const entry = form.get("file") as { type?: string; arrayBuffer?: () => Promise<ArrayBuffer> } | string | null;
+        if (entry === null || typeof entry === "string" || typeof entry.arrayBuffer !== "function") {
+          return yield* new ValidationError({ reason: "missing-file" });
+        }
+        imageType = (entry.type ?? "").split(";")[0]!.trim().toLowerCase();
+        bytes = new Uint8Array(yield* Effect.promise(() => entry.arrayBuffer!()));
+      } else {
+        const body = yield* Effect.tryPromise({
+          try: () => c.req.json() as Promise<Record<string, unknown>>,
+          catch: () => new ValidationError({ reason: "expected-json" }),
+        });
+        if (typeof body["image_b64"] !== "string" || body["image_b64"] === "") {
+          return yield* new ValidationError({ reason: "image_b64" });
+        }
+        if (typeof body["content_type"] !== "string") {
+          return yield* new ValidationError({ reason: "content_type" });
+        }
+        imageType = body["content_type"].split(";")[0]!.trim().toLowerCase();
+        try {
+          const bin = atob(body["image_b64"]);
+          bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        } catch {
+          return yield* new ValidationError({ reason: "image_b64-not-base64" });
+        }
+      }
+
+      if (!ALLOWED_IMAGE_TYPES.includes(imageType)) {
+        return yield* new ValidationError({ reason: "unsupported-image-type" });
+      }
+      if (bytes.byteLength === 0) {
+        return yield* new ValidationError({ reason: "empty-image" });
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+        return yield* new ValidationError({ reason: "image-too-large" });
+      }
+
+      const fourA = yield* FourA;
+      const blob = yield* fourA.uploadBlob(token, bytes, imageType);
+
+      const audit = yield* AuditLog;
+      yield* audit.record({
+        event_type: "profile_picture_uploaded",
+        actor: claims.login,
+        details: { sha256: blob.sha256, bytes: bytes.byteLength, content_type: imageType },
+      });
+      return { url: blob.url, sha256: blob.sha256 };
     });
     return runJson(c, program);
   });

@@ -228,3 +228,109 @@ describe("GET /api/v0/profile?pubkeys= bulk", () => {
     expect(fetchCalls(h)).toHaveLength(0);
   });
 });
+
+describe("GET /api/v0/profile/me OAuth picture seed", () => {
+  const pictureBearer = { Authorization: "Bearer evenflow-test-token-with-picture" };
+
+  it("seeds picture from the JWT claim with seeded_from=oauth, without caching it", async () => {
+    const h = makeHarness();
+    const res = await h.app.request("/api/v0/profile/me", { headers: pictureBearer }, {});
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { profile: Record<string, unknown>; seeded_from: string | null };
+    expect(body.profile["picture"]).toBe("https://avatars.example/me.png");
+    expect(body.seeded_from).toBe("oauth");
+    // Cached miss row keeps picture null — the seed is response-only.
+    const row = h.db.profiles.find((r) => r["pubkey"] === CALLER);
+    expect(row).toBeDefined();
+    expect(row!["picture"]).toBeNull();
+  });
+
+  it("does not seed when the cached profile already has a picture", async () => {
+    const h = makeHarness();
+    h.fourA.profiles.set(CALLER, {
+      event_id: "evt-p",
+      fields: { picture: "https://chosen.example/pic.png" },
+      updated_at_ms: 999,
+    });
+    const res = await h.app.request("/api/v0/profile/me", { headers: pictureBearer }, {});
+    const body = (await res.json()) as { profile: Record<string, unknown>; seeded_from: string | null };
+    expect(body.profile["picture"]).toBe("https://chosen.example/pic.png");
+    expect(body.seeded_from).toBeNull();
+  });
+
+  it("seeded_from is null for tokens without a picture claim", async () => {
+    const h = makeHarness();
+    const res = await h.app.request("/api/v0/profile/me", { headers: bearer }, {});
+    const body = (await res.json()) as { seeded_from: string | null };
+    expect(body.seeded_from).toBeNull();
+  });
+});
+
+describe("POST /api/v0/profile/picture", () => {
+  it("uploads JSON base64 bytes through 4a and returns the blob URL", async () => {
+    const h = makeHarness();
+    const bytes = "hello"; // 5 bytes
+    const res = await h.app.request(
+      "/api/v0/profile/picture",
+      jsonReq("POST", { image_b64: btoa(bytes), content_type: "image/png" }),
+      {},
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string; sha256: string };
+    expect(body.url).toBe("https://api.4a4.ai/blossom/test-sha-5");
+    expect(h.fourA.calls.filter((c) => c.method === "uploadBlob")).toEqual([
+      { method: "uploadBlob", arg: "image/png:5" },
+    ]);
+    // No kind 0 published — preview-before-publish.
+    expect(h.fourA.calls.filter((c) => c.method === "publishProfile")).toHaveLength(0);
+  });
+
+  it("uploads a multipart file", async () => {
+    const h = makeHarness();
+    const form = new FormData();
+    form.set("file", new File([new Uint8Array(7)], "me.webp", { type: "image/webp" }));
+    const res = await h.app.request(
+      "/api/v0/profile/picture",
+      { method: "POST", headers: bearer, body: form },
+      {},
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url: string };
+    expect(body.url).toBe("https://api.4a4.ai/blossom/test-sha-7");
+  });
+
+  it("rejects disallowed content types with 400", async () => {
+    const h = makeHarness();
+    const res = await h.app.request(
+      "/api/v0/profile/picture",
+      jsonReq("POST", { image_b64: btoa("x"), content_type: "image/gif" }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-body", reason: "unsupported-image-type" });
+    expect(h.fourA.calls).toHaveLength(0);
+  });
+
+  it("rejects oversized images with 400 before touching 4a", async () => {
+    const h = makeHarness();
+    const big = btoa("a".repeat(256 * 1024 + 1));
+    const res = await h.app.request(
+      "/api/v0/profile/picture",
+      jsonReq("POST", { image_b64: big, content_type: "image/jpeg" }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-body", reason: "image-too-large" });
+    expect(h.fourA.calls).toHaveLength(0);
+  });
+
+  it("rejects malformed base64 with 400", async () => {
+    const h = makeHarness();
+    const res = await h.app.request(
+      "/api/v0/profile/picture",
+      jsonReq("POST", { image_b64: "not!!valid@@b64", content_type: "image/png" }),
+      {},
+    );
+    expect(res.status).toBe(400);
+  });
+});

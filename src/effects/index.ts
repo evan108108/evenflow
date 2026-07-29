@@ -7,6 +7,8 @@ export {
   JwtTest,
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
+  JWT_TEST_TOKEN_WITH_PICTURE,
+  JWT_TEST_CLAIMS_WITH_PICTURE,
   hashToken,
   makeJwt,
   type Claims,

@@ -53,6 +53,16 @@ export interface FourAService {
     fields: ProfileFields,
   ) => Effect.Effect<{ event_id: string; pubkey: string }, FourAError>;
   readonly fetchProfile: (author: string) => Effect.Effect<RemoteProfile, FourAError>;
+  /**
+   * Upload a small image to 4a's sha256-addressed blob store (POST /v0/blob,
+   * JWT-authed — for users whose Nostr keys live in KMS and so can't sign
+   * Blossom BUD-01 auth events). Returns the immutable public URL.
+   */
+  readonly uploadBlob: (
+    token: string,
+    bytes: Uint8Array,
+    contentType: string,
+  ) => Effect.Effect<{ url: string; sha256: string }, FourAError>;
 }
 
 export class FourA extends Context.Tag("evenflow/FourA")<FourA, FourAService>() {}
@@ -123,6 +133,19 @@ const makeLive = (): FourAService => ({
       ),
     ),
 
+  uploadBlob: (token, bytes, contentType) =>
+    request("/v0/blob", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType },
+      body: bytes as unknown as BodyInit,
+    }).pipe(
+      Effect.flatMap(({ body }) =>
+        typeof body["url"] === "string" && typeof body["sha256"] === "string"
+          ? Effect.succeed({ url: body["url"], sha256: body["sha256"] })
+          : Effect.fail(new FourAError({ reason: "bad-response", detail: "missing url/sha256" })),
+      ),
+    ),
+
   fetchProfile: (author) =>
     request(`/v0/profile?author=${encodeURIComponent(author)}`, { method: "GET" }).pipe(
       Effect.flatMap(({ body }) => {
@@ -176,6 +199,13 @@ export const makeFourATest = (): FourATestHandle => {
       publishProfile: (token, fields) => {
         calls.push({ method: "publishProfile", arg: JSON.stringify(fields) });
         return Effect.succeed({ event_id: `evt-${calls.length}`, pubkey: `hex-${token.slice(0, 8)}` });
+      },
+      uploadBlob: (_token, bytes, contentType) => {
+        calls.push({ method: "uploadBlob", arg: `${contentType}:${bytes.byteLength}` });
+        return Effect.succeed({
+          url: `https://api.4a4.ai/blossom/test-sha-${bytes.byteLength}`,
+          sha256: `test-sha-${bytes.byteLength}`,
+        });
       },
       fetchProfile: (author) => {
         calls.push({ method: "fetchProfile", arg: author });
