@@ -229,3 +229,81 @@ describe("sprint lifecycle", () => {
     expect(addLate.status).toBe(409);
   });
 });
+
+describe("sprint length (migration 0011)", () => {
+  it("create defaults planned_days to null, stores an explicit override", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const plain = await createSprint(h);
+    expect(plain.planned_days).toBeNull();
+    const custom = await createSprint(h, { name: "Sprint 2", planned_days: 7 });
+    expect(custom.planned_days).toBe(7);
+    expect(h.db.sprints[1]!["planned_days"]).toBe(7);
+  });
+
+  it("rejects out-of-range or non-integer planned_days", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    for (const bad of [0, 91, 1.5, "7"]) {
+      const res = await h.app.request(
+        "/api/v0/boards/kb/sprints",
+        jsonReq("POST", { name: "S", planned_days: bad }),
+        {},
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it("planned_days is editable while planning, 409 once started", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const patch = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      jsonReq("PATCH", { planned_days: 5 }),
+      {},
+    );
+    expect(patch.status).toBe(200);
+    expect(h.db.sprints[0]!["planned_days"]).toBe(5);
+    // Clearing back to the board default is also a planning-time edit.
+    const clear = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      jsonReq("PATCH", { planned_days: null }),
+      {},
+    );
+    expect(clear.status).toBe(200);
+    expect(h.db.sprints[0]!["planned_days"]).toBeNull();
+
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    const late = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      jsonReq("PATCH", { planned_days: 21 }),
+      {},
+    );
+    expect(late.status).toBe(409);
+    // Name/goal stay editable on an active sprint.
+    const rename = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      jsonReq("PATCH", { name: "Renamed" }),
+      {},
+    );
+    expect(rename.status).toBe(200);
+  });
+
+  it("board PATCH round-trips default_sprint_days and validates the range", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const ok = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { default_sprint_days: 7 }), {});
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { board: { default_sprint_days: number } }).board.default_sprint_days).toBe(7);
+    expect(h.db.boards[0]!["default_sprint_days"]).toBe(7);
+    for (const bad of [0, 91, 2.5, "7"]) {
+      const res = await h.app.request(
+        "/api/v0/boards/kb",
+        jsonReq("PATCH", { default_sprint_days: bad }),
+        {},
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+});

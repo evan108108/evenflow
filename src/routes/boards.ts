@@ -46,6 +46,9 @@ const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MEMBER_POLICIES = ["open", "invite"] as const;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+const DEFAULT_SPRINT_DAYS = 14;
+const MIN_SPRINT_DAYS = 1;
+const MAX_SPRINT_DAYS = 90;
 
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
@@ -134,6 +137,11 @@ const validateVisibility = (v: unknown) =>
   typeof v === "string" && (VISIBILITIES as ReadonlyArray<string>).includes(v)
     ? Effect.succeed(v as (typeof VISIBILITIES)[number])
     : Effect.fail(new ValidationError({ reason: "visibility" }));
+
+const validateSprintDays = (v: unknown) =>
+  typeof v === "number" && Number.isInteger(v) && v >= MIN_SPRINT_DAYS && v <= MAX_SPRINT_DAYS
+    ? Effect.succeed(v)
+    : Effect.fail(new ValidationError({ reason: "default_sprint_days" }));
 
 const validatePrefix = (v: unknown) =>
   typeof v === "string" && PREFIX_RE.test(v.toUpperCase())
@@ -251,6 +259,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         next_issue_number: 1,
         org_id: org.id,
         visibility: "private",
+        default_sprint_days: DEFAULT_SPRINT_DAYS,
         created_at_ms: now,
         updated_at_ms: now,
       };
@@ -408,6 +417,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         "member_policy",
         "issue_prefix",
         "visibility",
+        "default_sprint_days",
       ].some((k) => body[k] !== undefined);
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
@@ -448,6 +458,10 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["visibility"] === undefined
           ? current.visibility
           : yield* validateVisibility(body["visibility"]);
+      const default_sprint_days =
+        body["default_sprint_days"] === undefined
+          ? current.default_sprint_days
+          : yield* validateSprintDays(body["default_sprint_days"]);
 
       const db = yield* Db;
 
@@ -499,7 +513,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       yield* db.execute(
-        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, updated_at_ms = ? WHERE id = ?",
+        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, default_sprint_days = ?, updated_at_ms = ? WHERE id = ?",
         [
           title,
           description === null ? null : JSON.stringify(description),
@@ -508,6 +522,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           member_policy,
           issue_prefix,
           visibility,
+          default_sprint_days,
           now,
           current.id,
         ],
@@ -529,6 +544,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         member_policy,
         issue_prefix,
         visibility,
+        default_sprint_days,
         updated_at_ms: now,
       };
       return { board };

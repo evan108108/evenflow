@@ -218,7 +218,10 @@ export const createBoardStore = (
     }
   };
 
-  const patchSprint = async (id: string, patch: { name?: string; goal?: string | null }) => {
+  const patchSprint = async (
+    id: string,
+    patch: { name?: string; goal?: string | null; planned_days?: number | null },
+  ) => {
     try {
       const res = await api((c) => c.patch<{ sprint: Sprint }>(`${apiBase}/sprints/${id}`, patch));
       replaceSprint(res.sprint);

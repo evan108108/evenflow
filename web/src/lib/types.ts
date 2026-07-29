@@ -25,6 +25,9 @@ export interface Board {
   // Phase 16 org scope. Optional so pre-16 API responses still parse.
   readonly org_id?: string | null;
   readonly visibility?: "private" | "public";
+  // Sprint length fallback (migration 0011). Optional so cached pre-0011
+  // payloads still parse; absent reads as the historical 14.
+  readonly default_sprint_days?: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }
@@ -99,6 +102,9 @@ export interface Sprint {
   readonly name: string;
   readonly goal: string | null;
   readonly status: SprintStatus;
+  // Per-sprint length override; null → the board's default_sprint_days.
+  // Optional so pre-0011 cached payloads still parse.
+  readonly planned_days?: number | null;
   readonly started_at_ms: number | null;
   readonly completed_at_ms: number | null;
   readonly created_at_ms: number;

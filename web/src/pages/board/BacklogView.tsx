@@ -9,6 +9,7 @@ import { IssueCard } from "../../components/IssueCard";
 import { moveZone, sprintZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
+import { FALLBACK_SPRINT_DAYS, effectiveSprintDays } from "../../lib/sprints";
 import type { Issue, Sprint } from "../../lib/types";
 import type { BoardStore } from "./store";
 
@@ -19,6 +20,10 @@ const SprintSection = (props: {
   onOpen: (id: string) => void;
   onRename: (name: string) => void;
   onGoal: (goal: string | null) => void;
+  /** Board default sprint length — the fallback when planned_days is null. */
+  defaultDays: number;
+  /** Planning-only: set/clear the sprint's planned_days override. */
+  onDays?: (days: number | null) => void;
   onStart?: () => void;
   onComplete?: () => void;
 }) => {
@@ -61,6 +66,34 @@ const SprintSection = (props: {
           {props.issues.length}
           <Show when={points() > 0}> · {points()}pts</Show>
         </span>
+        <Show when={props.sprint.status === "planning" && props.onDays !== undefined}>
+          <label
+            class="sprint-days"
+            title={`${effectiveSprintDays(props.sprint, props.defaultDays)} days — ${
+              props.sprint.planned_days == null ? "from board default" : "custom for this sprint"
+            }`}
+          >
+            <input
+              type="number"
+              min="1"
+              max="90"
+              placeholder={String(props.defaultDays)}
+              value={props.sprint.planned_days ?? ""}
+              aria-label="Sprint length in days"
+              onChange={(e) => {
+                const raw = e.currentTarget.value.trim();
+                if (raw === "") {
+                  props.onDays?.(null);
+                  return;
+                }
+                const days = Number(raw);
+                if (Number.isInteger(days) && days >= 1 && days <= 90) props.onDays?.(days);
+                else e.currentTarget.value = String(props.sprint.planned_days ?? "");
+              }}
+            />
+            d
+          </label>
+        </Show>
         <div class="spacer" />
         <Show when={props.onStart}>
           <button class="btn btn-small" onClick={() => props.onStart?.()}>
@@ -131,6 +164,8 @@ export const BacklogView = (props: {
     void props.store.createSprint(`Sprint ${props.store.sprints().length + 1}`);
   };
 
+  const defaultDays = () => props.store.board()?.default_sprint_days ?? FALLBACK_SPRINT_DAYS;
+
   return (
     <div>
       <section
@@ -168,6 +203,7 @@ export const BacklogView = (props: {
                 onOpen={props.onOpen}
                 onRename={(name) => void props.store.patchSprint(sprint.id, { name })}
                 onGoal={(goal) => void props.store.patchSprint(sprint.id, { goal })}
+                defaultDays={defaultDays()}
                 onComplete={() => void props.store.completeSprint(sprint.id)}
               />
             )}
@@ -181,6 +217,8 @@ export const BacklogView = (props: {
                 onOpen={props.onOpen}
                 onRename={(name) => void props.store.patchSprint(sprint.id, { name })}
                 onGoal={(goal) => void props.store.patchSprint(sprint.id, { goal })}
+                defaultDays={defaultDays()}
+                onDays={(days) => void props.store.patchSprint(sprint.id, { planned_days: days })}
                 onStart={() => void props.store.startSprint(sprint.id)}
               />
             )}

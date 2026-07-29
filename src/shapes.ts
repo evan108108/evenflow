@@ -35,6 +35,9 @@ export interface BoardShape {
   // 0004's backfill; the create path always sets it.
   readonly org_id: string | null;
   readonly visibility: "private" | "public";
+  // Sprint length (days) used when a sprint has no planned_days override.
+  // Rows predating migration 0011 read as the historical 14.
+  readonly default_sprint_days: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }
@@ -127,6 +130,9 @@ export interface SprintShape {
   readonly name: string;
   readonly goal: string | null;
   readonly status: SprintStatus;
+  // Per-sprint length override (days); null falls back to the board's
+  // default_sprint_days. Editable only while the sprint is planning.
+  readonly planned_days: number | null;
   readonly started_at_ms: number | null;
   readonly completed_at_ms: number | null;
   readonly created_at_ms: number;
@@ -332,6 +338,7 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     next_issue_number: h.number(r["next_issue_number"] ?? 1, "next_issue_number"),
     org_id: h.stringOrNull(r["org_id"] ?? null, "org_id"),
     visibility: visibility as "private" | "public",
+    default_sprint_days: h.number(r["default_sprint_days"] ?? 14, "default_sprint_days"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
   };
@@ -425,6 +432,7 @@ export const parseSprintRow = (row: unknown): SprintShape => {
     name: h.string(r["name"], "name"),
     goal: h.stringOrNull(r["goal"] ?? null, "goal"),
     status: status as SprintStatus,
+    planned_days: h.numberOrNull(r["planned_days"] ?? null, "planned_days"),
     started_at_ms: h.numberOrNull(r["started_at_ms"] ?? null, "started_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"] ?? null, "completed_at_ms"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),

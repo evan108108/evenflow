@@ -2069,3 +2069,48 @@ input.sprint-name:focus {
   border-color: rgba(23, 35, 59, 0.55);
   box-shadow: 0 0 0 1px rgba(23, 35, 59, 0.35);
 }
+
+/* ── sprint length (migration 0011) ── */
+.sprint-days {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+}
+
+.sprint-days input {
+  width: 3.2rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  text-align: right;
+  color: var(--color-ink);
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+}
+
+/* A sprint past its planned length — flagged, never auto-completed. */
+.sprint-badge.overdue {
+  color: #9c7c3c;
+  border-color: rgba(156, 124, 60, 0.5);
+}
+
+.sprint-badge.overdue:hover,
+.sprint-badge.overdue.on {
+  color: #7a5c1e;
+  border-color: #9c7c3c;
+  background: rgba(203, 161, 53, 0.1);
+}
+
+/* Board settings: the default-sprint-days field. */
+#default-sprint-days {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  color: var(--color-ink);
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+}
