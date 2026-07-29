@@ -67,9 +67,19 @@ const signUploadAuth = async (
   return btoa(JSON.stringify(event));
 };
 
+// NOTE: AppEnv must be dereferenced INSIDE the generator (same as every
+// other Live layer) — AppEnv.ts ↔ service modules are circular, and an
+// eager `Effect.map(AppEnv, …)` reads the binding mid-import, yielding
+// undefined and killing bootstrap at runtime.
 export const BlossomLive: Layer.Layer<Blossom, never, AppEnv> = Layer.effect(
   Blossom,
-  Effect.map(AppEnv, (env) => ({
+  Effect.gen(function* () {
+    const env = yield* AppEnv;
+    return makeLive(env);
+  }),
+);
+
+const makeLive = (env: { EVENFLOW_DEFAULT_BLOSSOM_URL?: string; EVENFLOW_BLOSSOM_SECRET?: string }): BlossomService => ({
     upload: (bytes, contentType, filename) =>
       Effect.tryPromise({
         try: async () => {
@@ -106,8 +116,7 @@ export const BlossomLive: Layer.Layer<Blossom, never, AppEnv> = Layer.effect(
             ? e
             : new BlossomError({ reason: "network", detail: String(e) }),
       }),
-  })),
-);
+});
 
 // ─── test double ────────────────────────────────────────────────────────────
 
