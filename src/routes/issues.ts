@@ -43,6 +43,7 @@ import {
   type Column,
   type IssueType,
 } from "../columns";
+import { BODY_FORMATS, isImageContentType, type BodyFormat } from "../attachments";
 import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 
 const DEFAULT_LIMIT = 20;
@@ -124,6 +125,11 @@ const validateType = (v: unknown) =>
   typeof v === "string" && (ISSUE_TYPES as ReadonlyArray<string>).includes(v)
     ? Effect.succeed(v as IssueType)
     : Effect.fail(new ValidationError({ reason: "type" }));
+
+const validateBodyFormat = (v: unknown) =>
+  typeof v === "string" && (BODY_FORMATS as ReadonlyArray<string>).includes(v)
+    ? Effect.succeed(v as BodyFormat)
+    : Effect.fail(new ValidationError({ reason: "body_format" }));
 
 /** Where new issues land when no status is given: first enabled column. */
 const defaultColumn = (board: BoardShape): Column | undefined =>
@@ -320,6 +326,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const title = yield* validateTitle(body["title"]);
       const issueBody = body["body"] === undefined ? null : yield* validateBody(body["body"]);
+      const body_format =
+        body["body_format"] === undefined
+          ? ("markdown" as BodyFormat)
+          : yield* validateBodyFormat(body["body_format"]);
       const type =
         body["type"] === undefined ? DEFAULT_ISSUE_TYPE : yield* validateType(body["type"]);
       const column =
@@ -373,6 +383,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         board_id: board.id,
         title,
         body: issueBody,
+        body_format,
         type,
         status: column.name,
         column_id: column.id,
@@ -387,13 +398,14 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         completed_at_ms: createdDone ? now : null,
       };
       yield* db.execute(
-        "INSERT INTO issueCache (id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO issueCache (id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           short_id,
           board.id,
           title,
           issueBody,
+          body_format,
           type,
           column.name,
           column.id,
@@ -504,8 +516,25 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         `SELECT COUNT(*) AS n FROM issueCache WHERE board_id = ?${filterSql}`,
         [board.id, ...filterParams],
       );
+
+      // Cover enrichment for the kanban cards: one image-typed cover per
+      // issue (partial unique index), merged in code — same no-JOIN posture
+      // as the feed's title enrichment.
+      const issues = rows.slice(0, limit).map(parseIssueRow);
+      const covers = new Map<string, string>();
+      if (issues.length > 0) {
+        const placeholders = issues.map(() => "?").join(", ");
+        const coverRows = yield* db.queryAll<{ issue_id: string; blob_url: string; content_type: string }>(
+          `SELECT issue_id, blob_url, content_type FROM issueAttachmentCache WHERE is_cover = 1 AND deleted_at_ms IS NULL AND issue_id IN (${placeholders})`,
+          issues.map((i) => i.id),
+        );
+        for (const cover of coverRows) {
+          if (isImageContentType(cover.content_type)) covers.set(cover.issue_id, cover.blob_url);
+        }
+      }
+
       return {
-        issues: rows.slice(0, limit).map(parseIssueRow),
+        issues: issues.map((i) => ({ ...i, cover_url: covers.get(i.id) ?? null })),
         total: count?.n ?? 0,
         has_more: rows.length > limit,
       };
@@ -539,7 +568,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
       }
-      const patchable = ["title", "body", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"];
+      const patchable = ["title", "body", "body_format", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"];
       if (!patchable.some((k) => body[k] !== undefined)) {
         return yield* new ValidationError({ reason: "empty-patch" });
       }
@@ -549,6 +578,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
       const issueBody = body["body"] === undefined ? current.body : yield* validateBody(body["body"]);
+      const body_format =
+        body["body_format"] === undefined
+          ? current.body_format
+          : yield* validateBodyFormat(body["body_format"]);
       const type = body["type"] === undefined ? current.type : yield* validateType(body["type"]);
       const toColumn =
         body["status"] === undefined
@@ -574,8 +607,8 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           ? current.completed_at_ms
           : nextCompletedAt(current, inDone(board, current), toDone, now);
       yield* db.execute(
-        "UPDATE issueCache SET title = ?, body = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
-        [title, issueBody, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
+        "UPDATE issueCache SET title = ?, body = ?, body_format = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
+        [title, issueBody, body_format, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
       );
       if (status !== current.status) {
         yield* insertStatusChange({
@@ -599,6 +632,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         ...current,
         title,
         body: issueBody,
+        body_format,
         type,
         status,
         column_id,

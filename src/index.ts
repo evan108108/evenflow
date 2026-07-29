@@ -5,6 +5,7 @@ import { asShortId } from "./slug";
 import { INVITE_CODE_PREFIX } from "./roles";
 import type { AppHonoEnv } from "./http";
 import { optionalAuth } from "./middleware/requireAuth";
+import { makeAttachmentsRouter } from "./routes/attachments";
 import { makeAuthRouter } from "./routes/auth";
 import { makeBoardsRouter } from "./routes/boards";
 import { makeCommentsRouter } from "./routes/comments";
@@ -66,10 +67,12 @@ app.route("/api/v0", makeBoardsRouter());
 app.route("/api/v0", makeIssuesRouter());
 app.route("/api/v0", makeCommentsRouter());
 app.route("/api/v0", makeFeedRouter());
+app.route("/api/v0", makeAttachmentsRouter());
 app.route("/api/v0/orgs/:org_slug", makeBoardsRouter());
 app.route("/api/v0/orgs/:org_slug", makeIssuesRouter());
 app.route("/api/v0/orgs/:org_slug", makeCommentsRouter());
 app.route("/api/v0/orgs/:org_slug", makeFeedRouter());
+app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter());
 app.route("/api/v0", makeProfileRouter());
 
 // /i/FLOW-42 — the paste-anywhere deep link (git commits, chat). Resolves
