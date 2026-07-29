@@ -413,6 +413,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         labels,
         github_links: [],
         position,
+        sprint_id: null,
         created_at_ms: now,
         updated_at_ms: now,
         completed_at_ms: createdDone ? now : null,
@@ -611,7 +612,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       // column_id is immutable here on purpose: status (name) is the PATCH
       // vocabulary, /transition is the column_id-first mover. position only
       // moves through /reorder, which knows the neighbor midpoint math.
-      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms", "position"]) {
+      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms", "position", "sprint_id"]) {
         if (body[immutable] !== undefined) {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }

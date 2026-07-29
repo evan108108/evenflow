@@ -6,6 +6,7 @@ import type { Board, Issue } from "../lib/types";
 import { ISSUE_TYPES, type Column } from "../lib/columns";
 import type { DndHandle } from "../lib/dnd";
 import type { BoardStore } from "../pages/board/store";
+import { BacklogView } from "../pages/board/BacklogView";
 import { IssueCard } from "./IssueCard";
 import { IssueSheet } from "./IssueSheet";
 import { IssueTypeIcon } from "./IssueTypeIcon";
@@ -385,6 +386,83 @@ describe("IssueSheet", () => {
     select.value = "c3";
     select.dispatchEvent(new Event("input", { bubbles: true }));
     expect(transition).toHaveBeenCalledWith(issue, board.columns[2]);
+    cleanup();
+  });
+});
+
+describe("BacklogView sprints (phase 20)", () => {
+  const sprint = (over: Partial<import("../lib/types").Sprint> = {}) => ({
+    id: "s1",
+    board_id: "b1",
+    name: "Sprint 1",
+    goal: null,
+    status: "planning" as const,
+    started_at_ms: null,
+    completed_at_ms: null,
+    created_at_ms: 1,
+    ...over,
+  });
+
+  const backlogStore = (over: Record<string, unknown>) =>
+    ({
+      ...storeStub,
+      board: () => board,
+      issues: () => [issue],
+      sprints: () => [],
+      createSprint: async () => null,
+      patchSprint: async () => undefined,
+      startSprint: async () => undefined,
+      completeSprint: async () => undefined,
+      ...over,
+    }) as unknown as BoardStore;
+
+  it("renders a planning sprint as a drop zone with count and Start button", async () => {
+    const startSprint = vi.fn(async () => undefined);
+    const store = backlogStore({
+      sprints: () => [sprint()],
+      issues: () => [{ ...issue, container: "backlog", sprint_id: "s1" }],
+      startSprint,
+    });
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    const section = container.querySelector(".sprint-section")!;
+    expect(section.getAttribute("data-dropzone")).toBe("sprint:s1");
+    expect(section.textContent).toContain("1");
+    // The sprint owns the issue, so the flat backlog list shows empty copy.
+    expect(container.textContent).toContain("Nothing on your mind");
+    (section.querySelector("button.btn") as HTMLButtonElement).click();
+    expect(startSprint).toHaveBeenCalledWith("s1");
+    cleanup();
+  });
+
+  it("+ New sprint creates the next auto-named sprint", async () => {
+    const createSprint = vi.fn(async () => null);
+    const store = backlogStore({ sprints: () => [sprint()], createSprint });
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    (container.querySelector(".sprint-new") as HTMLButtonElement).click();
+    expect(createSprint).toHaveBeenCalledWith("Sprint 2");
+    cleanup();
+  });
+
+  it("started sprints collapse to a summary row until clicked", async () => {
+    const store = backlogStore({
+      sprints: () => [sprint({ status: "active", started_at_ms: 5 })],
+      issues: () => [{ ...issue, sprint_id: "s1" }],
+    });
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    const section = container.querySelector(".sprint-section.started")!;
+    expect(section.querySelector(".issue-card")).toBeNull();
+    (section.querySelector(".sprint-name") as HTMLButtonElement).click();
+    await flush();
+    expect(section.querySelector(".issue-card")).not.toBeNull();
     cleanup();
   });
 });

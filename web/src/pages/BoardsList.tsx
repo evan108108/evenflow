@@ -138,19 +138,7 @@ export const BoardsList = () => {
                     <For each={group.boards}>
                       {(board) => (
                         <li style={{ "margin-bottom": "0.8rem" }}>
-                          <a
-                            href={`/@${group.org.slug}/${board.slug}`}
-                            style={{
-                              padding: "1.1rem 1.2rem",
-                              background: "var(--color-paper-raised)",
-                              border: "1px solid var(--color-ink-faint)",
-                              "border-radius": "var(--radius-chamfer)",
-                              display: "flex",
-                              "justify-content": "space-between",
-                              "align-items": "baseline",
-                              "text-decoration": "none",
-                            }}
-                          >
+                          <a class="board-card" href={`/@${group.org.slug}/${board.slug}`}>
                             <span class="serif" style={{ "font-size": "1.25rem" }}>
                               {board.title}
                             </span>

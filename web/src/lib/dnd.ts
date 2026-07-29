@@ -79,6 +79,8 @@ export const transitionZone = (column: string) => `transition:${column}`;
 export const moveZone = (action: string) => `move:${action}`;
 /** A card's own zone; the dnd move handler appends `:before` / `:after`. */
 export const cardZone = (column: string, issue: string) => `card:${column}:${issue}`;
+/** A sprint section in the Backlog view — dropping adds the issue to it. */
+export const sprintZone = (sprint: string) => `sprint:${sprint}`;
 
 export const parseZone = (
   zone: string,
@@ -86,9 +88,11 @@ export const parseZone = (
   | { type: "transition"; column: string }
   | { type: "move"; action: string }
   | { type: "card"; column: string; issue: string; half: "before" | "after" }
+  | { type: "sprint"; sprint: string }
   | null => {
   if (zone.startsWith("transition:")) return { type: "transition", column: zone.slice(11) };
   if (zone.startsWith("move:")) return { type: "move", action: zone.slice(5) };
+  if (zone.startsWith("sprint:")) return { type: "sprint", sprint: zone.slice(7) };
   if (zone.startsWith("card:")) {
     const [, column, issue, half] = zone.split(":");
     if (column === undefined || issue === undefined || (half !== "before" && half !== "after")) {

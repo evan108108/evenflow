@@ -53,6 +53,9 @@ export interface Issue {
   // sorts after every positioned row, by updated_at_ms DESC. Optional so
   // pre-18d cached payloads still parse.
   readonly position?: number | null;
+  // Owning sprint (phase 20). Null when not in a sprint; optional so
+  // pre-20 cached payloads still parse.
+  readonly sprint_id?: string | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
@@ -85,6 +88,20 @@ export interface FeedItem {
   readonly to: string | null;
   readonly container_at_completion: string | null;
   readonly occurred_at_ms: number;
+}
+
+export type SprintStatus = "planning" | "active" | "completed";
+
+/** Mirrors SprintShape on the Worker (phase 20). */
+export interface Sprint {
+  readonly id: string;
+  readonly board_id: string;
+  readonly name: string;
+  readonly goal: string | null;
+  readonly status: SprintStatus;
+  readonly started_at_ms: number | null;
+  readonly completed_at_ms: number | null;
+  readonly created_at_ms: number;
 }
 
 /** The three container-move verbs, as REST path suffixes. */

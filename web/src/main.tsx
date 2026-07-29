@@ -1,5 +1,9 @@
 import { render } from "solid-js/web";
-import "@fontsource-variable/bodoni-moda";
+// The opsz variant, not the default wght-only cut: Bodoni Moda's display
+// look lives on its optical-size axis (checked: the family ships no ss01
+// stylistic set), so headings pick up the high-contrast Didone hairlines
+// automatically via font-optical-sizing.
+import "@fontsource-variable/bodoni-moda/opsz.css";
 import "@fontsource-variable/dm-sans";
 import "./lib/theme.css";
 import { App } from "./App";

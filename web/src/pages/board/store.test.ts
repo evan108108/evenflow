@@ -96,6 +96,7 @@ const issue = (over: Partial<Issue> = {}): Issue => ({
 const LOAD_ROUTES = {
   "GET /api/v0/boards/kb": { board },
   "GET /api/v0/boards/kb/issues?limit=100": { issues: [issue()] },
+  "GET /api/v0/boards/kb/sprints": { sprints: [] },
 };
 
 const loadedStore = async (extraRoutes: Record<string, unknown> = {}) => {
@@ -114,10 +115,11 @@ describe("createBoardStore", () => {
     expect(store.board()?.slug).toBe("kb");
     expect(store.issues()).toHaveLength(1);
     expect(store.loading()).toBe(false);
-    // Promise.all starts both requests; completion order is not guaranteed.
+    // Promise.all starts all three requests; completion order is not guaranteed.
     expect(calls.map((c) => c.path).sort()).toEqual([
       "/api/v0/boards/kb",
       "/api/v0/boards/kb/issues?limit=100",
+      "/api/v0/boards/kb/sprints",
     ]);
   });
 
@@ -176,6 +178,44 @@ describe("createBoardStore", () => {
       },
     ]);
     expect(store.issues().map((i) => i.id)).toEqual(["i2", "i1"]);
+  });
+
+  it("sprint membership posts add-issue / remove-issue and rolls back on failure", async () => {
+    const { store, calls } = await loadedStore({
+      "POST /api/v0/boards/kb/sprints/s1/add-issue": { issue: issue({ sprint_id: "s1" }) },
+      "POST /api/v0/boards/kb/sprints/s1/remove-issue": FAIL,
+    });
+    await store.addIssueToSprint(store.issues()[0]!, "s1");
+    expect(calls).toEqual([
+      { method: "POST", path: "/api/v0/boards/kb/sprints/s1/add-issue", body: { issue_id: "i1" } },
+    ]);
+    expect(store.issues()[0]!.sprint_id).toBe("s1");
+    await store.removeIssueFromSprint(store.issues()[0]!);
+    // Rollback: the failed remove leaves the membership in place.
+    expect(store.issues()[0]!.sprint_id).toBe("s1");
+    expect(store.lastError()).toContain("500");
+  });
+
+  it("startSprint posts the kickoff then refetches issues", async () => {
+    const started = {
+      id: "s1",
+      board_id: "b1",
+      name: "Sprint 1",
+      goal: null,
+      status: "active" as const,
+      started_at_ms: 9,
+      completed_at_ms: null,
+      created_at_ms: 1,
+    };
+    const { store, calls } = await loadedStore({
+      "GET /api/v0/boards/kb/sprints": { sprints: [{ ...started, status: "planning", started_at_ms: null }] },
+      "POST /api/v0/boards/kb/sprints/s1/start": { sprint: started },
+    });
+    await store.refetchSprints();
+    calls.length = 0;
+    await store.startSprint("s1");
+    expect(calls.map((c) => c.path)).toContain("/api/v0/boards/kb/sprints/s1/start");
+    expect(store.sprints()[0]!.status).toBe("active");
   });
 });
 

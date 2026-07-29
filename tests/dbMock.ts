@@ -19,6 +19,7 @@ export interface DbMock {
   readonly comments: Row[];
   readonly statusChanges: Row[];
   readonly attachments: Row[];
+  readonly sprints: Row[];
   readonly apiKeys: Row[];
   readonly orgs: Row[];
   readonly orgMembers: Row[];
@@ -38,6 +39,7 @@ export const makeDbMock = (): DbMock => {
   const comments: Row[] = [];
   const statusChanges: Row[] = [];
   const attachments: Row[] = [];
+  const sprints: Row[] = [];
   const apiKeys: Row[] = [];
   const orgs: Row[] = [];
   const orgMembers: Row[] = [];
@@ -391,6 +393,34 @@ export const makeDbMock = (): DbMock => {
           if (idx >= 0) boards.splice(idx, 1);
           return;
         }
+        // ── phase 20: sprints ──
+        if (sql.startsWith("INSERT INTO sprintCache")) {
+          const [id, board_id, name, goal, status, started_at_ms, completed_at_ms, created_at_ms] = params;
+          sprints.push({ id, board_id, name, goal, status, started_at_ms, completed_at_ms, created_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintCache SET name = ?, goal = ? WHERE id = ?")) {
+          const [name, goal, id] = params;
+          const row = sprints.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { name, goal });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintCache SET status = 'active', started_at_ms = ? WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[1]);
+          if (row) Object.assign(row, { status: "active", started_at_ms: params[0] });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintCache SET status = 'completed', completed_at_ms = ? WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[1]);
+          if (row) Object.assign(row, { status: "completed", completed_at_ms: params[0] });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [sprint_id, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { sprint_id, updated_at_ms });
+          return;
+        }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -581,6 +611,10 @@ export const makeDbMock = (): DbMock => {
           const r = profiles.find((x) => x["pubkey"] === params[0]);
           return (r ? { display_name: r["display_name"] ?? null, name: r["name"] ?? null } : null) as R | null;
         }
+        if (sql.startsWith("SELECT * FROM sprintCache WHERE id = ? AND board_id = ?")) {
+          const r = sprints.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
         throw new Error(`DbMock: unexpected queryFirst: ${sql}`);
       }),
     queryAll: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -595,6 +629,18 @@ export const makeDbMock = (): DbMock => {
                 r["container"] === params[1] &&
                 (r["column_id"] === params[2] ||
                   ((r["column_id"] ?? null) === null && r["status"] === params[3])),
+            )
+            .map((r) => ({ ...r })) as R[];
+        }
+        // Sprint-start's backlog sweep — must precede the generic
+        // board-list handler, which shares its prefix.
+        if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND sprint_id = ? AND container = 'backlog'")) {
+          return issues
+            .filter(
+              (r) =>
+                r["board_id"] === params[0] &&
+                (r["sprint_id"] ?? null) === params[1] &&
+                r["container"] === "backlog",
             )
             .map((r) => ({ ...r })) as R[];
         }
@@ -827,6 +873,16 @@ export const makeDbMock = (): DbMock => {
             .sort((a, b) => num(b["created_at_ms"]) - num(a["created_at_ms"]))
             .map((r) => ({ ...r })) as R[];
         }
+        if (sql.startsWith("SELECT * FROM sprintCache WHERE board_id = ?")) {
+          return sprints
+            .filter((r) => r["board_id"] === params[0])
+            .sort(
+              (a, b) =>
+                num(a["created_at_ms"]) - num(b["created_at_ms"]) ||
+                str(a["id"]).localeCompare(str(b["id"])),
+            )
+            .map((r) => ({ ...r })) as R[];
+        }
         throw new Error(`DbMock: unexpected queryAll: ${sql}`);
       }),
   };
@@ -837,6 +893,7 @@ export const makeDbMock = (): DbMock => {
     comments,
     statusChanges,
     attachments,
+    sprints,
     apiKeys,
     orgs,
     orgMembers,

@@ -47,6 +47,27 @@ h3,
   letter-spacing: -0.03em;
   line-height: 0.95;
   margin: 0;
+  /* Ride Bodoni Moda's optical-size axis: display sizes sharpen into the
+     high-contrast Didone cut on their own. */
+  font-optical-sizing: auto;
+}
+
+/* Editorial page turn — every route roots in <main>, so a fresh page
+   fades in as it mounts. Kept to main content; the topbar re-renders with
+   it but the effect stays a whisper at 120ms. */
+@media (prefers-reduced-motion: no-preference) {
+  main {
+    animation: page-fade-in 120ms ease-out;
+  }
+}
+
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 a {
@@ -100,4 +121,37 @@ button {
 
 .muted {
   color: var(--color-ink-soft);
+}
+
+/* Board-list cards (/boards) — same editorial lift as .issue-card:hover. */
+.board-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 1.1rem 1.2rem;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  text-decoration: none;
+  transition: box-shadow 180ms ease, transform 180ms ease, border-color 120ms ease;
+}
+
+.board-card:hover {
+  border-color: rgba(23, 35, 59, 0.4);
+  box-shadow:
+    0 10px 26px rgba(23, 35, 59, 0.09),
+    0 2px 6px rgba(23, 35, 59, 0.06);
+  transform: translateY(-2px);
+}
+
+/* Landing hero butterfly — the mark, front and center. */
+.landing-mark {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.4rem;
+}
+
+.landing-mark svg {
+  width: clamp(88px, 18vw, 128px);
+  height: auto;
 }

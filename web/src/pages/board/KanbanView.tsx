@@ -16,6 +16,8 @@ export const KanbanView = (props: {
   store: BoardStore;
   dnd: DndHandle;
   onOpen: (id: string) => void;
+  /** Sprint id to spotlight (phase 20's badge toggle); null = no spotlight. */
+  highlightSprintId?: string | null;
 }) => {
   const active = () => props.store.issues().filter((i) => i.container === "active");
   const columns = () => enabledColumns(props.store.board()?.columns ?? []);
@@ -89,6 +91,10 @@ export const KanbanView = (props: {
                         onOpen={props.onOpen}
                         zone={cardZone(column.id, issue.id)}
                         indicator={indicatorFor(column, issue)}
+                        highlight={
+                          props.highlightSprintId != null &&
+                          issue.sprint_id === props.highlightSprintId
+                        }
                       />
                     )}
                   </For>

@@ -26,6 +26,9 @@ import { IceboxView } from "./IceboxView";
 const LOADING_LINES = ["Finding the rhythm…", "Catching the current…", "Following the thread…"];
 const DAY_MS = 86_400_000;
 const BUTTERFLY_FLIGHT_MS = 1_700;
+// Sprints carry no end date (schema keeps them lightweight); the badge
+// counts down against the conventional two-week cadence from start.
+const SPRINT_LENGTH_DAYS = 14;
 
 /**
  * Trailing-7d daily buckets of estimate points completed while active.
@@ -91,6 +94,7 @@ export const BoardPage = () => {
 
   const [callerPubkey, setCallerPubkey] = createSignal<string | null>(null);
   const [showNewIssue, setShowNewIssue] = createSignal(false);
+  const [highlightSprintId, setHighlightSprintId] = createSignal<string | null>(null);
   const [flutter, setFlutter] = createSignal<{ x: number; y: number } | null>(null);
   const [commentsVersion, setCommentsVersion] = createSignal(0);
   const [uploadNotice, setUploadNotice] = createSignal<string | null>(null);
@@ -151,7 +155,20 @@ export const BoardPage = () => {
       // Transition zones carry the column's stable id since phase 17.
       const column = store.board()?.columns.find((c) => c.id === target.column);
       if (column !== undefined) void store.transition(issue, column);
+    } else if (target.type === "sprint") {
+      void store.addIssueToSprint(issue, target.sprint);
     } else if (target.action in CONTAINER_OF_MOVE) {
+      // Dropping a sprint-member backlog issue onto the plain Backlog
+      // section reads as "take it out of the sprint" — the container move
+      // itself would be a no-op.
+      if (
+        target.action === "promote_to_backlog" &&
+        issue.container === "backlog" &&
+        (issue.sprint_id ?? null) !== null
+      ) {
+        void store.removeIssueFromSprint(issue);
+        return;
+      }
       void store.moveContainer(issue, target.action as ContainerMove);
     }
   });
@@ -160,6 +177,7 @@ export const BoardPage = () => {
     if (event.kind.startsWith("issue.")) {
       void store.refetchIssues();
       void store.refetchStatusFeed();
+      void store.refetchSprints();
     } else if (event.kind.startsWith("comment.")) {
       setCommentsVersion((v) => v + 1);
     }
@@ -190,6 +208,19 @@ export const BoardPage = () => {
   onCleanup(() => {
     if (sseFiber !== undefined) appRuntime.runFork(Fiber.interrupt(sseFiber));
   });
+
+  // The badge tracks the most recently started active sprint.
+  const activeSprint = createMemo(() => {
+    const started = store
+      .sprints()
+      .filter((s) => s.status === "active")
+      .sort((a, b) => (b.started_at_ms ?? 0) - (a.started_at_ms ?? 0));
+    return started[0] ?? null;
+  });
+  const sprintDaysLeft = (startedAtMs: number | null) => {
+    if (startedAtMs === null) return null;
+    return SPRINT_LENGTH_DAYS - Math.floor((Date.now() - startedAtMs) / DAY_MS);
+  };
 
   const buckets = createMemo(() => {
     const estimates = new Map(store.issues().map((i) => [i.id, i.estimate ?? 0]));
@@ -276,6 +307,26 @@ export const BoardPage = () => {
                     Icebox
                   </a>
                 </nav>
+                <Show when={activeSprint()}>
+                  {(sprint) => (
+                    <button
+                      class="sprint-badge"
+                      classList={{ on: highlightSprintId() === sprint().id }}
+                      title="Click to spotlight this sprint's cards"
+                      onClick={() =>
+                        setHighlightSprintId((id) => (id === sprint().id ? null : sprint().id))
+                      }
+                    >
+                      {sprint().name}
+                      <Show when={sprintDaysLeft(sprint().started_at_ms) !== null}>
+                        {" · "}
+                        {(sprintDaysLeft(sprint().started_at_ms) ?? 0) > 0
+                          ? `${sprintDaysLeft(sprint().started_at_ms)}d remaining`
+                          : "past due"}
+                      </Show>
+                    </button>
+                  )}
+                </Show>
                 <div class="spacer" />
                 <div class="current" title="Estimate points completed from Active, trailing 7 days">
                   <span class="label">The Current</span>
@@ -296,7 +347,12 @@ export const BoardPage = () => {
               </Show>
 
               <Show when={view() === "kanban"}>
-                <KanbanView store={store} dnd={dnd} onOpen={(id) => navigate(`${base()}/issues/${id}`)} />
+                <KanbanView
+                  store={store}
+                  dnd={dnd}
+                  onOpen={(id) => navigate(`${base()}/issues/${id}`)}
+                  highlightSprintId={highlightSprintId()}
+                />
               </Show>
               <Show when={view() === "backlog"}>
                 <BacklogView store={store} dnd={dnd} onOpen={(id) => navigate(`${base()}/issues/${id}`)} />
