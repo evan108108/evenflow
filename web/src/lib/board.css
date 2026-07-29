@@ -264,8 +264,8 @@
   min-width: 260px;
   /* Reserve real drop-target height even when a column is empty. The
      outer column is invisible at rest — dashed outline reveals on
-     hover, then goes solid-ink during a drag. Quiet by default,
-     responsive on intent. */
+     hover (matching the previous always-visible weight, just on
+     intent), and promotes to solid ink during a drag. */
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
@@ -274,7 +274,7 @@
   transition: border-color 140ms ease, background 140ms ease;
 }
 .kanban-column:hover {
-  border-color: rgba(23, 35, 59, 0.16);
+  border-color: rgba(23, 35, 59, 0.28);
 }
 
 .kanban-column-content {
