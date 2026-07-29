@@ -40,8 +40,12 @@ interface BoardDetail {
     title: string;
     visibility: "private" | "public";
     columns: Column[];
+    default_sprint_days: number;
   };
 }
+
+const MIN_SPRINT_DAYS = 1;
+const MAX_SPRINT_DAYS = 90;
 
 interface PendingInvite {
   id: string;
@@ -123,6 +127,20 @@ export const BoardSettings = () => {
     const next = board()?.board.visibility === "public" ? "private" : "public";
     withRefresh(
       api((c) => c.patch(apiBase(), { visibility: next })),
+      () => void refetchBoard(),
+    );
+  };
+
+  const saveSprintDays = (e: { currentTarget: HTMLInputElement }) => {
+    const current = board()?.board.default_sprint_days ?? 14;
+    const days = Number(e.currentTarget.value);
+    if (!Number.isInteger(days) || days < MIN_SPRINT_DAYS || days > MAX_SPRINT_DAYS) {
+      e.currentTarget.value = String(current);
+      return;
+    }
+    if (days === current) return;
+    withRefresh(
+      api((c) => c.patch(apiBase(), { default_sprint_days: days })),
       () => void refetchBoard(),
     );
   };
@@ -282,6 +300,24 @@ export const BoardSettings = () => {
       </Show>
 
       <Show when={tab() === "General"}>
+        <section class="settings-section">
+          <h2>Sprints</h2>
+          <label for="default-sprint-days" class="muted" style={{ display: "block", "font-size": "0.8rem", "letter-spacing": "0.08em", "text-transform": "uppercase", "margin-bottom": "0.35rem" }}>
+            Default sprint length (days)
+          </label>
+          <input
+            id="default-sprint-days"
+            type="number"
+            min={MIN_SPRINT_DAYS}
+            max={MAX_SPRINT_DAYS}
+            style={{ width: "6rem" }}
+            value={board()?.board.default_sprint_days ?? 14}
+            onChange={saveSprintDays}
+          />
+          <p class="muted" style={{ "font-size": "0.85rem", "margin-top": "0.5rem" }}>
+            Teams that run 1-week sprints: set 7. Individual sprints can override this.
+          </p>
+        </section>
         <section class="settings-section">
           <p class="muted">More board settings will land here — title, description, avatar.</p>
         </section>

@@ -466,3 +466,64 @@ describe("BacklogView sprints (phase 20)", () => {
     cleanup();
   });
 });
+
+describe("BacklogView sprint length (migration 0011)", () => {
+  const planning = {
+    id: "s1",
+    board_id: "b1",
+    name: "Sprint 1",
+    goal: null,
+    status: "planning" as const,
+    planned_days: null,
+    started_at_ms: null,
+    completed_at_ms: null,
+    created_at_ms: 1,
+  };
+
+  it("days input shows the board default as placeholder and PATCHes an override", async () => {
+    const patchSprint = vi.fn(async () => undefined);
+    const store = {
+      ...storeStub,
+      board: () => ({ ...board, default_sprint_days: 7 }),
+      issues: () => [],
+      sprints: () => [planning],
+      createSprint: async () => null,
+      patchSprint,
+      startSprint: async () => undefined,
+      completeSprint: async () => undefined,
+    } as unknown as BoardStore;
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    const input = container.querySelector<HTMLInputElement>(".sprint-days input")!;
+    expect(input.placeholder).toBe("7");
+    expect(input.value).toBe("");
+    input.value = "5";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(patchSprint).toHaveBeenCalledWith("s1", { planned_days: 5 });
+    input.value = "";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(patchSprint).toHaveBeenLastCalledWith("s1", { planned_days: null });
+    cleanup();
+  });
+
+  it("started sprints get no days input", async () => {
+    const store = {
+      ...storeStub,
+      board: () => board,
+      issues: () => [],
+      sprints: () => [{ ...planning, status: "active" as const, started_at_ms: 5 }],
+      createSprint: async () => null,
+      patchSprint: async () => undefined,
+      startSprint: async () => undefined,
+      completeSprint: async () => undefined,
+    } as unknown as BoardStore;
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    expect(container.querySelector(".sprint-days")).toBeNull();
+    cleanup();
+  });
+});

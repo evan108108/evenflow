@@ -367,9 +367,9 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("UPDATE boardCache SET")) {
-          const [title, description, columns, labels, member_policy, issue_prefix, visibility, updated_at_ms, id] = params;
+          const [title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, updated_at_ms, id] = params;
           const row = boards.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, visibility, updated_at_ms });
+          if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, updated_at_ms });
           return;
         }
         if (sql.startsWith("DELETE FROM issueCache WHERE id = ?")) {
@@ -395,14 +395,14 @@ export const makeDbMock = (): DbMock => {
         }
         // ── phase 20: sprints ──
         if (sql.startsWith("INSERT INTO sprintCache")) {
-          const [id, board_id, name, goal, status, started_at_ms, completed_at_ms, created_at_ms] = params;
-          sprints.push({ id, board_id, name, goal, status, started_at_ms, completed_at_ms, created_at_ms });
+          const [id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms] = params;
+          sprints.push({ id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms });
           return;
         }
-        if (sql.startsWith("UPDATE sprintCache SET name = ?, goal = ? WHERE id = ?")) {
-          const [name, goal, id] = params;
+        if (sql.startsWith("UPDATE sprintCache SET name = ?, goal = ?, planned_days = ? WHERE id = ?")) {
+          const [name, goal, planned_days, id] = params;
           const row = sprints.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { name, goal });
+          if (row) Object.assign(row, { name, goal, planned_days });
           return;
         }
         if (sql.startsWith("UPDATE sprintCache SET status = 'active', started_at_ms = ? WHERE id = ?")) {

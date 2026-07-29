@@ -31,6 +31,8 @@ import { parseIssueRow, parseSprintRow, type SprintShape } from "../shapes";
 
 const MAX_NAME_LENGTH = 80;
 const MAX_GOAL_LENGTH = 200;
+const MIN_SPRINT_DAYS = 1;
+const MAX_SPRINT_DAYS = 90;
 
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
@@ -95,6 +97,13 @@ const validateGoal = (v: unknown) =>
     ? Effect.succeed(v as string | null)
     : Effect.fail(new ValidationError({ reason: "goal" }));
 
+/** null = use the board's default_sprint_days. */
+const validatePlannedDays = (v: unknown) =>
+  v === null ||
+  (typeof v === "number" && Number.isInteger(v) && v >= MIN_SPRINT_DAYS && v <= MAX_SPRINT_DAYS)
+    ? Effect.succeed(v as number | null)
+    : Effect.fail(new ValidationError({ reason: "planned_days" }));
+
 /** Fetch a sprint scoped to its board — an id on another board is a 404. */
 const fetchSprint = (boardId: string, sprintId: string) =>
   Effect.gen(function* () {
@@ -157,6 +166,8 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const body = yield* readJsonBody(c);
       const name = yield* validateName(body["name"]);
       const goal = body["goal"] === undefined ? null : yield* validateGoal(body["goal"]);
+      const planned_days =
+        body["planned_days"] === undefined ? null : yield* validatePlannedDays(body["planned_days"]);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -167,13 +178,14 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         name,
         goal,
         status: "planning",
+        planned_days,
         started_at_ms: null,
         completed_at_ms: null,
         created_at_ms: now,
       };
       yield* db.execute(
-        "INSERT INTO sprintCache (id, board_id, name, goal, status, started_at_ms, completed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [sprint.id, board.id, name, goal, "planning", null, null, now],
+        "INSERT INTO sprintCache (id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [sprint.id, board.id, name, goal, "planning", planned_days, null, null, now],
       );
       yield* audit.record({
         event_type: "sprint_created",
@@ -191,18 +203,28 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
       const body = yield* readJsonBody(c);
-      if (body["name"] === undefined && body["goal"] === undefined) {
+      if (body["name"] === undefined && body["goal"] === undefined && body["planned_days"] === undefined) {
         return yield* new ValidationError({ reason: "empty-patch" });
       }
       const current = yield* fetchSprint(board.id, c.req.param("id"));
       const name = body["name"] === undefined ? current.name : yield* validateName(body["name"]);
       const goal = body["goal"] === undefined ? current.goal : yield* validateGoal(body["goal"]);
+      // Length is a planning-time decision: once started, the countdown is
+      // already running against it; once completed, it's history.
+      if (body["planned_days"] !== undefined && current.status !== "planning") {
+        return yield* new ConflictError({ reason: `sprint-${current.status}` });
+      }
+      const planned_days =
+        body["planned_days"] === undefined
+          ? current.planned_days
+          : yield* validatePlannedDays(body["planned_days"]);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
-      yield* db.execute("UPDATE sprintCache SET name = ?, goal = ? WHERE id = ?", [
+      yield* db.execute("UPDATE sprintCache SET name = ?, goal = ?, planned_days = ? WHERE id = ?", [
         name,
         goal,
+        planned_days,
         current.id,
       ]);
       yield* audit.record({
@@ -210,7 +232,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { board: board.slug, sprint: current.id },
       });
-      return { sprint: { ...current, name, goal } };
+      return { sprint: { ...current, name, goal, planned_days } };
     });
     return runJson(c, program);
   });

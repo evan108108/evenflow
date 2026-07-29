@@ -14,6 +14,7 @@ import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { doneNames } from "../../lib/columns";
 import { issuesInColumn } from "../../lib/order";
+import { sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
@@ -26,9 +27,6 @@ import { IceboxView } from "./IceboxView";
 const LOADING_LINES = ["Finding the rhythm…", "Catching the current…", "Following the thread…"];
 const DAY_MS = 86_400_000;
 const BUTTERFLY_FLIGHT_MS = 1_700;
-// Sprints carry no end date (schema keeps them lightweight); the badge
-// counts down against the conventional two-week cadence from start.
-const SPRINT_LENGTH_DAYS = 14;
 
 /**
  * Trailing-7d daily buckets of estimate points completed while active.
@@ -217,10 +215,8 @@ export const BoardPage = () => {
       .sort((a, b) => (b.started_at_ms ?? 0) - (a.started_at_ms ?? 0));
     return started[0] ?? null;
   });
-  const sprintDaysLeft = (startedAtMs: number | null) => {
-    if (startedAtMs === null) return null;
-    return SPRINT_LENGTH_DAYS - Math.floor((Date.now() - startedAtMs) / DAY_MS);
-  };
+  const countdownFor = (sprint: { planned_days?: number | null; started_at_ms: number | null }) =>
+    sprintCountdown(sprint, store.board()?.default_sprint_days, Date.now());
 
   const buckets = createMemo(() => {
     const estimates = new Map(store.issues().map((i) => [i.id, i.estimate ?? 0]));
@@ -308,24 +304,27 @@ export const BoardPage = () => {
                   </a>
                 </nav>
                 <Show when={activeSprint()}>
-                  {(sprint) => (
-                    <button
-                      class="sprint-badge"
-                      classList={{ on: highlightSprintId() === sprint().id }}
-                      title="Click to spotlight this sprint's cards"
-                      onClick={() =>
-                        setHighlightSprintId((id) => (id === sprint().id ? null : sprint().id))
-                      }
-                    >
-                      {sprint().name}
-                      <Show when={sprintDaysLeft(sprint().started_at_ms) !== null}>
-                        {" · "}
-                        {(sprintDaysLeft(sprint().started_at_ms) ?? 0) > 0
-                          ? `${sprintDaysLeft(sprint().started_at_ms)}d remaining`
-                          : "past due"}
-                      </Show>
-                    </button>
-                  )}
+                  {(sprint) => {
+                    const countdown = () => countdownFor(sprint());
+                    return (
+                      <button
+                        class="sprint-badge"
+                        classList={{
+                          on: highlightSprintId() === sprint().id,
+                          overdue: countdown()?.overdue === true,
+                        }}
+                        title="Click to spotlight this sprint's cards"
+                        onClick={() =>
+                          setHighlightSprintId((id) => (id === sprint().id ? null : sprint().id))
+                        }
+                      >
+                        {sprint().name}
+                        <Show when={countdown()}>
+                          {(c) => <>{" · "}{c().overdue ? "overdue" : `${c().daysLeft}d remaining`}</>}
+                        </Show>
+                      </button>
+                    );
+                  }}
                 </Show>
                 <div class="spacer" />
                 <div class="current" title="Estimate points completed from Active, trailing 7 days">

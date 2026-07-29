@@ -24,7 +24,14 @@ const COLUMNS = [
 ];
 
 const boardResponse = () => ({
-  board: { id: "b1", slug: "kb", title: "Board", visibility: "private", columns: COLUMNS },
+  board: {
+    id: "b1",
+    slug: "kb",
+    title: "Board",
+    visibility: "private",
+    columns: COLUMNS,
+    default_sprint_days: 14,
+  },
 });
 
 const issuesResponse = () => ({
@@ -192,6 +199,48 @@ describe("BoardSettings — Columns tab", () => {
     expect(body.columns.map((c) => c.id)).toEqual(["c2", "c3"]);
     // Orders reindex to stay 0-based contiguous.
     expect(body.columns.map((c) => c.order)).toEqual([0, 1]);
+    cleanup();
+  });
+});
+
+describe("BoardSettings — General tab sprint length", () => {
+  const mountGeneral = async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const history = createMemoryHistory();
+    history.set({ value: "/@acme/kb/settings" });
+    const dispose = render(
+      () => (
+        <MemoryRouter history={history}>
+          <Route path="/:handle/:board_slug/settings" component={BoardSettings} />
+        </MemoryRouter>
+      ),
+      container,
+    );
+    await flush();
+    await flush();
+    return { container, cleanup: () => { dispose(); container.remove(); } };
+  };
+
+  it("round-trips default_sprint_days through PATCH", async () => {
+    const { container, cleanup } = await mountGeneral();
+    const input = container.querySelector<HTMLInputElement>("#default-sprint-days")!;
+    expect(input.value).toBe("14");
+    input.value = "7";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(patches).toEqual([{ default_sprint_days: 7 }]);
+    cleanup();
+  });
+
+  it("rejects an out-of-range value locally, resetting to the saved default", async () => {
+    const { container, cleanup } = await mountGeneral();
+    const input = container.querySelector<HTMLInputElement>("#default-sprint-days")!;
+    input.value = "120";
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(patches).toEqual([]);
+    expect(input.value).toBe("14");
     cleanup();
   });
 });
