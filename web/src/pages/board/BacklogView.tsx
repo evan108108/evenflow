@@ -5,6 +5,7 @@
 import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { moveZone, type DndHandle } from "../../lib/dnd";
+import { enabledColumns, type Column } from "../../lib/columns";
 import type { BoardStore } from "./store";
 
 export const BacklogView = (props: {
@@ -18,7 +19,10 @@ export const BacklogView = (props: {
       .issues()
       .filter((i) => i.container === "backlog")
       .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
-  const activeInColumn = (column: string) => active().filter((i) => i.status === column);
+  const activeInColumn = (column: Column) =>
+    active().filter((i) =>
+      i.column_id !== null ? i.column_id === column.id : i.status === column.name,
+    );
 
   const activeZone = moveZone("promote_to_active");
   const backlogZone = moveZone("promote_to_backlog");
@@ -35,11 +39,11 @@ export const BacklogView = (props: {
           Active <span class="count figure muted">{active().length}</span>
         </h2>
         <Show when={active().length > 0} fallback={<p class="empty-state">Still waters.</p>}>
-          <For each={props.store.board()?.columns ?? []}>
+          <For each={enabledColumns(props.store.board()?.columns ?? [])}>
             {(column) => (
               <Show when={activeInColumn(column).length > 0}>
                 <div class="status-group">
-                  <h4>{column}</h4>
+                  <h4>{column.name}</h4>
                   <For each={activeInColumn(column)}>
                     {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />}
                   </For>

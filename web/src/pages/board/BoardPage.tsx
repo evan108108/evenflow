@@ -12,6 +12,7 @@ import "../../lib/board.css";
 import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effects";
 import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
+import { doneNames } from "../../lib/columns";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
@@ -25,16 +26,22 @@ const LOADING_LINES = ["Finding the rhythm…", "Catching the current…", "Foll
 const DAY_MS = 86_400_000;
 const BUTTERFLY_FLIGHT_MS = 1_700;
 
-/** Trailing-7d daily buckets of estimate points completed while active. */
+/**
+ * Trailing-7d daily buckets of estimate points completed while active.
+ * Done-ness is the COLUMN CATEGORY (isDone matches feed status names
+ * against the board's done-category columns) — statusChange rows carry
+ * names, so pre-17 history keeps counting via the same name match.
+ */
 const velocityBuckets = (
   feed: ReadonlyArray<{ to: string | null; container_at_completion: string | null; occurred_at_ms: number; issue_id: string }>,
   estimateOf: (issueId: string) => number,
   now: number,
+  isDone: (statusName: string) => boolean,
 ): number[] => {
   const start = now - 7 * DAY_MS;
   const buckets = [0, 0, 0, 0, 0, 0, 0];
   for (const item of feed) {
-    if (item.to !== "Done" || item.container_at_completion !== "active") continue;
+    if (item.to === null || !isDone(item.to) || item.container_at_completion !== "active") continue;
     if (item.occurred_at_ms < start) continue;
     const day = Math.min(6, Math.floor((item.occurred_at_ms - start) / DAY_MS));
     buckets[day] = (buckets[day] ?? 0) + estimateOf(item.issue_id);
@@ -117,8 +124,11 @@ export const BoardPage = () => {
     const issue = store.issues().find((i) => i.id === issueId);
     const target = parseZone(zone);
     if (issue === undefined || target === null) return;
-    if (target.type === "transition") void store.transition(issue, target.column);
-    else if (target.action in CONTAINER_OF_MOVE) {
+    if (target.type === "transition") {
+      // Transition zones carry the column's stable id since phase 17.
+      const column = store.board()?.columns.find((c) => c.id === target.column);
+      if (column !== undefined) void store.transition(issue, column);
+    } else if (target.action in CONTAINER_OF_MOVE) {
       void store.moveContainer(issue, target.action as ContainerMove);
     }
   });
@@ -160,7 +170,13 @@ export const BoardPage = () => {
 
   const buckets = createMemo(() => {
     const estimates = new Map(store.issues().map((i) => [i.id, i.estimate ?? 0]));
-    return velocityBuckets(store.statusFeed(), (id) => estimates.get(id) ?? 0, Date.now());
+    const done = doneNames(store.board()?.columns ?? []);
+    return velocityBuckets(
+      store.statusFeed(),
+      (id) => estimates.get(id) ?? 0,
+      Date.now(),
+      (name) => done.has(name),
+    );
   });
   const velocityTotal = () => buckets().reduce((a, b) => a + b, 0);
 

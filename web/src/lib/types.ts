@@ -2,6 +2,8 @@
 // Worker (the server parsers are the source of truth; these are the
 // client's read-side view of the same JSON).
 
+import type { Column, IssueType } from "./columns";
+
 export type Container = "icebox" | "backlog" | "active";
 
 export interface Board {
@@ -10,7 +12,8 @@ export interface Board {
   readonly slug: string;
   readonly title: string;
   readonly description: string | null;
-  readonly columns: ReadonlyArray<string>;
+  // Structured since phase 17 (schema v5) — see lib/columns.ts.
+  readonly columns: ReadonlyArray<Column>;
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
@@ -32,7 +35,11 @@ export interface Issue {
   readonly board_id: string;
   readonly title: string;
   readonly body: string | null;
+  readonly type: IssueType;
   readonly status: string;
+  // Stable column reference; status mirrors the column's display name.
+  // Null only for issues awaiting the 0005 backfill.
+  readonly column_id: string | null;
   readonly container: Container;
   readonly assignee_pubkey: string | null;
   readonly priority: number | null;

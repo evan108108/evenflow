@@ -1090,3 +1090,141 @@
   padding: 0.6rem 0.8rem;
   margin-top: 0.6rem;
 }
+
+/* ── phase 17: issue-type badges ── */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-ink-soft);
+}
+
+/* Icon rides with the ref in the card's top-right corner, icon to the LEFT
+   of the short id. */
+.issue-card .card-ref-row {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.issue-card .card-ref-row .issue-ref-wrap.card-ref {
+  position: static;
+}
+
+.sheet-row .type-badge {
+  margin-right: 0.45rem;
+}
+
+/* ── phase 17: board-settings column editor ── */
+.column-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.column-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.3rem;
+  border-bottom: 1px solid var(--color-ink-faint);
+  border-top: 1.5px dashed transparent;
+}
+
+.column-row.disabled .column-name {
+  opacity: 0.45;
+}
+
+.column-row.dragging {
+  opacity: 0.4;
+}
+
+.column-row .drag-handle {
+  cursor: grab;
+  color: var(--color-ink-soft);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.column-row .column-name {
+  flex: 1;
+  font: inherit;
+  font-size: 0.95rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+
+.column-row .column-name:hover,
+.column-row .column-name:focus {
+  border-color: var(--color-ink-faint);
+  background: var(--color-paper-raised);
+}
+
+.column-row select,
+.column-add select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: inherit;
+  outline: none;
+}
+
+.column-row .column-enabled {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.column-row .column-count {
+  min-width: 1.4rem;
+  text-align: right;
+  font-size: 0.85rem;
+}
+
+.column-row .column-delete {
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  border: none;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  outline: none;
+}
+
+.column-row .column-delete:hover {
+  color: #9b2c2c;
+}
+
+.column-add {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+
+.column-add input {
+  flex: 1;
+}
+
+.settings-tabs {
+  margin-bottom: 1.6rem;
+}
+
+.actions .grow {
+  flex: 1;
+}

@@ -4,8 +4,10 @@
 import { For, Show } from "solid-js";
 import type { Issue } from "../lib/types";
 import type { DndHandle } from "../lib/dnd";
+import { typeLabel } from "../lib/columns";
 import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
+import { IssueTypeIcon } from "./IssueTypeIcon";
 
 export const IssueCard = (props: {
   issue: Issue;
@@ -21,9 +23,14 @@ export const IssueCard = (props: {
       )
     }
   >
-    <Show when={props.issue.short_id}>
-      {(shortId) => <IssueRef shortId={shortId()} class="card-ref" />}
-    </Show>
+    <div class="card-ref-row">
+      <span class="type-badge" title={`Type: ${typeLabel(props.issue.type)}`}>
+        <IssueTypeIcon type={props.issue.type} />
+      </span>
+      <Show when={props.issue.short_id}>
+        {(shortId) => <IssueRef shortId={shortId()} class="card-ref" />}
+      </Show>
+    </div>
     <div class="title">{props.issue.title}</div>
     <div class="chips">
       <Show when={props.issue.estimate !== null}>

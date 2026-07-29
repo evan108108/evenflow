@@ -6,6 +6,7 @@ import type { Board } from "../lib/types";
 import type { NewIssueInput } from "../pages/board/store";
 import { decodeJwtClaims, pubkeyOfJwt } from "../lib/jwt";
 import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
+import { DEFAULT_ISSUE_TYPE, ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 
@@ -30,8 +31,10 @@ export const NewIssueModal = (props: {
   onCreate: (input: NewIssueInput) => Promise<void>;
 }) => {
   const [title, setTitle] = createSignal("");
+  const [type, setType] = createSignal<string>(DEFAULT_ISSUE_TYPE);
   const [body, setBody] = createSignal("");
-  const [status, setStatus] = createSignal(props.board.columns[0] ?? "");
+  const columns = enabledColumns(props.board.columns);
+  const [status, setStatus] = createSignal(columns[0]?.name ?? "");
   const [container, setContainer] = createSignal("backlog");
   const [estimate, setEstimate] = createSignal("");
   const [labels, setLabels] = createSignal("");
@@ -56,6 +59,7 @@ export const NewIssueModal = (props: {
       .filter((l) => l !== "");
     const input: NewIssueInput = {
       title: title().trim(),
+      type: type(),
       ...(body().trim() === "" ? {} : { body: body() }),
       status: status(),
       container: container(),
@@ -81,6 +85,10 @@ export const NewIssueModal = (props: {
           value={title()}
           onInput={(e) => setTitle(e.currentTarget.value)}
         />
+        <label for="ni-type">Type</label>
+        <select id="ni-type" value={type()} onInput={(e) => setType(e.currentTarget.value)}>
+          <For each={[...ISSUE_TYPES]}>{(t) => <option value={t}>{typeLabel(t)}</option>}</For>
+        </select>
         <label for="ni-body">Body</label>
         <textarea
           id="ni-body"
@@ -90,7 +98,7 @@ export const NewIssueModal = (props: {
         />
         <label for="ni-status">Status</label>
         <select id="ni-status" value={status()} onInput={(e) => setStatus(e.currentTarget.value)}>
-          <For each={[...props.board.columns]}>{(c) => <option value={c}>{c}</option>}</For>
+          <For each={columns}>{(c) => <option value={c.name}>{c.name}</option>}</For>
         </select>
         <label for="ni-container">Container</label>
         <select
