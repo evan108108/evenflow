@@ -52,6 +52,11 @@ export const IssueCard = (props: {
   /** When true, skips the tall cover-image treatment. Used by list views
    *  (Backlog / Icebox) where a full-width 3:4 cover would eat the page. */
   compact?: boolean;
+  /** data-dropzone value making this card an insertion target (kanban
+   *  intra-column reorder). Views that don't reorder just omit it. */
+  zone?: string;
+  /** Insertion-slot indicator while a drag hovers this card. */
+  indicator?: "before" | "after" | null;
 }) => {
   // Compact mode skips the tall portrait cover. If the issue still HAS a cover,
   // we render it as a small square thumbnail on the left instead (list-view
@@ -76,8 +81,14 @@ export const IssueCard = (props: {
     <div
       ref={cardEl}
       class="issue-card"
-      classList={{ "has-cover": cover() !== null, "has-thumb": thumb() !== null }}
+      classList={{
+        "has-cover": cover() !== null,
+        "has-thumb": thumb() !== null,
+        "reorder-before": props.indicator === "before",
+        "reorder-after": props.indicator === "after",
+      }}
       data-issue-id={props.issue.id}
+      data-dropzone={props.zone}
       onPointerDown={(e) =>
         props.dnd.startDrag(e, props.issue.id, () =>
           props.onOpen(props.issue.short_id ?? props.issue.id),

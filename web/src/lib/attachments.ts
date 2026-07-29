@@ -34,6 +34,8 @@ export type BodyFormat = (typeof BODY_FORMATS)[number];
 export interface Attachment {
   readonly id: string;
   readonly issue_id: string;
+  // Null = issue-level (Files panel); non-null = owned by one comment.
+  readonly comment_id?: string | null;
   readonly blob_url: string;
   readonly sha256: string;
   readonly filename: string;

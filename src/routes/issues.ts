@@ -49,6 +49,14 @@ import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
+// Fractional intra-column positioning (phase 18d, Trello-shape). Append =
+// max+STEP, insert = neighbor midpoint; when the midpoint degenerates
+// (neighbors closer than MIN_GAP, or a neighbor is a positionless legacy
+// row) the whole column rebalances to whole STEPs in display order.
+// Mirrored at web/src/lib/order.ts — keep the two in lockstep.
+const POSITION_STEP = 1000;
+const MIN_POSITION_GAP = 1e-6;
+
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
@@ -377,6 +385,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const now = yield* Clock.currentTimeMillis;
       const id = crypto.randomUUID();
       const createdDone = column.category === "done";
+      // New issues land at the end of the positioned order. Board-wide max
+      // keeps it one query; within any single column the row is still last.
+      const maxPos = yield* db.queryFirst<{ m: number | null }>(
+        "SELECT MAX(position) AS m FROM issueCache WHERE board_id = ?",
+        [board.id],
+      );
+      const position = (maxPos?.m ?? 0) + POSITION_STEP;
       const issue: IssueShape = {
         id,
         short_id,
@@ -393,12 +408,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         estimate,
         labels,
         github_links: [],
+        position,
         created_at_ms: now,
         updated_at_ms: now,
         completed_at_ms: createdDone ? now : null,
       };
       yield* db.execute(
-        "INSERT INTO issueCache (id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO issueCache (id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           short_id,
@@ -415,6 +431,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           estimate,
           JSON.stringify(labels),
           "[]",
+          position,
           now,
           now,
           issue.completed_at_ms,
@@ -562,8 +579,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
       // column_id is immutable here on purpose: status (name) is the PATCH
-      // vocabulary, /transition is the column_id-first mover.
-      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms"]) {
+      // vocabulary, /transition is the column_id-first mover. position only
+      // moves through /reorder, which knows the neighbor midpoint math.
+      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms", "position"]) {
         if (body[immutable] !== undefined) {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
@@ -719,6 +737,141 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           payload: { issue: updated, from_status: issue.status, to_status: to.name },
         });
       }
+      return { issue: updated };
+    });
+    return runJson(c, program);
+  });
+
+  // ── PATCH /issues/:id/reorder — intra-column fractional positioning ─────
+  // Body: { before_issue_id?, after_issue_id? } — the visible neighbors
+  // around the drop slot (before = the card above, after = the card below;
+  // omit one at the column's edges). The server computes the midpoint; when
+  // the gap has degraded, or a legacy NULL-position row is involved, the
+  // whole column rebalances to whole POSITION_STEPs in display order first,
+  // with the dragged issue already in its new slot.
+  issues.patch("/issues/:id/reorder", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const pubkey = callerPubkey(claims);
+      const body = yield* readJsonBody(c);
+
+      const neighborId = (key: string) =>
+        body[key] === undefined || body[key] === null
+          ? Effect.succeed(null)
+          : typeof body[key] === "string"
+            ? Effect.succeed(body[key] as string)
+            : Effect.fail(new ValidationError({ reason: key }));
+      const beforeId = yield* neighborId("before_issue_id");
+      const afterId = yield* neighborId("after_issue_id");
+      if (beforeId === null && afterId === null) {
+        return yield* new ValidationError({ reason: "neighbors" });
+      }
+
+      const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
+      if (beforeId === issue.id || afterId === issue.id) {
+        return yield* new ValidationError({ reason: "neighbors" });
+      }
+      const db = yield* Db;
+
+      // Column identity as the VIEW sees it — resolved column id when the
+      // board still knows the column, raw status name otherwise.
+      const columnKeyOf = (i: IssueShape) => issueColumn(board, i)?.id ?? `status:${i.status}`;
+      const issueKey = columnKeyOf(issue);
+
+      const loadNeighbor = (nid: string) =>
+        Effect.gen(function* () {
+          const row = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [nid]);
+          if (row === null) return yield* new ValidationError({ reason: "neighbors" });
+          const neighbor = parseIssueRow(row);
+          if (
+            neighbor.board_id !== issue.board_id ||
+            neighbor.container !== issue.container ||
+            columnKeyOf(neighbor) !== issueKey
+          ) {
+            return yield* new ValidationError({ reason: "neighbor-not-in-column" });
+          }
+          return neighbor;
+        });
+      const before = beforeId === null ? null : yield* loadNeighbor(beforeId);
+      const after = afterId === null ? null : yield* loadNeighbor(afterId);
+
+      const now = yield* Clock.currentTimeMillis;
+      let newPos: number | null = null;
+      if (before !== null && after !== null) {
+        if (
+          before.position !== null &&
+          after.position !== null &&
+          after.position - before.position > MIN_POSITION_GAP
+        ) {
+          newPos = (before.position + after.position) / 2;
+        }
+      } else if (before !== null && before.position !== null) {
+        newPos = before.position + POSITION_STEP;
+      } else if (after !== null && after.position !== null) {
+        newPos = after.position - POSITION_STEP;
+      }
+
+      let updated: IssueShape;
+      if (newPos !== null) {
+        yield* db.execute(
+          "UPDATE issueCache SET position = ?, updated_at_ms = ? WHERE id = ?",
+          [newPos, now, issue.id],
+        );
+        updated = { ...issue, position: newPos, updated_at_ms: now };
+      } else {
+        // Rebalance path. Display order = position ASC (NULL last), then
+        // updated_at_ms DESC — the exact comparator the views use.
+        const rows = yield* db.queryAll(
+          "SELECT * FROM issueCache WHERE board_id = ? AND container = ? AND (column_id = ? OR (column_id IS NULL AND status = ?))",
+          [issue.board_id, issue.container, issue.column_id, issue.status],
+        );
+        const mates = rows
+          .map(parseIssueRow)
+          .filter((i) => i.id !== issue.id && columnKeyOf(i) === issueKey)
+          .sort((a, b) => {
+            const pa = a.position ?? Number.POSITIVE_INFINITY;
+            const pb = b.position ?? Number.POSITIVE_INFINITY;
+            if (pa !== pb) return pa - pb;
+            return b.updated_at_ms - a.updated_at_ms;
+          });
+        let insertAt = mates.length;
+        if (after !== null) {
+          const idx = mates.findIndex((i) => i.id === after.id);
+          if (idx !== -1) insertAt = idx;
+        } else if (before !== null) {
+          const idx = mates.findIndex((i) => i.id === before.id);
+          if (idx !== -1) insertAt = idx + 1;
+        }
+        updated = { ...issue, position: 0, updated_at_ms: now };
+        const ordered: IssueShape[] = [...mates.slice(0, insertAt), updated, ...mates.slice(insertAt)];
+        for (let i = 0; i < ordered.length; i++) {
+          const target = ordered[i]!;
+          const pos = (i + 1) * POSITION_STEP;
+          if (target.id === issue.id) {
+            updated = { ...updated, position: pos };
+            yield* db.execute(
+              "UPDATE issueCache SET position = ?, updated_at_ms = ? WHERE id = ?",
+              [pos, now, issue.id],
+            );
+          } else if (target.position !== pos) {
+            yield* db.execute("UPDATE issueCache SET position = ? WHERE id = ?", [pos, target.id]);
+          }
+        }
+      }
+
+      const audit = yield* AuditLog;
+      yield* audit.record({
+        event_type: "issue_reordered",
+        actor: claims.login,
+        details: { issue: issue.id },
+      });
+      yield* emitBoardEvent(issue.board_id, {
+        kind: "issue.updated",
+        board_id: issue.board_id,
+        issue_id: issue.id,
+        at_ms: now,
+        payload: { issue: updated },
+      });
       return { issue: updated };
     });
     return runJson(c, program);

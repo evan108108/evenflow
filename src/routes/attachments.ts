@@ -206,11 +206,18 @@ const fetchAttachment = (id: string, pubkey: string | null, minRole: string) =>
     return { attachment, issue };
   });
 
-const listLiveAttachments = (issueId: string) =>
+/**
+ * Live attachments on an issue. `issueLevelOnly` restricts to rows no
+ * comment has claimed (the Files panel view); the unrestricted form backs
+ * the per-issue upload cap, which comment attachments count toward.
+ */
+const listLiveAttachments = (issueId: string, issueLevelOnly = false) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const rows = yield* db.queryAll(
-      "SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL ORDER BY uploaded_at_ms ASC",
+      issueLevelOnly
+        ? "SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL ORDER BY uploaded_at_ms ASC"
+        : "SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL ORDER BY uploaded_at_ms ASC",
       [issueId],
     );
     return rows.map(parseAttachmentRow);
@@ -273,6 +280,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
       const attachment: AttachmentShape = {
         id,
         issue_id: issue.id,
+        comment_id: null,
         blob_url: url,
         sha256,
         filename: upload.filename,
@@ -285,8 +293,8 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         deleted_at_ms: null,
       };
       yield* db.execute(
-        "INSERT INTO issueAttachmentCache (id, issue_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, issue.id, url, sha256, upload.filename, upload.contentType, upload.bytes.byteLength, "blossom_default", 0, pubkey, now, null],
+        "INSERT INTO issueAttachmentCache (id, issue_id, comment_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, issue.id, null, url, sha256, upload.filename, upload.contentType, upload.bytes.byteLength, "blossom_default", 0, pubkey, now, null],
       );
       yield* audit.record({
         event_type: "attachment_uploaded",
@@ -310,7 +318,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   attachments.get("/boards/:slug/issues/:issue_ref/attachments", async (c) => {
     const program = Effect.gen(function* () {
       const { issue } = yield* fetchScopedIssue(c, callerPubkeyOrNull(c.get("claims")), "viewer");
-      const attachments_ = yield* listLiveAttachments(issue.id);
+      const attachments_ = yield* listLiveAttachments(issue.id, true);
       return { attachments: attachments_ };
     });
     return runJson(c, program);

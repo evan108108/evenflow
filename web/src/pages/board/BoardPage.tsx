@@ -13,6 +13,7 @@ import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effec
 import { createDnd, parseZone } from "../../lib/dnd";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { doneNames } from "../../lib/columns";
+import { issuesInColumn } from "../../lib/order";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
@@ -92,6 +93,7 @@ export const BoardPage = () => {
   const [showNewIssue, setShowNewIssue] = createSignal(false);
   const [flutter, setFlutter] = createSignal<{ x: number; y: number } | null>(null);
   const [commentsVersion, setCommentsVersion] = createSignal(0);
+  const [uploadNotice, setUploadNotice] = createSignal<string | null>(null);
   let newIssueButton: HTMLButtonElement | undefined;
   let sseFiber: RuntimeFiber<void, unknown> | undefined;
 
@@ -124,7 +126,28 @@ export const BoardPage = () => {
     const issue = store.issues().find((i) => i.id === issueId);
     const target = parseZone(zone);
     if (issue === undefined || target === null) return;
-    if (target.type === "transition") {
+    if (target.type === "card") {
+      // Dropped onto a card: same column → reorder around it; different
+      // column → plain transition (the card just proxies its column).
+      if (target.issue === issueId) return;
+      const column = store.board()?.columns.find((c) => c.id === target.column);
+      if (column === undefined) return;
+      const mates = issuesInColumn(
+        store.issues().filter((i) => i.container === "active"),
+        column,
+      );
+      if (!mates.some((i) => i.id === issueId)) {
+        void store.transition(issue, column);
+        return;
+      }
+      const ordered = mates.filter((i) => i.id !== issueId);
+      const idx = ordered.findIndex((i) => i.id === target.issue);
+      if (idx === -1) return;
+      const insertAt = target.half === "before" ? idx : idx + 1;
+      const before = ordered[insertAt - 1] ?? null;
+      const after = ordered[insertAt] ?? null;
+      void store.reorderIssue(issue, before?.id ?? null, after?.id ?? null);
+    } else if (target.type === "transition") {
       // Transition zones carry the column's stable id since phase 17.
       const column = store.board()?.columns.find((c) => c.id === target.column);
       if (column !== undefined) void store.transition(issue, column);
@@ -180,13 +203,24 @@ export const BoardPage = () => {
   });
   const velocityTotal = () => buckets().reduce((a, b) => a + b, 0);
 
-  const createIssue = async (input: NewIssueInput) => {
-    await store.createIssue(input);
+  const createIssue = async (input: NewIssueInput, files: ReadonlyArray<File>) => {
+    const issue = await store.createIssue(input);
     setShowNewIssue(false);
     const rect = newIssueButton?.getBoundingClientRect();
     if (rect !== undefined) {
       setFlutter({ x: rect.left + rect.width / 2, y: rect.top });
       setTimeout(() => setFlutter(null), BUTTERFLY_FLIGHT_MS);
+    }
+    // Buffered create-time attachments upload once the issue exists to own
+    // them. The issue is already created — failures surface as a notice
+    // rather than failing the create.
+    if (files.length > 0) {
+      const failures: string[] = [];
+      for (const file of files) {
+        const { rejection } = await store.uploadAttachment(issue.id, file);
+        if (rejection !== null) failures.push(`${file.name}: ${rejection.message}`);
+      }
+      setUploadNotice(failures.length === 0 ? null : failures.join(" · "));
     }
   };
 
@@ -253,6 +287,11 @@ export const BoardPage = () => {
               <Show when={store.lastError()}>
                 <p class="muted" role="alert">
                   The current pushed back: {store.lastError()}
+                </p>
+              </Show>
+              <Show when={uploadNotice()}>
+                <p class="muted" role="alert">
+                  Some attachments didn't make it: {uploadNotice()}
                 </p>
               </Show>
 

@@ -8,9 +8,10 @@ import { For, Show, createResource, createSignal } from "solid-js";
 import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
-import type { Attachment } from "../lib/attachments";
+import { formatBytes, isImageContentType, type Attachment } from "../lib/attachments";
 import type { BoardStore } from "../pages/board/store";
 import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
+import { PendingAttachments } from "./PendingAttachments";
 import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
@@ -36,6 +37,9 @@ export const IssueSheet = (props: {
   const [editingBody, setEditingBody] = createSignal(false);
   const [bodyDraft, setBodyDraft] = createSignal("");
   const [commentDraft, setCommentDraft] = createSignal("");
+  const [commentFiles, setCommentFiles] = createSignal<File[]>([]);
+  const [commentBusy, setCommentBusy] = createSignal(false);
+  const [commentError, setCommentError] = createSignal<string | null>(null);
   const [labelDraft, setLabelDraft] = createSignal("");
 
   const [comments, { refetch: refetchComments }] = createResource(
@@ -101,10 +105,30 @@ export const IssueSheet = (props: {
   const postComment = async (e: Event) => {
     e.preventDefault();
     const body = commentDraft().trim();
-    if (body === "") return;
-    await props.store.postComment(props.issue.id, body);
-    setCommentDraft("");
-    void refetchComments();
+    if (body === "" || commentBusy()) return;
+    setCommentBusy(true);
+    setCommentError(null);
+    try {
+      // Buffered files upload to the issue first (there's no comment to own
+      // them yet), then the post claims them via attachment_ids.
+      const ids: string[] = [];
+      for (const file of commentFiles()) {
+        const { attachment, rejection } = await props.store.uploadAttachment(props.issue.id, file);
+        if (attachment === null) {
+          setCommentError(`${file.name}: ${rejection?.message ?? "upload failed"}`);
+          return;
+        }
+        ids.push(attachment.id);
+      }
+      await props.store.postComment(props.issue.id, body, ids);
+      setCommentDraft("");
+      setCommentFiles([]);
+      void refetchComments();
+    } catch {
+      setCommentError("Comment didn't post. Try again.");
+    } finally {
+      setCommentBusy(false);
+    }
   };
 
   return (
@@ -334,22 +358,74 @@ export const IssueSheet = (props: {
                       </button>
                     </Show>
                   </div>
-                  <div>{comment.body}</div>
+                  <div class="comment-body">
+                    <MarkdownView source={comment.body} format={comment.body_format} />
+                  </div>
+                  <Show when={(comment.attachments ?? []).length > 0}>
+                    <ul class="attachment-list comment-attachments">
+                      <For each={comment.attachments ?? []}>
+                        {(attachment) => (
+                          <li class="attachment-row">
+                            <Show
+                              when={isImageContentType(attachment.content_type)}
+                              fallback={<span class="file-card" aria-hidden="true">▤</span>}
+                            >
+                              <a href={attachment.blob_url} target="_blank" rel="noreferrer">
+                                <img
+                                  class="attachment-thumb"
+                                  src={attachment.blob_url}
+                                  alt={attachment.filename}
+                                />
+                              </a>
+                            </Show>
+                            <a
+                              class="attachment-name"
+                              href={attachment.blob_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title={attachment.filename}
+                            >
+                              {attachment.filename}
+                            </a>
+                            <span class="muted attachment-size">
+                              {formatBytes(attachment.size_bytes)}
+                            </span>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
                 </div>
               )}
             </For>
           </Show>
-          <form class="comment-input" onSubmit={postComment}>
-            <input
-              type="text"
-              placeholder="Add a comment…"
-              value={commentDraft()}
-              onInput={(e) => setCommentDraft(e.currentTarget.value)}
-            />
-            <button type="submit" class="btn" disabled={commentDraft().trim() === ""}>
-              Post
-            </button>
-          </form>
+          <Show when={!readOnly()}>
+            <form class="comment-composer" onSubmit={postComment}>
+              <MarkdownEditor value={commentDraft()} onInput={setCommentDraft} />
+              <PendingAttachments
+                files={commentFiles()}
+                onAdd={(file) => setCommentFiles((list) => [...list, file])}
+                onRemove={(index) => setCommentFiles((list) => list.filter((_, i) => i !== index))}
+                disabled={commentBusy()}
+              />
+              <Show when={commentError()}>
+                <p class="attachment-error" role="alert">
+                  {commentError()}
+                </p>
+              </Show>
+              <div class="actions">
+                <button
+                  type="submit"
+                  class="btn btn-solid"
+                  disabled={commentDraft().trim() === "" || commentBusy()}
+                >
+                  <Show when={!commentBusy()} fallback={"Catching the current…"}>
+                    Post
+                  </Show>
+                </button>
+              </div>
+            </form>
+          </Show>
         </section>
 
         <section class="sheet-section">

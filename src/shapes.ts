@@ -109,6 +109,9 @@ export interface IssueShape {
     readonly pr: number;
     readonly state: string;
   }>;
+  // Intra-column fractional sort key (phase 18d). NULL = legacy row —
+  // sorts after every positioned row, by updated_at_ms DESC.
+  readonly position: number | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
@@ -120,6 +123,9 @@ export interface CommentShape {
   readonly issue_id: string;
   readonly author_pubkey: string;
   readonly body: string;
+  // 'markdown' (GFM) for comments written since phase 18c; rows that predate
+  // migration 0007 are pinned 'plain' and render white-space: pre-wrap.
+  readonly body_format: BodyFormat;
   readonly in_reply_to: string | null;
   readonly created_at_ms: number;
 }
@@ -364,6 +370,7 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     estimate: h.numberOrNull(r["estimate"], "estimate"),
     labels: labels as ReadonlyArray<string>,
     github_links: github_links as IssueShape["github_links"],
+    position: h.numberOrNull(r["position"] ?? null, "position"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"], "completed_at_ms"),
@@ -379,11 +386,19 @@ export const parseCommentRow = (row: unknown): CommentShape => {
   };
   const h = makeHelpers(raise);
   const r = h.object(row);
+
+  // Pre-0007 rows lack the column; existing comments were backfilled 'plain'.
+  const body_format = h.string(r["body_format"] ?? "markdown", "body_format");
+  if (!(BODY_FORMATS as ReadonlyArray<string>).includes(body_format)) {
+    raise("body_format not a body format");
+  }
+
   return {
     id: h.string(r["id"], "id"),
     issue_id: h.string(r["issue_id"], "issue_id"),
     author_pubkey: h.string(r["author_pubkey"], "author_pubkey"),
     body: h.string(r["body"], "body"),
+    body_format: body_format as BodyFormat,
     in_reply_to: h.stringOrNull(r["in_reply_to"], "in_reply_to"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
   };
@@ -492,6 +507,9 @@ export const parseMemberRow = (row: unknown): MemberShape => {
 export interface AttachmentShape {
   readonly id: string;
   readonly issue_id: string;
+  // NULL = issue-level attachment (Files panel); non-NULL = owned by one
+  // comment on that issue (phase 18c).
+  readonly comment_id: string | null;
   readonly blob_url: string;
   readonly sha256: string;
   readonly filename: string;
@@ -528,6 +546,7 @@ export const parseAttachmentRow = (row: unknown): AttachmentShape => {
   return {
     id: h.string(r["id"], "id"),
     issue_id: h.string(r["issue_id"], "issue_id"),
+    comment_id: h.stringOrNull(r["comment_id"] ?? null, "comment_id"),
     blob_url: h.string(r["blob_url"], "blob_url"),
     sha256: h.string(r["sha256"], "sha256"),
     filename: h.string(r["filename"], "filename"),

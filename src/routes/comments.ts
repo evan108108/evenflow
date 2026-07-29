@@ -25,11 +25,19 @@ import {
   requireCaller,
   type BoardOwnershipError,
 } from "../authz";
-import { parseCommentRow, parseIssueRow, type CommentShape } from "../shapes";
+import {
+  parseAttachmentRow,
+  parseCommentRow,
+  parseIssueRow,
+  type AttachmentShape,
+  type CommentShape,
+} from "../shapes";
 import { asShortId } from "../slug";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+/** Attachments one comment may claim — same ceiling as the per-issue cap. */
+const MAX_ATTACHMENT_IDS_PER_COMMENT = 20;
 
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
@@ -101,6 +109,29 @@ const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: string) 
     return issue;
   });
 
+/**
+ * Live attachments claimed by comments on this issue, keyed by comment id.
+ * Merged in code — same no-JOIN posture as the issue list's cover
+ * enrichment.
+ */
+const commentAttachmentsByComment = (issueId: string) =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    const rows = yield* db.queryAll(
+      "SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND comment_id IS NOT NULL AND deleted_at_ms IS NULL ORDER BY uploaded_at_ms ASC",
+      [issueId],
+    );
+    const byComment = new Map<string, AttachmentShape[]>();
+    for (const row of rows) {
+      const attachment = parseAttachmentRow(row);
+      if (attachment.comment_id === null) continue;
+      const list = byComment.get(attachment.comment_id) ?? [];
+      list.push(attachment);
+      byComment.set(attachment.comment_id, list);
+    }
+    return byComment;
+  });
+
 export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
   const comments = new Hono<AppHonoEnv>();
 
@@ -127,6 +158,31 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         return yield* new ValidationError({ reason: "body" });
       }
       const db = yield* Db;
+
+      // attachment_ids claim previously-uploaded issue-level attachments
+      // for this comment. Each must be a live, unclaimed attachment on THIS
+      // issue — cross-issue or double-claims fail the whole post.
+      let attachmentIds: string[] = [];
+      if (body["attachment_ids"] !== undefined) {
+        const ids = body["attachment_ids"];
+        if (
+          !Array.isArray(ids) ||
+          ids.some((v) => typeof v !== "string") ||
+          new Set(ids).size !== ids.length ||
+          ids.length > MAX_ATTACHMENT_IDS_PER_COMMENT
+        ) {
+          return yield* new ValidationError({ reason: "attachment_ids" });
+        }
+        attachmentIds = ids as string[];
+        for (const attachmentId of attachmentIds) {
+          const row = yield* db.queryFirst(
+            "SELECT * FROM issueAttachmentCache WHERE id = ? AND issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL",
+            [attachmentId, issue.id],
+          );
+          if (row === null) return yield* new ValidationError({ reason: "attachment_ids" });
+        }
+      }
+
       let inReplyTo: string | null = null;
       if (body["in_reply_to"] !== undefined && body["in_reply_to"] !== null) {
         if (typeof body["in_reply_to"] !== "string") {
@@ -149,13 +205,28 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         issue_id: issue.id,
         author_pubkey: pubkey,
         body: text,
+        body_format: "markdown",
         in_reply_to: inReplyTo,
         created_at_ms: now,
       };
       yield* db.execute(
-        "INSERT INTO commentCache (id, issue_id, author_pubkey, body, in_reply_to, created_at_ms) VALUES (?, ?, ?, ?, ?, ?)",
-        [comment.id, comment.issue_id, comment.author_pubkey, comment.body, comment.in_reply_to, comment.created_at_ms],
+        "INSERT INTO commentCache (id, issue_id, author_pubkey, body, body_format, in_reply_to, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [comment.id, comment.issue_id, comment.author_pubkey, comment.body, comment.body_format, comment.in_reply_to, comment.created_at_ms],
       );
+      const attachments: AttachmentShape[] = [];
+      for (const attachmentId of attachmentIds) {
+        // Claim guard repeated in the WHERE — a racing post loses quietly
+        // rather than stealing the attachment.
+        yield* db.execute(
+          "UPDATE issueAttachmentCache SET comment_id = ? WHERE id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL",
+          [comment.id, attachmentId],
+        );
+        const row = yield* db.queryFirst(
+          "SELECT * FROM issueAttachmentCache WHERE id = ? AND comment_id = ?",
+          [attachmentId, comment.id],
+        );
+        if (row !== null) attachments.push(parseAttachmentRow(row));
+      }
       yield* audit.record({
         event_type: "comment_created",
         actor: claims.login,
@@ -169,7 +240,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         at_ms: now,
         payload: { comment },
       });
-      return { comment };
+      return { comment: { ...comment, attachments } };
     });
     return runJson(c, program, 201);
   });
@@ -213,8 +284,12 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         "SELECT COUNT(*) AS n FROM commentCache WHERE issue_id = ?",
         [issue.id],
       );
+      const attachmentsByComment = yield* commentAttachmentsByComment(issue.id);
       return {
-        comments: rows.slice(0, limit).map(parseCommentRow),
+        comments: rows.slice(0, limit).map((row) => {
+          const comment = parseCommentRow(row);
+          return { ...comment, attachments: attachmentsByComment.get(comment.id) ?? [] };
+        }),
         total: count?.n ?? 0,
         has_more: rows.length > limit,
       };
@@ -253,6 +328,13 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       }
       const audit = yield* AuditLog;
       yield* db.execute("DELETE FROM commentCache WHERE id = ?", [comment.id]);
+      // The comment's attachments soft-delete with it (blobs stay on
+      // Blossom, same as issue-attachment deletes).
+      const deletedAt = yield* Clock.currentTimeMillis;
+      yield* db.execute(
+        "UPDATE issueAttachmentCache SET deleted_at_ms = ?, is_cover = 0 WHERE comment_id = ? AND deleted_at_ms IS NULL",
+        [deletedAt, comment.id],
+      );
       yield* audit.record({
         event_type: "comment_deleted",
         actor: claims.login,

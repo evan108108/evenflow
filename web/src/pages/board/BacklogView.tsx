@@ -6,6 +6,7 @@ import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { moveZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
+import { byBoardOrder, issuesInColumn } from "../../lib/order";
 import type { BoardStore } from "./store";
 
 export const BacklogView = (props: {
@@ -18,11 +19,8 @@ export const BacklogView = (props: {
     props.store
       .issues()
       .filter((i) => i.container === "backlog")
-      .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
-  const activeInColumn = (column: Column) =>
-    active().filter((i) =>
-      i.column_id !== null ? i.column_id === column.id : i.status === column.name,
-    );
+      .sort(byBoardOrder);
+  const activeInColumn = (column: Column) => issuesInColumn(active(), column);
 
   const activeZone = moveZone("promote_to_active");
   const backlogZone = moveZone("promote_to_backlog");

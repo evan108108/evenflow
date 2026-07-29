@@ -116,16 +116,31 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO issueCache")) {
-          const [id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
+          const [id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms] = params;
           if (issues.some((r) => r["short_id"] !== null && r["short_id"] === short_id)) {
             throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
           }
-          issues.push({ id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
+          issues.push({ id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO issueAttachmentCache")) {
-          const [id, issue_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms] = params;
-          attachments.push({ id, issue_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms });
+          const [id, issue_id, comment_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms] = params;
+          attachments.push({ id, issue_id, comment_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET comment_id = ? WHERE id = ?")) {
+          const row = attachments.find(
+            (r) => r["id"] === params[1] && (r["comment_id"] ?? null) === null && r["deleted_at_ms"] === null,
+          );
+          if (row) row["comment_id"] = params[0];
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET deleted_at_ms = ?, is_cover = 0 WHERE comment_id = ?")) {
+          for (const row of attachments) {
+            if (row["comment_id"] === params[1] && row["deleted_at_ms"] === null) {
+              Object.assign(row, { deleted_at_ms: params[0], is_cover: 0 });
+            }
+          }
           return;
         }
         if (sql.startsWith("UPDATE issueAttachmentCache SET is_cover = 0 WHERE issue_id = ?")) {
@@ -163,8 +178,8 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO commentCache")) {
-          const [id, issue_id, author_pubkey, body, in_reply_to, created_at_ms] = params;
-          comments.push({ id, issue_id, author_pubkey, body, in_reply_to, created_at_ms });
+          const [id, issue_id, author_pubkey, body, body_format, in_reply_to, created_at_ms] = params;
+          comments.push({ id, issue_id, author_pubkey, body, body_format, in_reply_to, created_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO statusChangeCache")) {
@@ -302,6 +317,16 @@ export const makeDbMock = (): DbMock => {
           }
           return;
         }
+        if (sql.startsWith("UPDATE issueCache SET position = ?, updated_at_ms = ? WHERE id = ?")) {
+          const row = issues.find((r) => r["id"] === params[2]);
+          if (row) Object.assign(row, { position: params[0], updated_at_ms: params[1] });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET position = ? WHERE id = ?")) {
+          const row = issues.find((r) => r["id"] === params[1]);
+          if (row) row["position"] = params[0];
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET container = ?")) {
           const [container, updated_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
@@ -405,6 +430,26 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND deleted_at_ms IS NULL")) {
           const r = attachments.find((x) => x["id"] === params[0] && x["deleted_at_ms"] === null);
           return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL")) {
+          const r = attachments.find(
+            (x) =>
+              x["id"] === params[0] &&
+              x["issue_id"] === params[1] &&
+              (x["comment_id"] ?? null) === null &&
+              x["deleted_at_ms"] === null,
+          );
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND comment_id = ?")) {
+          const r = attachments.find((x) => x["id"] === params[0] && x["comment_id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT MAX(position) AS m FROM issueCache WHERE board_id = ?")) {
+          const positions = issues
+            .filter((x) => x["board_id"] === params[0] && typeof x["position"] === "number")
+            .map((x) => num(x["position"]));
+          return { m: positions.length === 0 ? null : Math.max(...positions) } as R;
         }
         if (sql.startsWith("SELECT * FROM issueCache WHERE id = ?")) {
           const r = issues.find((x) => x["id"] === params[0]);
@@ -517,6 +562,19 @@ export const makeDbMock = (): DbMock => {
       }),
     queryAll: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
       Effect.sync(() => {
+        // Reorder's column-mates query — must precede the generic
+        // board-list handler, which shares its prefix.
+        if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND container = ? AND (column_id = ?")) {
+          return issues
+            .filter(
+              (r) =>
+                r["board_id"] === params[0] &&
+                r["container"] === params[1] &&
+                (r["column_id"] === params[2] ||
+                  ((r["column_id"] ?? null) === null && r["status"] === params[3])),
+            )
+            .map((r) => ({ ...r })) as R[];
+        }
         if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ?")) {
           let rows = issuesForBoardDesc(params[0]);
           let at = 1;
@@ -587,6 +645,28 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL")) {
           return attachments
             .filter((r) => r["issue_id"] === params[0] && r["deleted_at_ms"] === null)
+            .sort((a, b) => num(a["uploaded_at_ms"]) - num(b["uploaded_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL")) {
+          return attachments
+            .filter(
+              (r) =>
+                r["issue_id"] === params[0] &&
+                (r["comment_id"] ?? null) === null &&
+                r["deleted_at_ms"] === null,
+            )
+            .sort((a, b) => num(a["uploaded_at_ms"]) - num(b["uploaded_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND comment_id IS NOT NULL AND deleted_at_ms IS NULL")) {
+          return attachments
+            .filter(
+              (r) =>
+                r["issue_id"] === params[0] &&
+                (r["comment_id"] ?? null) !== null &&
+                r["deleted_at_ms"] === null,
+            )
             .sort((a, b) => num(a["uploaded_at_ms"]) - num(b["uploaded_at_ms"]))
             .map((r) => ({ ...r })) as R[];
         }

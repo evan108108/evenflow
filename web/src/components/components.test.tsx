@@ -243,14 +243,17 @@ describe("NewIssueModal", () => {
       .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
 
-    expect(onCreate).toHaveBeenCalledWith({
-      title: "Ship the butterflies",
-      type: "task",
-      status: "Backlog",
-      container: "backlog",
-      estimate: 8,
-      labels: ["polish", "joy"],
-    });
+    expect(onCreate).toHaveBeenCalledWith(
+      {
+        title: "Ship the butterflies",
+        type: "task",
+        status: "Backlog",
+        container: "backlog",
+        estimate: 8,
+        labels: ["polish", "joy"],
+      },
+      [],
+    );
     cleanup();
   });
 
@@ -263,10 +266,13 @@ describe("NewIssueModal", () => {
     const type = container.querySelector<HTMLSelectElement>("#ni-type")!;
     expect(type.value).toBe("task");
     expect([...type.options].map((o) => o.value)).toEqual([...ISSUE_TYPES]);
-    // DOM order: the Type control sits between Title and Body.
-    const ids = [...container.querySelectorAll("input, select, textarea")].map((el) => el.id);
-    expect(ids.indexOf("ni-type")).toBeGreaterThan(ids.indexOf("ni-title"));
-    expect(ids.indexOf("ni-type")).toBeLessThan(ids.indexOf("ni-body"));
+    // DOM order: the Type control sits between Title and Body (the Body is
+    // the MarkdownEditor's textarea since phase 18c).
+    const fields = [...container.querySelectorAll("input, select, textarea")];
+    const indexOf = (match: (el: Element) => boolean) => fields.findIndex(match);
+    const typeIdx = indexOf((el) => el.id === "ni-type");
+    expect(typeIdx).toBeGreaterThan(indexOf((el) => el.id === "ni-title"));
+    expect(typeIdx).toBeLessThan(indexOf((el) => el.classList.contains("editor-textarea")));
 
     type.value = "bug";
     type.dispatchEvent(new Event("input", { bubbles: true }));
@@ -278,7 +284,7 @@ describe("NewIssueModal", () => {
       .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await flush();
 
-    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ type: "bug" }));
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ type: "bug" }), []);
     cleanup();
   });
 

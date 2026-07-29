@@ -19,6 +19,7 @@ import {
 } from "../../lib/types";
 import type { Column } from "../../lib/columns";
 import type { Attachment } from "../../lib/attachments";
+import { POSITION_STEP } from "../../lib/order";
 
 export type RunApi = <A, E>(effect: Effect.Effect<A, E, ApiClient>) => Promise<A>;
 
@@ -154,6 +155,39 @@ export const createBoardStore = (
     });
   };
 
+  /**
+   * Reorder within the column: place `issue` between its new neighbors
+   * (either may be null at the column's edges). Optimistic when the local
+   * midpoint is computable; the follow-up refetch picks up any server-side
+   * column rebalance either way.
+   */
+  const reorderIssue = async (
+    issue: Issue,
+    beforeId: string | null,
+    afterId: string | null,
+  ) => {
+    const before = beforeId === null ? undefined : issues().find((i) => i.id === beforeId);
+    const after = afterId === null ? undefined : issues().find((i) => i.id === afterId);
+    let optimisticPos: number | null = null;
+    if (before?.position != null && after?.position != null && after.position > before.position) {
+      optimisticPos = (before.position + after.position) / 2;
+    } else if (before?.position != null && afterId === null) {
+      optimisticPos = before.position + POSITION_STEP;
+    } else if (after?.position != null && beforeId === null) {
+      optimisticPos = after.position - POSITION_STEP;
+    }
+    await optimistic(issue.id, optimisticPos === null ? {} : { position: optimisticPos }, async () => {
+      const res = await api((c) =>
+        c.patch<{ issue: Issue }>(`/api/v0/issues/${issue.id}/reorder`, {
+          ...(beforeId === null ? {} : { before_issue_id: beforeId }),
+          ...(afterId === null ? {} : { after_issue_id: afterId }),
+        }),
+      );
+      return res.issue;
+    });
+    void refetchIssues();
+  };
+
   const moveContainer = (issue: Issue, move: ContainerMove) => {
     if (CONTAINER_OF_MOVE[move] === issue.container) return Promise.resolve();
     return optimistic(issue.id, { container: CONTAINER_OF_MOVE[move] }, async () => {
@@ -196,10 +230,13 @@ export const createBoardStore = (
       (r) => r.comments,
     );
 
-  const postComment = (issueId: string, body: string) =>
-    api((c) => c.post<{ comment: Comment }>(`/api/v0/issues/${issueId}/comments`, { body })).then(
-      (r) => r.comment,
-    );
+  const postComment = (issueId: string, body: string, attachmentIds: ReadonlyArray<string> = []) =>
+    api((c) =>
+      c.post<{ comment: Comment }>(`/api/v0/issues/${issueId}/comments`, {
+        body,
+        ...(attachmentIds.length === 0 ? {} : { attachment_ids: attachmentIds }),
+      }),
+    ).then((r) => r.comment);
 
   const deleteComment = (commentId: string) =>
     api((c) => c.delete<{ deleted: boolean }>(`/api/v0/comments/${commentId}`));
@@ -267,6 +304,7 @@ export const createBoardStore = (
     refetchStatusFeed,
     transition,
     moveContainer,
+    reorderIssue,
     createIssue,
     patchIssue,
     deleteIssue,
