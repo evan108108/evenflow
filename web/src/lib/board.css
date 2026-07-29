@@ -8,6 +8,73 @@
   padding: 2.5rem 1.5rem 4rem;
 }
 
+/* ── user nav (avatar pill + dropdown) ── */
+.user-nav {
+  position: relative;
+  display: inline-block;
+}
+
+.user-nav-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--color-ink-faint);
+  padding: 0;
+  overflow: hidden;
+  background: var(--color-paper-raised);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: border-color 120ms ease;
+}
+.user-nav-btn:hover {
+  border-color: var(--color-ink);
+}
+.user-nav-btn img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.user-nav-initials {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--color-ink-soft);
+}
+
+.user-nav-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  min-width: 10rem;
+  background: var(--color-cream);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  box-shadow: 0 12px 28px rgba(23, 35, 59, 0.14);
+  padding: 0.3rem 0;
+  z-index: 80;
+}
+
+.user-nav-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.92rem;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background: none;
+  border: none;
+  text-decoration: none;
+  cursor: pointer;
+}
+.user-nav-item:hover {
+  background: rgba(23, 35, 59, 0.05);
+}
+
 /* Small back-link above the board title. */
 .crumb {
   font-size: 0.82rem;
