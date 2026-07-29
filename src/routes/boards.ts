@@ -34,15 +34,16 @@ import { ensurePersonalOrg, upsertMembership } from "../membership";
 import { parseBoardRow, type BoardShape, type OrgShape } from "../shapes";
 import { PREFIX_RE, derivePrefix, uniquePrefix } from "../slug";
 import { VISIBILITIES } from "../roles";
+import {
+  coerceStringColumns,
+  columnArrayProblem,
+  columnById,
+  defaultColumns,
+  type Column,
+} from "../columns";
 
 const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MEMBER_POLICIES = ["open", "invite"] as const;
-// Status columns are lifecycle only (Todo → In Progress → In Review → Done).
-// "Backlog" is intentionally NOT a status — it lives on the CONTAINER axis
-// (icebox / backlog / active), a separate dimension. Overlapping vocabulary
-// creates a "which Backlog do I pick?" trap in the New Issue modal — see
-// PLAN.md "Icebox, Backlog, Active — two orthogonal dimensions".
-const DEFAULT_COLUMNS = ["Todo", "In Progress", "In Review", "Done"];
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
@@ -100,10 +101,24 @@ const validateDescription = (v: unknown) =>
     ? Effect.succeed(v as string | null)
     : Effect.fail(new ValidationError({ reason: "description" }));
 
-const validateColumns = (v: unknown) =>
-  Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x.trim() !== "")
-    ? Effect.succeed(v as string[])
-    : Effect.fail(new ValidationError({ reason: "columns" }));
+// Status columns are lifecycle only (Todo → In Progress → In Review →
+// Done). "Backlog" is intentionally NOT a status — it lives on the
+// CONTAINER axis (icebox / backlog / active), a separate dimension. See
+// PLAN.md "Icebox, Backlog, Active — two orthogonal dimensions".
+//
+// Since phase 17, columns are structured (Column[]); a bare string[] is
+// still accepted from older clients and coerced with inferred categories.
+const validateColumns = (v: unknown): Effect.Effect<Column[], ValidationError> => {
+  if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string")) {
+    return v.every((x) => (x as string).trim() !== "" && (x as string).length <= 30)
+      ? Effect.succeed(coerceStringColumns(v as string[], () => crypto.randomUUID()))
+      : Effect.fail(new ValidationError({ reason: "columns" }));
+  }
+  const problem = columnArrayProblem(v);
+  return problem === null
+    ? Effect.succeed(v as Column[])
+    : Effect.fail(new ValidationError({ reason: `columns-${problem}` }));
+};
 
 const validateLabels = (v: unknown) =>
   Array.isArray(v)
@@ -176,7 +191,9 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const description =
         body["description"] === undefined ? null : yield* validateDescription(body["description"]);
       const columns =
-        body["columns"] === undefined ? DEFAULT_COLUMNS : yield* validateColumns(body["columns"]);
+        body["columns"] === undefined
+          ? defaultColumns(() => crypto.randomUUID())
+          : yield* validateColumns(body["columns"]);
       const labels =
         body["labels"] === undefined ? [] : yield* validateLabels(body["labels"]);
       const member_policy =
@@ -433,6 +450,52 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           : yield* validateVisibility(body["visibility"]);
 
       const db = yield* Db;
+
+      // Column-set changes: a deleted column must not strand its issues. A
+      // removed id that still has issues requires a column_move_map entry
+      // pointing at a surviving ENABLED column (the alternative — hiding —
+      // is just enabled:false, which isn't a removal). Renames re-point the
+      // status name mirror; column_id rows never move on a rename.
+      if (body["columns"] !== undefined) {
+        const moveMapRaw = body["column_move_map"];
+        if (
+          moveMapRaw !== undefined &&
+          (typeof moveMapRaw !== "object" ||
+            moveMapRaw === null ||
+            Array.isArray(moveMapRaw) ||
+            Object.values(moveMapRaw).some((t) => typeof t !== "string"))
+        ) {
+          return yield* new ValidationError({ reason: "column_move_map" });
+        }
+        const moveMap = (moveMapRaw ?? {}) as Record<string, string>;
+        const survivingIds = new Set(columns.map((c) => c.id));
+        for (const gone of current.columns.filter((c) => !survivingIds.has(c.id))) {
+          const count = yield* db.queryFirst<{ n: number }>(
+            "SELECT COUNT(*) AS n FROM issueCache WHERE board_id = ? AND column_id = ?",
+            [current.id, gone.id],
+          );
+          if ((count?.n ?? 0) === 0) continue;
+          const mapped = moveMap[gone.id];
+          const target = mapped === undefined ? undefined : columnById(columns, mapped);
+          if (target === undefined || !target.enabled) {
+            return yield* new ValidationError({ reason: "column-delete-has-issues" });
+          }
+          yield* db.execute(
+            "UPDATE issueCache SET column_id = ?, status = ? WHERE board_id = ? AND column_id = ?",
+            [target.id, target.name, current.id, gone.id],
+          );
+        }
+        for (const col of columns) {
+          const prev = current.columns.find((c) => c.id === col.id);
+          if (prev !== undefined && prev.name !== col.name) {
+            yield* db.execute(
+              "UPDATE issueCache SET status = ? WHERE board_id = ? AND column_id = ?",
+              [col.name, current.id, col.id],
+            );
+          }
+        }
+      }
+
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       yield* db.execute(

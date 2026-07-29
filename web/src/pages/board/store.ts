@@ -17,6 +17,7 @@ import {
   type FeedItem,
   type Issue,
 } from "../../lib/types";
+import type { Column } from "../../lib/columns";
 
 export type RunApi = <A, E>(effect: Effect.Effect<A, E, ApiClient>) => Promise<A>;
 
@@ -24,6 +25,7 @@ const runOnApp: RunApi = (effect) => appRuntime.runPromise(effect);
 
 export interface NewIssueInput {
   readonly title: string;
+  readonly type?: string;
   readonly body?: string;
   readonly status?: string;
   readonly container?: string;
@@ -35,6 +37,7 @@ export interface NewIssueInput {
 export type IssuePatch = Partial<{
   title: string;
   body: string | null;
+  type: string;
   status: string;
   assignee_pubkey: string | null;
   priority: number | null;
@@ -132,11 +135,12 @@ export const createBoardStore = (
     }
   };
 
-  const transition = (issue: Issue, to_status: string) => {
-    if (to_status === issue.status) return Promise.resolve();
-    return optimistic(issue.id, { status: to_status }, async () => {
+  /** Move to a column by stable id (column_id survives renames). */
+  const transition = (issue: Issue, to: Column) => {
+    if (to.id === issue.column_id && to.name === issue.status) return Promise.resolve();
+    return optimistic(issue.id, { status: to.name, column_id: to.id }, async () => {
       const res = await api((c) =>
-        c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/transition`, { to_status }),
+        c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/transition`, { column_id: to.id }),
       );
       return res.issue;
     });

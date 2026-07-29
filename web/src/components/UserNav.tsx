@@ -86,7 +86,7 @@ export const UserNav = () => {
       .join("");
   };
 
-  const orgs = (): OrgSummary[] => currentMe()?.orgs ?? [];
+  const orgs = (): ReadonlyArray<OrgSummary> => currentMe()?.orgs ?? [];
   const activeSlug = (): string | null =>
     lastActiveOrg() ?? currentMe()?.handle ?? null;
 

@@ -32,7 +32,13 @@ describe("POST /api/v0/boards", () => {
       slug: "kb",
       title: "Kanban",
       description: null,
-      columns: ["Todo", "In Progress", "In Review", "Done"],
+      // Structured default set since phase 17: uuid ids, contiguous order.
+      columns: [
+        { name: "Todo", order: 0, enabled: true, category: "todo" },
+        { name: "In Progress", order: 1, enabled: true, category: "in_progress" },
+        { name: "In Review", order: 2, enabled: true, category: "in_review" },
+        { name: "Done", order: 3, enabled: true, category: "done" },
+      ],
       labels: [],
       member_policy: "invite",
       is_encrypted: false,
@@ -40,6 +46,7 @@ describe("POST /api/v0/boards", () => {
       created_at_ms: 1_000,
       updated_at_ms: 1_000,
     });
+    expect(new Set(board.columns.map((c) => c.id)).size).toBe(4);
     expect(board.id).toBeTruthy();
     // Personal org auto-created (login "tester" → slug "tester") + owner row
     // + creator's explicit board-admin grant.

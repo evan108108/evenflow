@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { ApiClient, ApiError } from "../../effects";
 import type { Board, Issue } from "../../lib/types";
+import type { Column } from "../../lib/columns";
 import { velocityBuckets } from "./BoardPage";
 import { createBoardStore, type RunApi } from "./store";
 
@@ -40,13 +41,27 @@ const makeTestRun = (routes: Record<string, unknown>) => {
   return { calls, run };
 };
 
+const col = (id: string, name: string, order: number, category: Column["category"]): Column => ({
+  id,
+  name,
+  order,
+  enabled: true,
+  category,
+});
+
+const COLUMNS: Column[] = [
+  col("c1", "Backlog", 0, "todo"),
+  col("c2", "In Progress", 1, "in_progress"),
+  col("c3", "Done", 2, "done"),
+];
+
 const board: Board = {
   id: "b1",
   pubkey: "test:0",
   slug: "kb",
   title: "Board",
   description: null,
-  columns: ["Backlog", "In Progress", "Done"],
+  columns: COLUMNS,
   labels: [],
   member_policy: "invite",
   is_encrypted: false,
@@ -62,7 +77,9 @@ const issue = (over: Partial<Issue> = {}): Issue => ({
   board_id: "b1",
   title: "An issue",
   body: null,
+  type: "task",
   status: "Backlog",
+  column_id: "c1",
   container: "active",
   assignee_pubkey: null,
   priority: null,
@@ -103,22 +120,26 @@ describe("createBoardStore", () => {
     ]);
   });
 
-  it("transition posts to /transition and applies the server issue", async () => {
+  it("transition posts the target column_id and applies the server issue", async () => {
     const { store, calls } = await loadedStore({
-      "POST /api/v0/issues/i1/transition": { issue: issue({ status: "Done", updated_at_ms: 9 }) },
+      "POST /api/v0/issues/i1/transition": {
+        issue: issue({ status: "Done", column_id: "c3", updated_at_ms: 9 }),
+      },
     });
-    await store.transition(store.issues()[0]!, "Done");
+    await store.transition(store.issues()[0]!, COLUMNS[2]!);
     expect(calls).toEqual([
-      { method: "POST", path: "/api/v0/issues/i1/transition", body: { to_status: "Done" } },
+      { method: "POST", path: "/api/v0/issues/i1/transition", body: { column_id: "c3" } },
     ]);
     expect(store.issues()[0]!.status).toBe("Done");
+    expect(store.issues()[0]!.column_id).toBe("c3");
   });
 
   it("rolls the optimistic update back when the API fails", async () => {
     const { store, calls } = await loadedStore({ "POST /api/v0/issues/i1/transition": FAIL });
-    await store.transition(store.issues()[0]!, "Done");
+    await store.transition(store.issues()[0]!, COLUMNS[2]!);
     expect(calls).toHaveLength(1);
     expect(store.issues()[0]!.status).toBe("Backlog");
+    expect(store.issues()[0]!.column_id).toBe("c1");
     expect(store.lastError()).toContain("500");
   });
 
@@ -166,14 +187,26 @@ describe("velocityBuckets", () => {
     issue_id,
   });
 
-  it("sums only Done-in-active completions inside the trailing week", () => {
+  const isDone = (name: string) => name === "Done";
+
+  it("sums only done-in-active completions inside the trailing week", () => {
     const feed = [
       doneAt(NOW - 1 * 86_400_000, "active"), // yesterday → bucket 6ish
       doneAt(NOW - 1 * 86_400_000, "icebox"), // wrong container → dropped
       doneAt(NOW - 10 * 86_400_000, "active"), // too old → dropped
       { to: "In Progress", container_at_completion: null, occurred_at_ms: NOW - 1, issue_id: "i1" },
     ];
-    const buckets = velocityBuckets(feed, () => 3, NOW);
+    const buckets = velocityBuckets(feed, () => 3, NOW, isDone);
     expect(buckets.reduce((a, b) => a + b, 0)).toBe(3);
+  });
+
+  it("counts by column CATEGORY, so a renamed done column keeps flowing", () => {
+    const feed = [
+      { to: "Shipped", container_at_completion: "active", occurred_at_ms: NOW - 1, issue_id: "i1" },
+      doneAt(NOW - 2, "active"), // old rows still name-match "Done"
+    ];
+    // Board renamed Done → Shipped: both names sit in a done-category column.
+    const buckets = velocityBuckets(feed, () => 2, NOW, (n) => n === "Shipped" || n === "Done");
+    expect(buckets.reduce((a, b) => a + b, 0)).toBe(4);
   });
 });

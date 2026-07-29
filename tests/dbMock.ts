@@ -114,11 +114,11 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO issueCache")) {
-          const [id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
+          const [id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
           if (issues.some((r) => r["short_id"] !== null && r["short_id"] === short_id)) {
             throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
           }
-          issues.push({ id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
+          issues.push({ id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO commentCache")) {
@@ -234,10 +234,31 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { revoked_at_ms });
           return;
         }
-        if (sql.startsWith("UPDATE issueCache SET status = ?")) {
-          const [status, updated_at_ms, completed_at_ms, id] = params;
+        // Transition: status name mirror + column_id identity move together.
+        if (sql.startsWith("UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?")) {
+          const [status, column_id, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { status, updated_at_ms, completed_at_ms });
+          if (row) Object.assign(row, { status, column_id, updated_at_ms, completed_at_ms });
+          return;
+        }
+        // Column rename: re-point the status mirror of every issue in the column.
+        if (sql.startsWith("UPDATE issueCache SET status = ? WHERE board_id = ? AND column_id = ?")) {
+          const [status, board_id, column_id] = params;
+          for (const row of issues) {
+            if (row["board_id"] === board_id && row["column_id"] === column_id) {
+              Object.assign(row, { status });
+            }
+          }
+          return;
+        }
+        // Column delete with move: issues relocate to the surviving column.
+        if (sql.startsWith("UPDATE issueCache SET column_id = ?, status = ? WHERE board_id = ? AND column_id = ?")) {
+          const [column_id, status, board_id, from_column_id] = params;
+          for (const row of issues) {
+            if (row["board_id"] === board_id && row["column_id"] === from_column_id) {
+              Object.assign(row, { column_id, status });
+            }
+          }
           return;
         }
         if (sql.startsWith("UPDATE issueCache SET container = ?")) {
@@ -247,9 +268,9 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("UPDATE issueCache SET title = ?")) {
-          const [title, body, status, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
+          const [title, body, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, body, status, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
+          if (row) Object.assign(row, { title, body, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE boardCache SET issue_prefix = ?")) {
@@ -335,6 +356,11 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT * FROM issueCache WHERE id = ?")) {
           const r = issues.find((x) => x["id"] === params[0]);
           return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM issueCache WHERE board_id = ? AND column_id = ?")) {
+          return {
+            n: issues.filter((x) => x["board_id"] === params[0] && x["column_id"] === params[1]).length,
+          } as R;
         }
         if (sql.startsWith("SELECT COUNT(*) AS n FROM issueCache WHERE board_id = ?")) {
           const [filtered] = applyIssueFilter(

@@ -7,9 +7,11 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
+import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
 import type { BoardStore } from "../pages/board/store";
 import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
+import { IssueTypeIcon } from "./IssueTypeIcon";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 const PRIORITIES = [1, 2, 3, 4];
@@ -104,12 +106,30 @@ export const IssueSheet = (props: {
         />
 
         <div class="sheet-row">
+          <span class="key">Type</span>
+          <span class="type-badge" title={`Type: ${typeLabel(props.issue.type)}`}>
+            <IssueTypeIcon type={props.issue.type} />
+          </span>
+          <select
+            value={props.issue.type}
+            onInput={(e) => void props.store.patchIssue(props.issue.id, { type: e.currentTarget.value })}
+          >
+            <For each={[...ISSUE_TYPES]}>{(t) => <option value={t}>{typeLabel(t)}</option>}</For>
+          </select>
+        </div>
+
+        <div class="sheet-row">
           <span class="key">Status</span>
           <select
-            value={props.issue.status}
-            onInput={(e) => void props.store.transition(props.issue, e.currentTarget.value)}
+            value={props.issue.column_id ?? props.issue.status}
+            onInput={(e) => {
+              const to = props.board.columns.find((c) => c.id === e.currentTarget.value);
+              if (to !== undefined) void props.store.transition(props.issue, to);
+            }}
           >
-            <For each={[...props.board.columns]}>{(c) => <option value={c}>{c}</option>}</For>
+            <For each={enabledColumns(props.board.columns)}>
+              {(c) => <option value={c.id}>{c.name}</option>}
+            </For>
           </select>
         </div>
 

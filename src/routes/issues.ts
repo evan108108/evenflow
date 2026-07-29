@@ -30,18 +30,23 @@ import {
 import {
   CONTAINERS,
   parseIssueRow,
+  type BoardShape,
   type Container,
   type IssueShape,
 } from "../shapes";
+import {
+  DEFAULT_ISSUE_TYPE,
+  ISSUE_TYPES,
+  columnById,
+  columnByName,
+  enabledColumns,
+  type Column,
+  type IssueType,
+} from "../columns";
 import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
-
-// MVP: the literal "Done" column is the completion marker (matches the
-// default column set). Column-role metadata (which column means "done" on a
-// custom board) is a later phase.
-const DONE_STATUS = "Done";
 
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
@@ -107,10 +112,31 @@ const validateContainer = (v: unknown) =>
     ? Effect.succeed(v as Container)
     : Effect.fail(new ValidationError({ reason: "container" }));
 
-const validateStatus = (columns: ReadonlyArray<string>, v: unknown) =>
-  typeof v === "string" && columns.includes(v)
-    ? Effect.succeed(v)
+/** Resolve a status NAME to one of the board's columns (identity + mirror). */
+const validateStatus = (columns: ReadonlyArray<Column>, v: unknown) => {
+  const column = typeof v === "string" ? columnByName(columns, v) : undefined;
+  return column !== undefined
+    ? Effect.succeed(column)
     : Effect.fail(new ValidationError({ reason: "status-not-a-column" }));
+};
+
+const validateType = (v: unknown) =>
+  typeof v === "string" && (ISSUE_TYPES as ReadonlyArray<string>).includes(v)
+    ? Effect.succeed(v as IssueType)
+    : Effect.fail(new ValidationError({ reason: "type" }));
+
+/** Where new issues land when no status is given: first enabled column. */
+const defaultColumn = (board: BoardShape): Column | undefined =>
+  enabledColumns(board.columns)[0] ?? board.columns[0];
+
+/** The column an issue sits in — column_id is identity, name the fallback. */
+const issueColumn = (board: BoardShape, issue: IssueShape): Column | undefined =>
+  (issue.column_id === null ? undefined : columnById(board.columns, issue.column_id)) ??
+  columnByName(board.columns, issue.status);
+
+/** Done-ness is the column's CATEGORY, never the literal name "Done". */
+const inDone = (board: BoardShape, issue: IssueShape): boolean =>
+  issueColumn(board, issue)?.category === "done";
 
 const validateAssignee = (v: unknown) =>
   v === null || (typeof v === "string" && v !== "")
@@ -186,43 +212,55 @@ const insertStatusChange = (w: StatusChangeWrite) =>
     );
   });
 
-/** completed_at_ms follows the Done edge: set on arrival, cleared on exit. */
+/** completed_at_ms follows the done-category edge: set on arrival, cleared on exit. */
 const nextCompletedAt = (
   current: IssueShape,
-  toStatus: string,
+  wasDone: boolean,
+  toDone: boolean,
   now: number,
 ): number | null => {
-  if (toStatus === DONE_STATUS && current.status !== DONE_STATUS) return now;
-  if (toStatus !== DONE_STATUS) return null;
+  if (toDone && !wasDone) return now;
+  if (!toDone) return null;
   return current.completed_at_ms;
 };
 
 /**
- * Apply a status change (shared by PATCH and /transition): update the row,
- * maintain completed_at_ms, write the audit row. No-op when unchanged.
+ * Apply a status change (shared by PATCH and /transition): update the row
+ * (column_id identity + status name mirror), maintain completed_at_ms,
+ * write the audit row. No-op when unchanged — though a legacy row missing
+ * its column_id still writes once, to heal the reference.
  */
-const applyStatusChange = (issue: IssueShape, toStatus: string, actor: string) =>
+const applyStatusChange = (issue: IssueShape, to: Column, board: BoardShape, actor: string) =>
   Effect.gen(function* () {
-    if (toStatus === issue.status) return issue;
+    if (to.id === issue.column_id && to.name === issue.status) return issue;
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
-    const completed = nextCompletedAt(issue, toStatus, now);
+    const toDone = to.category === "done";
+    const completed = nextCompletedAt(issue, inDone(board, issue), toDone, now);
     yield* db.execute(
-      "UPDATE issueCache SET status = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
-      [toStatus, now, completed, issue.id],
+      "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
+      [to.name, to.id, now, completed, issue.id],
     );
-    yield* insertStatusChange({
-      issue_id: issue.id,
-      board_id: issue.board_id,
-      actor_pubkey: actor,
-      from_status: issue.status,
-      to_status: toStatus,
-      from_container: null,
-      to_container: null,
-      container_at_completion: toStatus === DONE_STATUS ? issue.container : null,
-      occurred_at_ms: now,
-    });
-    return { ...issue, status: toStatus, updated_at_ms: now, completed_at_ms: completed };
+    if (to.name !== issue.status) {
+      yield* insertStatusChange({
+        issue_id: issue.id,
+        board_id: issue.board_id,
+        actor_pubkey: actor,
+        from_status: issue.status,
+        to_status: to.name,
+        from_container: null,
+        to_container: null,
+        container_at_completion: toDone ? issue.container : null,
+        occurred_at_ms: now,
+      });
+    }
+    return {
+      ...issue,
+      status: to.name,
+      column_id: to.id,
+      updated_at_ms: now,
+      completed_at_ms: completed,
+    };
   });
 
 /** Move an issue between containers. Idempotent: same-container is a no-op. */
@@ -282,10 +320,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const title = yield* validateTitle(body["title"]);
       const issueBody = body["body"] === undefined ? null : yield* validateBody(body["body"]);
-      const status =
+      const type =
+        body["type"] === undefined ? DEFAULT_ISSUE_TYPE : yield* validateType(body["type"]);
+      const column =
         body["status"] === undefined
-          ? board.columns[0] ?? DONE_STATUS
+          ? defaultColumn(board)
           : yield* validateStatus(board.columns, body["status"]);
+      if (column === undefined) return yield* new ValidationError({ reason: "status-not-a-column" });
       const container =
         body["container"] === undefined
           ? ("backlog" as Container)
@@ -325,13 +366,16 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const now = yield* Clock.currentTimeMillis;
       const id = crypto.randomUUID();
+      const createdDone = column.category === "done";
       const issue: IssueShape = {
         id,
         short_id,
         board_id: board.id,
         title,
         body: issueBody,
-        status,
+        type,
+        status: column.name,
+        column_id: column.id,
         container,
         assignee_pubkey: assignee,
         priority,
@@ -340,17 +384,19 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         github_links: [],
         created_at_ms: now,
         updated_at_ms: now,
-        completed_at_ms: status === DONE_STATUS ? now : null,
+        completed_at_ms: createdDone ? now : null,
       };
       yield* db.execute(
-        "INSERT INTO issueCache (id, short_id, board_id, title, body, status, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO issueCache (id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           short_id,
           board.id,
           title,
           issueBody,
-          status,
+          type,
+          column.name,
+          column.id,
           container,
           assignee,
           priority,
@@ -367,10 +413,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         board_id: board.id,
         actor_pubkey: pubkey,
         from_status: null,
-        to_status: status,
+        to_status: column.name,
         from_container: null,
         to_container: container,
-        container_at_completion: status === DONE_STATUS ? container : null,
+        container_at_completion: createdDone ? container : null,
         occurred_at_ms: now,
       });
       yield* audit.record({
@@ -486,12 +532,14 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "completed_at_ms", "updated_at_ms"]) {
+      // column_id is immutable here on purpose: status (name) is the PATCH
+      // vocabulary, /transition is the column_id-first mover.
+      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms"]) {
         if (body[immutable] !== undefined) {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
       }
-      const patchable = ["title", "body", "status", "assignee_pubkey", "priority", "estimate", "labels"];
+      const patchable = ["title", "body", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"];
       if (!patchable.some((k) => body[k] !== undefined)) {
         return yield* new ValidationError({ reason: "empty-patch" });
       }
@@ -501,8 +549,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
       const issueBody = body["body"] === undefined ? current.body : yield* validateBody(body["body"]);
-      const status =
-        body["status"] === undefined ? current.status : yield* validateStatus(board.columns, body["status"]);
+      const type = body["type"] === undefined ? current.type : yield* validateType(body["type"]);
+      const toColumn =
+        body["status"] === undefined
+          ? issueColumn(board, current)
+          : yield* validateStatus(board.columns, body["status"]);
+      const status = toColumn?.name ?? current.status;
+      const column_id = toColumn?.id ?? current.column_id;
       const assignee =
         body["assignee_pubkey"] === undefined
           ? current.assignee_pubkey
@@ -515,10 +568,14 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
 
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
-      const completed = status === current.status ? current.completed_at_ms : nextCompletedAt(current, status, now);
+      const toDone = toColumn?.category === "done";
+      const completed =
+        status === current.status
+          ? current.completed_at_ms
+          : nextCompletedAt(current, inDone(board, current), toDone, now);
       yield* db.execute(
-        "UPDATE issueCache SET title = ?, body = ?, status = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
-        [title, issueBody, status, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
+        "UPDATE issueCache SET title = ?, body = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
+        [title, issueBody, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
       );
       if (status !== current.status) {
         yield* insertStatusChange({
@@ -529,7 +586,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           to_status: status,
           from_container: null,
           to_container: null,
-          container_at_completion: status === DONE_STATUS ? current.container : null,
+          container_at_completion: toDone ? current.container : null,
           occurred_at_ms: now,
         });
       }
@@ -542,7 +599,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         ...current,
         title,
         body: issueBody,
+        type,
         status,
+        column_id,
         assignee_pubkey: assignee,
         priority,
         estimate,
@@ -590,27 +649,40 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /issues/:id/transition — the drag-drop endpoint ────────────────
+  // column_id is the preferred addressing (stable across renames); `to` is
+  // the legacy name-match, with `to_status` still accepted as its pre-17
+  // spelling. When both arrive, column_id wins.
   issues.post("/issues/:id/transition", async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
       const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
-      const toStatus = yield* validateStatus(board.columns, body["to_status"]);
-      const updated = yield* applyStatusChange(issue, toStatus, pubkey);
+      let to: Column;
+      if (body["column_id"] !== undefined) {
+        const target =
+          typeof body["column_id"] === "string"
+            ? columnById(board.columns, body["column_id"])
+            : undefined;
+        if (target === undefined) return yield* new ValidationError({ reason: "column_id" });
+        to = target;
+      } else {
+        to = yield* validateStatus(board.columns, body["to"] ?? body["to_status"]);
+      }
+      const updated = yield* applyStatusChange(issue, to, board, pubkey);
       const audit = yield* AuditLog;
       yield* audit.record({
         event_type: "issue_transitioned",
         actor: claims.login,
-        details: { issue: issue.id, to_status: toStatus },
+        details: { issue: issue.id, to_status: to.name },
       });
-      if (updated.status !== issue.status) {
+      if (updated.status !== issue.status || updated.column_id !== issue.column_id) {
         yield* emitBoardEvent(issue.board_id, {
           kind: "issue.transitioned",
           board_id: issue.board_id,
           issue_id: issue.id,
           at_ms: updated.updated_at_ms,
-          payload: { issue: updated, from_status: issue.status, to_status: toStatus },
+          payload: { issue: updated, from_status: issue.status, to_status: to.name },
         });
       }
       return { issue: updated };
