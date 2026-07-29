@@ -25,6 +25,7 @@ export interface WorkerEnv {
   readonly BOARD?: DurableObjectNamespace;
   readonly ASSETS?: Fetcher;
   readonly JWT_SIGNING_KEY?: string;
+  readonly OAUTH_CLIENT_SECRET_4A?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}

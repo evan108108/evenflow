@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { Effect, Layer } from "effect";
 import {
@@ -168,15 +168,48 @@ describe("DELETE /auth/session", () => {
   });
 });
 
+const b64urlOf = async (s: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", enc.encode(s));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+};
+
+const cookieValue = (setCookies: string[], name: string): string | undefined =>
+  setCookies
+    .find((c) => c.startsWith(`${name}=`))
+    ?.split(";")[0]
+    ?.slice(name.length + 1);
+
+// Node's lib.dom typings predate Headers.getSetCookie; the runtime has it.
+const setCookiesOf = (res: Response): string[] =>
+  (res.headers as Headers & { getSetCookie(): string[] }).getSetCookie();
+
 describe("GET /auth/oauth/start", () => {
-  it("redirects to google by default with a state param", async () => {
+  it("redirects to google by default with full AS-flow params + PKCE", async () => {
     const { app } = makeHarness();
     const res = await app.request("/auth/oauth/start", {}, {});
     expect(res.status).toBe(302);
     const location = new URL(res.headers.get("Location") ?? "");
     expect(location.origin).toBe("https://api.4a4.ai");
     expect(location.pathname).toBe("/auth/google/start");
+    expect(location.searchParams.get("client_id")).toMatch(/^dcr1_/);
+    expect(location.searchParams.get("redirect_uri")).toBe("https://evenflow.work/auth/callback");
+    expect(location.searchParams.get("response_type")).toBe("code");
     expect(location.searchParams.get("state")).toBeTruthy();
+    expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+
+    // The pkce_verifier cookie must hash (S256) to the challenge in the URL.
+    const setCookies = setCookiesOf(res);
+    const verifier = cookieValue(setCookies, "pkce_verifier");
+    expect(verifier).toBeTruthy();
+    expect(location.searchParams.get("code_challenge")).toBe(await b64urlOf(verifier!));
+    expect(cookieValue(setCookies, "oauth_state")).toBe(location.searchParams.get("state"));
+    for (const cookie of setCookies) {
+      expect(cookie).toContain("HttpOnly");
+      expect(cookie).toContain("Max-Age=600");
+    }
   });
 
   it("honors ?provider=github and passes the caller's state through", async () => {
@@ -192,5 +225,91 @@ describe("GET /auth/oauth/start", () => {
     const { app } = makeHarness();
     const res = await app.request("/auth/oauth/start?provider=twitter", {}, {});
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /auth/callback", () => {
+  const env = { OAUTH_CLIENT_SECRET_4A: "test-client-secret" };
+  const cookies = (verifier: string, state: string) => ({
+    headers: { Cookie: `pkce_verifier=${verifier}; oauth_state=${state}` },
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("exchanges the code and redirects to /signin with the JWT in the fragment", async () => {
+    const { app } = makeHarness();
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ access_token: "jwt.from.4a", token_type: "Bearer" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const res = await app.request(
+      "/auth/callback?code=abc&state=st-1",
+      cookies("the-verifier", "st-1"),
+      env,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/signin#jwt=jwt.from.4a");
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.4a4.ai/auth/token");
+    const body = new URLSearchParams(init.body as string);
+    expect(body.get("grant_type")).toBe("authorization_code");
+    expect(body.get("code")).toBe("abc");
+    expect(body.get("redirect_uri")).toBe("https://evenflow.work/auth/callback");
+    expect(body.get("client_id")).toMatch(/^dcr1_/);
+    expect(body.get("client_secret")).toBe("test-client-secret");
+    expect(body.get("code_verifier")).toBe("the-verifier");
+
+    // One-shot cookies are expired on the way out.
+    for (const name of ["pkce_verifier", "oauth_state"]) {
+      const cleared = setCookiesOf(res).find((c) => c.startsWith(`${name}=`));
+      expect(cleared).toContain("Max-Age=0");
+    }
+  });
+
+  it("rejects a missing code with 400", async () => {
+    const { app } = makeHarness();
+    const res = await app.request("/auth/callback?state=st-1", cookies("v", "st-1"), env);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-callback", reason: "missing-code" });
+  });
+
+  it("rejects a state mismatch with 400", async () => {
+    const { app } = makeHarness();
+    const res = await app.request("/auth/callback?code=abc&state=evil", cookies("v", "st-1"), env);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-callback", reason: "state-mismatch" });
+  });
+
+  it("rejects a missing pkce_verifier cookie with 400", async () => {
+    const { app } = makeHarness();
+    const res = await app.request(
+      "/auth/callback?code=abc&state=st-1",
+      { headers: { Cookie: "oauth_state=st-1" } },
+      env,
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-callback", reason: "missing-pkce-verifier" });
+  });
+
+  it("surfaces a failed token exchange as 502", async () => {
+    const { app } = makeHarness();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("invalid_grant", { status: 400 })));
+    const res = await app.request(
+      "/auth/callback?code=expired&state=st-1",
+      cookies("v", "st-1"),
+      env,
+    );
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: string; status: number };
+    expect(body.error).toBe("token-exchange-failed");
+    expect(body.status).toBe(400);
   });
 });
