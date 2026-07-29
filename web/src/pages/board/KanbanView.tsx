@@ -40,14 +40,16 @@ export const KanbanView = (props: {
                 classList={{ "drop-over": props.dnd.overZone() === zone }}
                 data-dropzone={zone}
               >
-                <h3>
-                  {column.name} <span class="count figure">{inColumn(column).length}</span>
-                </h3>
-                <For each={inColumn(column)}>
-                  {(issue: Issue) => (
-                    <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />
-                  )}
-                </For>
+                <div class="kanban-column-content">
+                  <h3>
+                    {column.name} <span class="count figure">{inColumn(column).length}</span>
+                  </h3>
+                  <For each={inColumn(column)}>
+                    {(issue: Issue) => (
+                      <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />
+                    )}
+                  </For>
+                </div>
               </div>
             );
           }}
