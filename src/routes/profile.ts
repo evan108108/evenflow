@@ -180,6 +180,9 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // ── GET /profile/me ─────────────────────────────────────────────────────
   profile.get("/profile/me", async (c) => {
     const claims = c.get("claims");
+    if (claims === undefined) {
+      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+    }
     const program = Effect.gen(function* () {
       const me = yield* resolveProfile(callerPubkey(claims));
       let out = me;
@@ -211,6 +214,9 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // so the UI can preview before anything goes public.
   profile.post("/profile/picture", async (c) => {
     const claims = c.get("claims");
+    if (claims === undefined) {
+      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+    }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
     const contentTypeHeader = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
 
@@ -281,6 +287,9 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // substrate is the source of truth), cache only what actually published.
   profile.put("/profile/me", async (c) => {
     const claims = c.get("claims");
+    if (claims === undefined) {
+      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+    }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
     const program = Effect.gen(function* () {
       const pubkey = callerPubkey(claims);

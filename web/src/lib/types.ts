@@ -18,6 +18,9 @@ export interface Board {
   // only for boards that predate the 0003 backfill.
   readonly issue_prefix: string | null;
   readonly next_issue_number: number;
+  // Phase 16 org scope. Optional so pre-16 API responses still parse.
+  readonly org_id?: string | null;
+  readonly visibility?: "private" | "public";
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }

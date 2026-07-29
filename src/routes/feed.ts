@@ -14,7 +14,14 @@ import type { Context } from "hono";
 import { Cause, Data, Effect, Exit, Option } from "effect";
 import { Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
+import {
+  ForbiddenError,
+  UnauthorizedError,
+  authorizeBoardById,
+  callerPubkeyOrNull,
+  resolveBoardScope,
+  type BoardOwnershipError,
+} from "../authz";
 import { parseIssueRow, parseStatusChangeRow, type StatusChangeShape } from "../shapes";
 import { SSE_HEADERS } from "../durable-objects/BoardDO";
 import { asShortId } from "../slug";
@@ -83,7 +90,13 @@ class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly reason: string;
 }> {}
 
-type FeedFailure = ValidationError | NotFoundError | BoardOwnershipError | DbError;
+type FeedFailure =
+  | ValidationError
+  | NotFoundError
+  | BoardOwnershipError
+  | UnauthorizedError
+  | ForbiddenError
+  | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<FeedFailure>) => {
   const failure = Cause.failureOption(cause);
@@ -92,6 +105,10 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<FeedFailure>) 
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
+      case "UnauthorizedError":
+        return c.json({ error: "unauthorized", reason: f.reason }, 401);
+      case "ForbiddenError":
+        return c.json({ error: "forbidden", reason: f.reason }, 403);
       case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
@@ -105,6 +122,12 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<FeedFailure>) 
 export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
   const feed = new Hono<AppHonoEnv>();
 
+  // The org-scoped mount (/api/v0/orgs/:org_slug) contributes org_slug via
+  // the mount prefix — Hono exposes it at runtime, but the per-route typed
+  // param() only knows keys from the route literal itself.
+  const orgSlugOf = (c: Context<AppHonoEnv>): string | undefined =>
+    (c.req.param() as Record<string, string | undefined>)["org_slug"];
+
   const runExit = async <A>(
     c: Context<AppHonoEnv>,
     program: Effect.Effect<A, FeedFailure, Db>,
@@ -112,13 +135,16 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /boards/:slug/activity — newest-first feed with keyset ──────────
   feed.get("/boards/:slug/activity", async (c) => {
-    const claims = c.get("claims");
     const type = c.req.query("type");
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
 
     const program = Effect.gen(function* () {
-      const board = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+      const { board } = yield* resolveBoardScope(
+        { org_slug: orgSlugOf(c), slug: c.req.param("slug") },
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      );
 
       let kindSql = "";
       if (type !== undefined) {
@@ -184,7 +210,6 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /issues/:id/activity — one issue's recent audit rows ────────────
   feed.get("/issues/:id/activity", async (c) => {
-    const claims = c.get("claims");
     const limitRaw = c.req.query("limit");
 
     const program = Effect.gen(function* () {
@@ -197,15 +222,17 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
           : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
       if (issueRow === null) return yield* new NotFoundError({ reason: "issue" });
       const issue = parseIssueRow(issueRow);
-      // Same non-leaking posture as issues.ts: someone else's issue and a
-      // missing issue are indistinguishable.
-      const boardRow = yield* db.queryFirst<Record<string, unknown>>(
-        "SELECT * FROM boardCache WHERE id = ?",
-        [issue.board_id],
+      // Same non-leaking posture as issues.ts: a missing issue and an
+      // invisible board are indistinguishable (404 "issue").
+      yield* authorizeBoardById(
+        issue.board_id,
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      ).pipe(
+        Effect.mapError((e) =>
+          e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
+        ),
       );
-      if (boardRow === null || boardRow["pubkey"] !== callerPubkey(claims)) {
-        return yield* new NotFoundError({ reason: "issue" });
-      }
 
       let limit = ISSUE_ACTIVITY_DEFAULT_LIMIT;
       if (limitRaw !== undefined) {
@@ -232,16 +259,19 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /boards/:slug/stream — SSE, proxied from the board's DO ─────────
   feed.get("/boards/:slug/stream", async (c) => {
-    const claims = c.get("claims");
     const exit = await runExit(
       c,
-      assertOwnBoard(c.req.param("slug"), callerPubkey(claims)),
+      resolveBoardScope(
+        { org_slug: orgSlugOf(c), slug: c.req.param("slug") },
+        callerPubkeyOrNull(c.get("claims")),
+        "viewer",
+      ),
     );
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
 
     const ns = c.env.BOARD;
     if (ns === undefined) return c.json({ error: "internal", reason: "no-board-binding" }, 500);
-    const stub = ns.get(ns.idFromName(exit.value.id));
+    const stub = ns.get(ns.idFromName(exit.value.board.id));
     const doResponse = await stub.fetch("https://board-do/subscribe");
     return new Response(doResponse.body, { status: doResponse.status, headers: SSE_HEADERS });
   });

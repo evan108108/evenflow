@@ -141,7 +141,9 @@ describe("tools/call", () => {
     const h = makeHarness();
     const created = await call(h, "kanban_board_create", { slug: "kb", title: "Board" });
     const got = await call(h, "kanban_board_get", { slug: "kb" });
-    expect(structured(got.body)).toEqual({ board: structured(created.body)["board"] });
+    // GET decorates the board with org context + the caller's role.
+    expect(structured(got.body)["board"]).toEqual(structured(created.body)["board"]);
+    expect(structured(got.body)["role"]).toBe("owner");
 
     const rest = await h.app.request("/api/v0/boards/kb", { headers: bearer }, {});
     expect(await rest.json()).toEqual(structured(got.body));

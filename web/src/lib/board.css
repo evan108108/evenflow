@@ -795,3 +795,198 @@
   margin-top: 0.4rem;
   width: 100%;
 }
+
+/* ── org switcher (phase 16) ── */
+.org-switcher {
+  position: relative;
+}
+.org-switcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--color-ink);
+  cursor: pointer;
+  outline: none;
+}
+.org-switcher-btn:hover {
+  border-color: var(--color-ink-soft);
+}
+.org-switcher-initial {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  color: var(--color-cream);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.org-switcher-caret {
+  opacity: 0.5;
+  font-size: 0.7rem;
+}
+.org-switcher-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(23, 35, 59, 0.14);
+  padding: 0.35rem;
+  z-index: 40;
+}
+.org-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--color-ink);
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  outline: none;
+}
+.org-switcher-item:hover {
+  background: rgba(23, 35, 59, 0.06);
+}
+.org-switcher-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.org-switcher-create {
+  border-top: 1px solid var(--color-ink-faint);
+  border-radius: 0 0 6px 6px;
+  margin-top: 0.25rem;
+  color: var(--color-ink-soft);
+}
+.role-chip {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── org / settings pages (phase 16) ── */
+.org-header {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  margin-bottom: 2rem;
+}
+.org-header .org-avatar {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--color-ink-faint);
+}
+.org-header .org-avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  color: var(--color-cream);
+  font-family: var(--font-serif);
+  font-size: 2rem;
+}
+.settings-section {
+  margin: 2.4rem 0;
+}
+.settings-section > h2 {
+  font-size: 1.35rem;
+  margin-bottom: 0.9rem;
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.2rem;
+  border-bottom: 1px solid var(--color-ink-faint);
+}
+.member-row .grow {
+  flex: 1;
+}
+.member-row select {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: inherit;
+  outline: none;
+}
+.danger-zone {
+  border: 1px solid rgba(155, 44, 44, 0.35);
+  border-radius: 8px;
+  padding: 1.1rem 1.2rem;
+}
+.danger-zone h3 {
+  color: #9b2c2c;
+  font-size: 1.05rem;
+  margin-bottom: 0.6rem;
+}
+.btn-danger {
+  border-color: rgba(155, 44, 44, 0.5);
+  color: #9b2c2c;
+}
+.btn-danger:hover {
+  background: rgba(155, 44, 44, 0.08);
+}
+.tab-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+.tab-row button {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  outline: none;
+}
+.tab-row button.active {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-cream);
+}
+.invite-url-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+.invite-url-row input {
+  flex: 1;
+  font-size: 0.85rem;
+}
+.visibility-warning {
+  font-size: 0.85rem;
+  color: #7a5c1e;
+  background: rgba(203, 161, 53, 0.12);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.6rem;
+}

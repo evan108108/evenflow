@@ -63,6 +63,44 @@ export interface FourAService {
     bytes: Uint8Array,
     contentType: string,
   ) => Effect.Effect<{ url: string; sha256: string }, FourAError>;
+  /**
+   * Publish a kind-30520 org declaration (POST /v0/publish/org). Returns the
+   * substrate event id Evenflow records on orgCache.substrate_event_id.
+   */
+  readonly publishOrg: (
+    token: string,
+    org: OrgPublishFields,
+  ) => Effect.Effect<{ event_id: string }, FourAError>;
+  /**
+   * Publish a kind-30521 key-grant (POST /v0/publish/grant). Recipients may
+   * be composite `provider:oauth_id` stand-ins that have never signed in.
+   */
+  readonly publishGrant: (
+    token: string,
+    grant: GrantPublishFields,
+  ) => Effect.Effect<{ event_id: string }, FourAError>;
+  /** Publish a kind-30521 revocation of a prior grant (POST /v0/publish/grant_revoke). */
+  readonly publishGrantRevoke: (
+    token: string,
+    grantEventId: string,
+  ) => Effect.Effect<{ event_id: string }, FourAError>;
+}
+
+export interface OrgPublishFields {
+  readonly slug: string;
+  readonly display_name: string;
+  readonly kind: "personal" | "team";
+  readonly avatar_url?: string;
+  readonly bio?: string;
+  readonly admins?: ReadonlyArray<string>;
+}
+
+export interface GrantPublishFields {
+  readonly recipient: string;
+  readonly role: string;
+  readonly scope: "org" | "board";
+  /** `<org_slug>` for scope=org, `<org_slug>/<board_slug>` for scope=board. */
+  readonly target: string;
 }
 
 export class FourA extends Context.Tag("evenflow/FourA")<FourA, FourAService>() {}
@@ -146,6 +184,45 @@ const makeLive = (): FourAService => ({
       ),
     ),
 
+  publishOrg: (token, org) =>
+    request("/v0/publish/org", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(org),
+    }).pipe(
+      Effect.flatMap(({ body }) =>
+        typeof body["eventId"] === "string"
+          ? Effect.succeed({ event_id: body["eventId"] })
+          : Effect.fail(new FourAError({ reason: "bad-response", detail: "missing eventId" })),
+      ),
+    ),
+
+  publishGrant: (token, grant) =>
+    request("/v0/publish/grant", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(grant),
+    }).pipe(
+      Effect.flatMap(({ body }) =>
+        typeof body["eventId"] === "string"
+          ? Effect.succeed({ event_id: body["eventId"] })
+          : Effect.fail(new FourAError({ reason: "bad-response", detail: "missing eventId" })),
+      ),
+    ),
+
+  publishGrantRevoke: (token, grantEventId) =>
+    request("/v0/publish/grant_revoke", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ grant_event_id: grantEventId }),
+    }).pipe(
+      Effect.flatMap(({ body }) =>
+        typeof body["eventId"] === "string"
+          ? Effect.succeed({ event_id: body["eventId"] })
+          : Effect.fail(new FourAError({ reason: "bad-response", detail: "missing eventId" })),
+      ),
+    ),
+
   fetchProfile: (author) =>
     request(`/v0/profile?author=${encodeURIComponent(author)}`, { method: "GET" }).pipe(
       Effect.flatMap(({ body }) => {
@@ -178,6 +255,8 @@ export interface FourATestHandle {
   failFetches: boolean;
   /** When set, whoami fails (pubkey-null / sentinel-row tests). */
   failWhoami: boolean;
+  /** When set, org/grant publishes fail (substrate-down, cache-anyway tests). */
+  failPublishes: boolean;
 }
 
 export const makeFourATest = (): FourATestHandle => {
@@ -188,6 +267,7 @@ export const makeFourATest = (): FourATestHandle => {
     profiles,
     failFetches: false,
     failWhoami: false,
+    failPublishes: false,
     layer: Layer.succeed(FourA, {
       whoami: (token) => {
         calls.push({ method: "whoami", arg: token });
@@ -206,6 +286,27 @@ export const makeFourATest = (): FourATestHandle => {
           url: `https://api.4a4.ai/blossom/test-sha-${bytes.byteLength}`,
           sha256: `test-sha-${bytes.byteLength}`,
         });
+      },
+      publishOrg: (_token, org) => {
+        calls.push({ method: "publishOrg", arg: JSON.stringify(org) });
+        if (handle.failPublishes) {
+          return Effect.fail(new FourAError({ reason: "network", detail: "test-outage" }));
+        }
+        return Effect.succeed({ event_id: `org-evt-${calls.length}` });
+      },
+      publishGrant: (_token, grant) => {
+        calls.push({ method: "publishGrant", arg: JSON.stringify(grant) });
+        if (handle.failPublishes) {
+          return Effect.fail(new FourAError({ reason: "network", detail: "test-outage" }));
+        }
+        return Effect.succeed({ event_id: `grant-evt-${calls.length}` });
+      },
+      publishGrantRevoke: (_token, grantEventId) => {
+        calls.push({ method: "publishGrantRevoke", arg: grantEventId });
+        if (handle.failPublishes) {
+          return Effect.fail(new FourAError({ reason: "network", detail: "test-outage" }));
+        }
+        return Effect.succeed({ event_id: `revoke-evt-${calls.length}` });
       },
       fetchProfile: (author) => {
         calls.push({ method: "fetchProfile", arg: author });

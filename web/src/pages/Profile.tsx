@@ -9,6 +9,7 @@ import { Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { primeProfile, type ProfileData } from "../lib/profileStore";
+import { bootstrap } from "../lib/orgStore";
 import "../lib/board.css";
 
 const SAVED_FLASH_MS = 2200;
@@ -60,17 +61,8 @@ const putMe = (body: Record<string, string>): Promise<{ profile: ProfileData }> 
     }),
   );
 
-export const Profile = () => {
-  const navigate = useNavigate();
-
-  onMount(() => {
-    void appRuntime
-      .runPromise(Effect.flatMap(AuthManager, (a) => a.get()))
-      .then((jwt) => {
-        if (jwt === null) navigate("/", { replace: true });
-      });
-  });
-
+/** The kind-0 editor form, embeddable (org settings reuses it for personal orgs). */
+export const ProfileEditor = () => {
   const [me] = createResource(fetchMe);
   const [displayName, setDisplayName] = createSignal<string | null>(null);
   const [name, setName] = createSignal<string | null>(null);
@@ -146,15 +138,7 @@ export const Profile = () => {
   };
 
   return (
-    <main style={{ "max-width": "34rem", margin: "0 auto", padding: "4rem 1.5rem" }}>
-      <header style={{ "margin-bottom": "2rem" }}>
-        <h1 style={{ "font-size": "2.2rem" }}>Profile</h1>
-        <p class="muted" style={{ "margin-top": "0.4rem" }}>
-          Public — published to the 4a substrate, visible in any client.
-        </p>
-      </header>
-
-      <Show when={!me.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
+    <Show when={!me.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
         <form class="profile-form" onSubmit={save}>
           <label for="pf-display">Display name</label>
           <input
@@ -270,7 +254,34 @@ export const Profile = () => {
             </Show>
           </div>
         </form>
-      </Show>
+    </Show>
+  );
+};
+
+/**
+ * /profile — now a bounce to the caller's org settings (/@{me}/settings),
+ * where the same editor lives. Kept as a route so old bookmarks and the
+ * UserNav menu keep working; signed-out callers drift home.
+ */
+export const Profile = () => {
+  const navigate = useNavigate();
+
+  onMount(() => {
+    void appRuntime
+      .runPromise(Effect.flatMap(AuthManager, (a) => a.get()))
+      .then(async (jwt) => {
+        if (jwt === null) {
+          navigate("/", { replace: true });
+          return;
+        }
+        const who = await bootstrap();
+        if (who !== null) navigate(`/@${who.handle}/settings`, { replace: true });
+      });
+  });
+
+  return (
+    <main style={{ display: "grid", "place-items": "center", "min-height": "100vh" }}>
+      <p class="muted">Catching the current…</p>
     </main>
   );
 };

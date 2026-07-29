@@ -1,6 +1,16 @@
 export { AppEnv, AppLive, bootstrap, type AppServices, type WorkerEnv } from "./AppEnv";
 export { Db, DbError, DbLive, DbTest, type DbService } from "./Db";
 export {
+  Email,
+  EmailError,
+  EmailLive,
+  NOTIFICATIONS_INBOX,
+  makeEmailTest,
+  type EmailSend,
+  type EmailService,
+  type EmailTestHandle,
+} from "./Email";
+export {
   Jwt,
   JwtError,
   JwtLive,
@@ -21,6 +31,8 @@ export {
   makeFourATest,
   type FourAService,
   type FourATestHandle,
+  type GrantPublishFields,
+  type OrgPublishFields,
   type ProfileFields,
   type RemoteProfile,
 } from "./FourA";

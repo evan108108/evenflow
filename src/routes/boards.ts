@@ -1,26 +1,39 @@
-// /api/v0/boards — board CRUD against the D1 boardCache.
+// /api/v0/boards — board CRUD against the D1 boardCache, org-scoped since
+// phase 16.
 //
-// MVP phase: handlers write boardCache directly. The 4a event-publish side
-// (kind 30550 fa:KanbanBoard) lands in a later "event publisher" phase —
-// cache-side first so the read/write path is testable end-to-end before we
-// couple to the substrate. Two consequences, both temporary:
-//   * id is a generated uuid, not a 4a event id. The publisher phase will
-//     mint real event ids.
-//   * TODO(kms-backfill): pubkey is "<provider>:<oauth_id>" — the same
-//     tuple KMS derives real pubkeys from — NOT a Nostr pubkey. When
-//     KmsClient.Live lands, derive here and backfill existing rows.
+// Mounted twice by index.ts: at /api/v0 (legacy compat — no org_slug param,
+// boards resolve against the caller's own/visible set) and at
+// /api/v0/orgs/:org_slug (canonical — boards resolve inside that org).
+// Handlers branch on the presence of the org_slug param.
 //
-// Auth: mounted under /api/v0 in index.ts, which already applies
-// requireAuth() to /api/v0/* — handlers can read c.get("claims") directly.
+// MVP posture unchanged: handlers write boardCache directly; the kind-30550
+// board event publish lands in the event-publisher phase (uuid ids, and
+// TODO(kms-backfill): pubkey is the "<provider>:<oauth_id>" stand-in).
+// TODO(board-audience-republish): the visibility toggle should republish
+// the board's audience event once board events publish at all.
+//
+// Auth: /api/v0/* runs behind optionalAuth — reads allow anonymous on
+// public boards; every mutation calls requireCaller first.
 
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { assertOwnBoard, callerPubkey, type BoardOwnershipError } from "../authz";
-import { parseBoardRow, type BoardShape } from "../shapes";
+import {
+  ForbiddenError,
+  UnauthorizedError,
+  authorizeOrgAccess,
+  callerPubkey,
+  callerPubkeyOrNull,
+  requireCaller,
+  resolveBoardScope,
+  type BoardOwnershipError,
+} from "../authz";
+import { ensurePersonalOrg, upsertMembership } from "../membership";
+import { parseBoardRow, type BoardShape, type OrgShape } from "../shapes";
 import { PREFIX_RE, derivePrefix, uniquePrefix } from "../slug";
+import { VISIBILITIES } from "../roles";
 
 const SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MEMBER_POLICIES = ["open", "invite"] as const;
@@ -48,6 +61,8 @@ type BoardsFailure =
   | ConflictError
   | NotFoundError
   | BoardOwnershipError
+  | UnauthorizedError
+  | ForbiddenError
   | DbError;
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<BoardsFailure>) => {
@@ -57,11 +72,15 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<BoardsFailure>
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
-      case "ConflictError":
-        return c.json({ error: "conflict", reason: f.reason }, 409);
+      case "UnauthorizedError":
+        return c.json({ error: "unauthorized", reason: f.reason }, 401);
+      case "ForbiddenError":
+        return c.json({ error: "forbidden", reason: f.reason }, 403);
       case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
+      case "ConflictError":
+        return c.json({ error: "conflict", reason: f.reason }, 409);
       case "DbError":
         return c.json({ error: "internal", reason: `db-${f.reason}` }, 500);
     }
@@ -96,6 +115,11 @@ const validateMemberPolicy = (v: unknown) =>
     ? Effect.succeed(v)
     : Effect.fail(new ValidationError({ reason: "member_policy" }));
 
+const validateVisibility = (v: unknown) =>
+  typeof v === "string" && (VISIBILITIES as ReadonlyArray<string>).includes(v)
+    ? Effect.succeed(v as (typeof VISIBILITIES)[number])
+    : Effect.fail(new ValidationError({ reason: "visibility" }));
+
 const validatePrefix = (v: unknown) =>
   typeof v === "string" && PREFIX_RE.test(v.toUpperCase())
     ? Effect.succeed(v.toUpperCase())
@@ -127,13 +151,21 @@ const readJsonBody = (c: Context<AppHonoEnv>) =>
     ),
   );
 
+/** The org fields riding along on board responses since phase 16. */
+const orgView = (org: OrgShape | null) =>
+  org === null
+    ? null
+    : { slug: org.slug, display_name: org.display_name, avatar_url: org.avatar_url, kind: org.kind };
+
 export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   const boards = new Hono<AppHonoEnv>();
 
-  // ── POST /boards — create ───────────────────────────────────────────────
+  // ── POST /boards — create (in :org_slug when present, else personal) ────
   boards.post("/boards", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const token = c.get("token") ?? "";
+      const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
 
       const slug = body["slug"];
@@ -163,13 +195,25 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           ? derived
           : yield* validatePrefix(body["issue_prefix"] as string);
 
+      // Target org: the mounted org (must administer it) or the caller's
+      // personal org (auto-created — bootstrap may not have run yet).
+      const orgSlugParam = c.req.param("org_slug");
+      let org: OrgShape;
+      if (orgSlugParam !== undefined) {
+        const authorized = yield* authorizeOrgAccess(orgSlugParam, pubkey, "admin");
+        org = authorized.org;
+      } else {
+        const ensured = yield* ensurePersonalOrg(claims, token);
+        org = ensured.org;
+      }
+
       const db = yield* Db;
       const audit = yield* AuditLog;
-      const pubkey = callerPubkey(claims);
 
+      // Board slugs are unique per org since phase 16.
       const existing = yield* db.queryFirst(
-        "SELECT id FROM boardCache WHERE pubkey = ? AND slug = ?",
-        [pubkey, slug],
+        "SELECT id FROM boardCache WHERE org_id = ? AND slug = ?",
+        [org.id, slug],
       );
       if (existing !== null) return yield* new ConflictError({ reason: "slug-in-use" });
 
@@ -188,11 +232,13 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         is_encrypted: false,
         issue_prefix,
         next_issue_number: 1,
+        org_id: org.id,
+        visibility: "private",
         created_at_ms: now,
         updated_at_ms: now,
       };
       yield* db.execute(
-        "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, org_id, visibility, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           pubkey,
@@ -205,30 +251,43 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           0,
           issue_prefix,
           1,
+          org.id,
+          "private",
           now,
           now,
         ],
       );
+      yield* upsertMembership({
+        table: "boardMemberCache",
+        scopeId: id,
+        pubkey,
+        role: "admin",
+        addedBy: pubkey,
+        token,
+        grant: { scope: "board", target: `${org.slug}/${slug}` },
+      });
       yield* audit.record({
         event_type: "board_created",
         actor: claims.login,
-        details: { slug },
+        details: { slug, org_slug: org.slug },
       });
-      return board;
+      return { board, org: orgView(org) };
     });
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json({ board: exit.value }, 201);
+    return c.json(exit.value, 201);
   });
 
-  // ── GET /boards — list caller's boards, newest-updated first ────────────
+  // ── GET /boards — every board the caller can see, newest-updated first ──
+  // (Org-scoped listing lives on the orgs router: GET /orgs/:slug/boards.)
   boards.get("/boards", async (c) => {
-    const claims = c.get("claims");
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
 
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const pubkey = callerPubkey(claims);
       let limit = DEFAULT_LIMIT;
       if (limitRaw !== undefined) {
         const n = Number(limitRaw);
@@ -237,31 +296,59 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       }
 
       const db = yield* Db;
-      const pubkey = callerPubkey(claims);
+
+      // Visible = member of the board's org ∪ explicit board grant ∪ created
+      // (pre-backfill compat). Positional params, so pubkey binds three
+      // times per use of the predicate.
+      const VISIBLE_PREDICATE =
+        "(boardCache.org_id IN (SELECT org_id FROM orgMemberCache WHERE pubkey = ?) OR boardCache.id IN (SELECT board_id FROM boardMemberCache WHERE pubkey = ?) OR boardCache.pubkey = ?)";
+      const visibleParams = [pubkey, pubkey, pubkey];
 
       let rows: ReadonlyArray<unknown>;
       if (after !== undefined) {
         const anchor = yield* db.queryFirst<Record<string, unknown>>(
-          "SELECT * FROM boardCache WHERE pubkey = ? AND id = ?",
-          [pubkey, after],
+          `SELECT * FROM boardCache WHERE ${VISIBLE_PREDICATE} AND id = ?`,
+          [...visibleParams, after],
         );
         if (anchor === null) return yield* new ValidationError({ reason: "after" });
         rows = yield* db.queryAll(
-          "SELECT * FROM boardCache WHERE pubkey = ? AND (updated_at_ms < ? OR (updated_at_ms = ? AND id < ?)) ORDER BY updated_at_ms DESC, id DESC LIMIT ?",
-          [pubkey, anchor["updated_at_ms"], anchor["updated_at_ms"], after, limit],
+          `SELECT * FROM boardCache WHERE ${VISIBLE_PREDICATE} AND (updated_at_ms < ? OR (updated_at_ms = ? AND id < ?)) ORDER BY updated_at_ms DESC, id DESC LIMIT ?`,
+          [...visibleParams, anchor["updated_at_ms"], anchor["updated_at_ms"], after, limit],
         );
       } else {
         rows = yield* db.queryAll(
-          "SELECT * FROM boardCache WHERE pubkey = ? ORDER BY updated_at_ms DESC, id DESC LIMIT ?",
-          [pubkey, limit],
+          `SELECT * FROM boardCache WHERE ${VISIBLE_PREDICATE} ORDER BY updated_at_ms DESC, id DESC LIMIT ?`,
+          [...visibleParams, limit],
         );
       }
 
       const count = yield* db.queryFirst<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM boardCache WHERE pubkey = ?",
-        [pubkey],
+        `SELECT COUNT(*) AS n FROM boardCache WHERE ${VISIBLE_PREDICATE}`,
+        visibleParams,
       );
-      return { boards: rows.map(parseBoardRow), total: count?.n ?? 0 };
+
+      // Org chips for grouping in the /boards aggregate view.
+      const orgRows = yield* db.queryAll<{
+        id: string;
+        slug: string;
+        display_name: string;
+        kind: string;
+      }>(
+        "SELECT id, slug, display_name, kind FROM orgCache WHERE deleted_at_ms IS NULL AND id IN (SELECT org_id FROM orgMemberCache WHERE pubkey = ? UNION SELECT org_id FROM boardCache WHERE id IN (SELECT board_id FROM boardMemberCache WHERE pubkey = ?))",
+        [pubkey, pubkey],
+      );
+      const orgById = new Map(orgRows.map((o) => [o.id, o]));
+
+      const boardsOut = rows.map(parseBoardRow).map((b) => {
+        const org = b.org_id === null ? undefined : orgById.get(b.org_id);
+        return {
+          ...b,
+          org_slug: org?.slug ?? null,
+          org_display_name: org?.display_name ?? null,
+          org_kind: org?.kind ?? null,
+        };
+      });
+      return { boards: boardsOut, total: count?.n ?? 0 };
     });
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -269,12 +356,16 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  // ── GET /boards/:slug — fetch one of the caller's boards ────────────────
+  // ── GET /boards/:slug — fetch one visible board ─────────────────────────
   boards.get("/boards/:slug", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const board = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
-      return { board };
+      const pubkey = callerPubkeyOrNull(c.get("claims"));
+      const { board, org, role } = yield* resolveBoardScope(
+        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
+        pubkey,
+        "viewer",
+      );
+      return { board, org: orgView(org), role };
     });
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -282,22 +373,32 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  // ── PATCH /boards/:slug — partial update of mutable fields ──────────────
+  // ── PATCH /boards/:slug — partial update of mutable fields (admin) ──────
   boards.patch("/boards/:slug", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
-      for (const immutable of ["slug", "pubkey", "id", "is_encrypted"]) {
+      for (const immutable of ["slug", "pubkey", "id", "is_encrypted", "org_id"]) {
         if (body[immutable] !== undefined) {
           return yield* new ValidationError({ reason: `${immutable}-immutable` });
         }
       }
-      const hasPatch = ["title", "description", "columns", "labels", "member_policy", "issue_prefix"].some(
-        (k) => body[k] !== undefined,
-      );
+      const hasPatch = [
+        "title",
+        "description",
+        "columns",
+        "labels",
+        "member_policy",
+        "issue_prefix",
+        "visibility",
+      ].some((k) => body[k] !== undefined);
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
-      const current = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+      const { board: current } = yield* resolveBoardScope(
+        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
+        callerPubkey(claims),
+        "admin",
+      );
 
       // Renaming a prefix would orphan every FLOW-n URL and reference
       // already minted, so it is only editable while no issue exists yet.
@@ -326,12 +427,16 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["member_policy"] === undefined
           ? current.member_policy
           : yield* validateMemberPolicy(body["member_policy"]);
+      const visibility =
+        body["visibility"] === undefined
+          ? current.visibility
+          : yield* validateVisibility(body["visibility"]);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       yield* db.execute(
-        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, updated_at_ms = ? WHERE id = ?",
+        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, updated_at_ms = ? WHERE id = ?",
         [
           title,
           description === null ? null : JSON.stringify(description),
@@ -339,6 +444,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           JSON.stringify(labels),
           member_policy,
           issue_prefix,
+          visibility,
           now,
           current.id,
         ],
@@ -346,7 +452,10 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       yield* audit.record({
         event_type: "board_updated",
         actor: claims.login,
-        details: { slug: current.slug },
+        details: {
+          slug: current.slug,
+          ...(visibility === current.visibility ? {} : { visibility }),
+        },
       });
       const board: BoardShape = {
         ...current,
@@ -356,6 +465,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         labels,
         member_policy,
         issue_prefix,
+        visibility,
         updated_at_ms: now,
       };
       return { board };
@@ -366,16 +476,21 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  // ── DELETE /boards/:slug — remove the caller's board ────────────────────
+  // ── DELETE /boards/:slug — remove a board (admin) ───────────────────────
   // Deliberately does NOT cascade to issueCache (soft FKs): issues orphan;
   // a v2 cleanup path reaps them.
   boards.delete("/boards/:slug", async (c) => {
-    const claims = c.get("claims");
     const program = Effect.gen(function* () {
-      const current = yield* assertOwnBoard(c.req.param("slug"), callerPubkey(claims));
+      const claims = yield* requireCaller(c.get("claims"));
+      const { board: current } = yield* resolveBoardScope(
+        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
+        callerPubkey(claims),
+        "admin",
+      );
       const db = yield* Db;
       const audit = yield* AuditLog;
       yield* db.execute("DELETE FROM boardCache WHERE id = ?", [current.id]);
+      yield* db.execute("DELETE FROM boardMemberCache WHERE board_id = ?", [current.id]);
       yield* audit.record({
         event_type: "board_deleted",
         actor: claims.login,
