@@ -214,9 +214,14 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
   },
   {
     name: "kanban_issue_get",
-    description: "Fetch a single issue by UUID or short id (e.g. FLOW-42).",
+    description:
+      "Fetch a single issue by UUID or short id (e.g. FLOW-42) — the full picture: issue fields plus its comments and attachments.",
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
-    toRequest: (a) => ({ method: "GET", path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}` }),
+    toRequest: (a) => ({
+      method: "GET",
+      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}`,
+      query: { include: "comments,attachments" },
+    }),
   },
   {
     name: "kanban_issue_create",

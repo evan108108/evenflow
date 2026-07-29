@@ -12,6 +12,8 @@ import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardSettings } from "./pages/BoardSettings";
 import { BoardsList } from "./pages/BoardsList";
+import { DeveloperKeys } from "./pages/DeveloperKeys";
+import { Docs } from "./pages/Docs";
 import { HandlePage } from "./pages/HandlePage";
 import { InvitePreview } from "./pages/InvitePreview";
 import { Landing } from "./pages/Landing";
@@ -38,6 +40,8 @@ export const App = () => (
     <Route path="/" component={Landing} />
     <Route path="/signin" component={SignIn} />
     <Route path="/profile" component={Profile} />
+    <Route path="/docs" component={Docs} />
+    <Route path="/settings/keys" component={DeveloperKeys} />
     <Route path="/boards" component={BoardsList} />
     <Route path="/boards/:slug" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/backlog" component={LegacyBoardRedirect} />

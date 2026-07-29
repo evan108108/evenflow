@@ -29,6 +29,8 @@ import {
 } from "../authz";
 import {
   CONTAINERS,
+  parseAttachmentRow,
+  parseCommentRow,
   parseIssueRow,
   type BoardShape,
   type Container,
@@ -47,6 +49,8 @@ import { BODY_FORMATS, isImageContentType, type BodyFormat } from "../attachment
 import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 
 const DEFAULT_LIMIT = 20;
+// Cap for ?include=comments — a deeper thread reads via the comments API.
+const INCLUDE_COMMENTS_LIMIT = 200;
 const MAX_LIMIT = 100;
 
 // Fractional intra-column positioning (phase 18d, Trello-shape). Append =
@@ -560,14 +564,40 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /issues/:id ─────────────────────────────────────────────────────
+  // ?include=comments,attachments expands the response in one round-trip —
+  // the shape MCP's kanban_issue_get always requests (phase 19).
   issues.get("/issues/:id", async (c) => {
+    const include = new Set(
+      (c.req.query("include") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s !== ""),
+    );
     const program = Effect.gen(function* () {
       const { issue } = yield* fetchIssue(
         c.req.param("id"),
         callerPubkeyOrNull(c.get("claims")),
         "viewer",
       );
-      return { issue };
+      const unknown = [...include].filter((k) => k !== "comments" && k !== "attachments");
+      if (unknown.length > 0) return yield* new ValidationError({ reason: "include" });
+      const db = yield* Db;
+      const extras: Record<string, unknown> = {};
+      if (include.has("comments")) {
+        const rows = yield* db.queryAll(
+          "SELECT * FROM commentCache WHERE issue_id = ? ORDER BY created_at_ms ASC, id ASC LIMIT ?",
+          [issue.id, INCLUDE_COMMENTS_LIMIT],
+        );
+        extras["comments"] = rows.map(parseCommentRow);
+      }
+      if (include.has("attachments")) {
+        const rows = yield* db.queryAll(
+          "SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL ORDER BY uploaded_at_ms ASC",
+          [issue.id],
+        );
+        extras["attachments"] = rows.map(parseAttachmentRow);
+      }
+      return { issue, ...extras };
     });
     return runJson(c, program);
   });

@@ -31,6 +31,7 @@ import { makeBoardsRouter } from "../src/routes/boards";
 import { makeCommentsRouter } from "../src/routes/comments";
 import { makeFeedRouter } from "../src/routes/feed";
 import { makeInvitesRouter } from "../src/routes/invites";
+import { makeKeysRouter } from "../src/routes/keys";
 import { makeIssuesRouter } from "../src/routes/issues";
 import { makeMcpRouter } from "../src/routes/mcp";
 import { makeOrgsRouter } from "../src/routes/orgs";
@@ -87,6 +88,7 @@ export const makeHarness = () => {
   app.route("/api/v0", makeSessionRouter(() => layer));
   app.route("/api/v0", makeOrgsRouter(() => layer));
   app.route("/api/v0", makeInvitesRouter(() => layer));
+  app.route("/api/v0", makeKeysRouter(() => layer));
   app.route("/api/v0", makeBoardsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeCommentsRouter(() => layer));

@@ -11,6 +11,7 @@ import { makeBoardsRouter } from "./routes/boards";
 import { makeCommentsRouter } from "./routes/comments";
 import { makeFeedRouter } from "./routes/feed";
 import { makeInvitesRouter } from "./routes/invites";
+import { makeKeysRouter } from "./routes/keys";
 import { makeIssuesRouter } from "./routes/issues";
 import { makeMcpRouter } from "./routes/mcp";
 import { makeOrgsRouter } from "./routes/orgs";
@@ -59,6 +60,7 @@ app.route("/api/v0", makeSessionRouter());
 // routers, not the mirrored board routers.
 app.route("/api/v0", makeOrgsRouter());
 app.route("/api/v0", makeInvitesRouter());
+app.route("/api/v0", makeKeysRouter());
 
 // Board-family routers, mounted twice: legacy compat at /api/v0 and the
 // canonical org-scoped namespace at /api/v0/orgs/:org_slug. Handlers branch
