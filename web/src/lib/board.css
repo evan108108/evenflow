@@ -1258,9 +1258,15 @@
 
 .issue-cover {
   position: relative;
-  width: 100%;
+  width: auto;
   aspect-ratio: 3 / 4;
   overflow: hidden;
+  /* Bleed to the card edges — cancel the .issue-card top+side padding so
+     the cover meets the card's border with no cream sliver above. Bottom
+     margin keeps a small gap before any body content. */
+  margin: -0.7rem -0.8rem 0.45rem;
+  border-top-left-radius: calc(var(--radius-chamfer) - 1px);
+  border-top-right-radius: calc(var(--radius-chamfer) - 1px);
 }
 
 .issue-cover img {
@@ -1271,12 +1277,19 @@
   will-change: transform;
 }
 
-/* Meta overlays the bottom third above a bottom-up legibility gradient. */
+/* Meta overlays the bottom third: solid semi-transparent ink band behind
+   the text (guarantees legibility over ANY image, including whites and
+   sky), quick soft fade above the band so it doesn't harshly cut. */
 .issue-cover .cover-overlay {
   position: absolute;
   inset: auto 0 0 0;
   padding: 2.2rem 0.8rem 0.7rem;
-  background: linear-gradient(to top, rgba(23, 35, 59, 0.55), rgba(23, 35, 59, 0));
+  background: linear-gradient(
+    to top,
+    rgba(23, 35, 59, 0.78) 0%,
+    rgba(23, 35, 59, 0.78) 55%,
+    rgba(23, 35, 59, 0) 100%
+  );
   color: var(--color-cream);
 }
 
