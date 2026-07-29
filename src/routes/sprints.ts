@@ -16,7 +16,8 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, BoardEmitter, Db, DbError, bootstrap, emitBoardEvent } from "../effects";
+import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
+import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -136,7 +137,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, SprintsFailure, Db | AuditLog | BoardEmitter>,
+    program: Effect.Effect<unknown, SprintsFailure, Db | AuditLog | BoardEmitter | Audience>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -271,7 +272,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [crypto.randomUUID(), issue.id, board.id, pubkey, null, null, "backlog", "active", null, now],
         );
-        yield* emitBoardEvent(board.id, {
+        yield* emitSecureBoardEvent(board.id, {
           kind: "issue.container_changed",
           board_id: board.id,
           issue_id: issue.id,
@@ -366,7 +367,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           details: { board: board.slug, sprint: current.id, issue: issue.id },
         });
         const updated = { ...issue, sprint_id, updated_at_ms: now };
-        yield* emitBoardEvent(board.id, {
+        yield* emitSecureBoardEvent(board.id, {
           kind: "issue.updated",
           board_id: board.id,
           issue_id: issue.id,

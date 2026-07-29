@@ -41,7 +41,18 @@ interface BoardDetail {
     visibility: "private" | "public";
     columns: Column[];
     default_sprint_days: number;
+    // Phase 16.5 — substrate encryption (one-way flag) + audience state.
+    is_encrypted: boolean;
+    audience_epoch: number;
+    audience_pubkey: string | null;
   };
+}
+
+interface MembersWire {
+  members: MemberRow[];
+  // Present only on encrypted boards.
+  audience_epoch?: number;
+  key_grants?: Array<{ member_pubkey: string; epoch: number; issued_at_ms: number }>;
 }
 
 const MIN_SPRINT_DAYS = 1;
@@ -78,9 +89,10 @@ export const BoardSettings = () => {
   const [board, { refetch: refetchBoard }] = createResource(() =>
     api<BoardDetail>((c) => c.get(apiBase())),
   );
-  const [members, { refetch: refetchMembers }] = createResource(() =>
-    api<{ members: MemberRow[] }>((c) => c.get(`${apiBase()}/members`)).then((r) => r.members),
+  const [membersWire, { refetch: refetchMembers }] = createResource(() =>
+    api<MembersWire>((c) => c.get(`${apiBase()}/members`)),
   );
+  const members = () => membersWire()?.members;
   const [invites, { refetch: refetchInvites }] = createResource(() =>
     api<{ invites: PendingInvite[] }>((c) => c.get(`${apiBase()}/invites`))
       .then((r) => r.invites)
@@ -111,11 +123,37 @@ export const BoardSettings = () => {
       () => void refetchMembers(),
     );
 
-  const kick = (pubkey: string) =>
+  const kick = (pubkey: string) => {
+    // Removing a member from an encrypted board rotates the epoch key —
+    // an irreversible act worth one explicit confirmation.
+    if (
+      board()?.board.is_encrypted === true &&
+      !window.confirm("This will rotate keys — you cannot un-do this. Remove the member?")
+    ) {
+      return;
+    }
     withRefresh(
       api((c) => c.delete(`${apiBase()}/members/${encodeURIComponent(pubkey)}`)),
       () => void refetchMembers(),
     );
+  };
+
+  const makePrivate = () => {
+    if (
+      !window.confirm(
+        "Flip this board to private? Events will be encrypted to board members. This cannot be undone in v1.",
+      )
+    ) {
+      return;
+    }
+    withRefresh(
+      api((c) => c.patch(apiBase(), { is_encrypted: true })),
+      () => {
+        void refetchBoard();
+        void refetchMembers();
+      },
+    );
+  };
 
   const revokeInvite = (id: string) =>
     withRefresh(
@@ -319,6 +357,49 @@ export const BoardSettings = () => {
           </p>
         </section>
         <section class="settings-section">
+          <h2>Privacy</h2>
+          <Show
+            when={board()?.board.is_encrypted === true}
+            fallback={
+              <>
+                <p>
+                  <strong>Standard</strong> — this board's activity syncs to the 4a substrate
+                  in the clear (subject to the board's visibility setting).
+                </p>
+                <p class="muted" style={{ "font-size": "0.9rem" }}>
+                  <strong>Private</strong>: only board members can decrypt this board's events.
+                  Removing a member rotates keys — future events are unreadable to them; past
+                  events they already saw stay decrypted in their client's memory.
+                </p>
+                <p class="visibility-warning">Flipping to private cannot be undone in v1.</p>
+                <div style={{ "margin-top": "0.8rem" }}>
+                  <button
+                    type="button"
+                    class="btn"
+                    disabled={board()?.board.visibility === "public"}
+                    title={
+                      board()?.board.visibility === "public"
+                        ? "Make the board privately visible first — an encrypted board cannot be public."
+                        : undefined
+                    }
+                    onClick={makePrivate}
+                  >
+                    Make private
+                  </button>
+                </div>
+              </>
+            }
+          >
+            <p>
+              <strong>Private</strong> — events are encrypted to board members
+              (epoch {board()?.board.audience_epoch ?? 1}). Removing a member rotates keys.
+            </p>
+            <p class="muted" style={{ "font-size": "0.9rem" }}>
+              Private→public conversion is not supported in v1.
+            </p>
+          </Show>
+        </section>
+        <section class="settings-section">
           <p class="muted">More board settings will land here — title, description, avatar.</p>
         </section>
       </Show>
@@ -326,7 +407,7 @@ export const BoardSettings = () => {
       <Show when={tab() === "Members"}>
         <section class="settings-section">
           <h2>Members</h2>
-          <Show when={!members.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
+          <Show when={!membersWire.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
             <MembersPanel
               members={members() ?? []}
               roles={BOARD_ROLES}
@@ -334,6 +415,14 @@ export const BoardSettings = () => {
               selfPubkey={selfPubkey}
               onRoleChange={changeRole}
               onKick={kick}
+              grantLabel={(pubkey) => {
+                const wire = membersWire();
+                if (wire?.key_grants === undefined) return null;
+                const grant = wire.key_grants.find((g) => g.member_pubkey === pubkey);
+                return grant === undefined
+                  ? `No key grant yet (epoch ${wire.audience_epoch ?? 1}) — issued on next sign-in`
+                  : `Key grant issued ${new Date(grant.issued_at_ms).toLocaleString()} (epoch ${grant.epoch})`;
+              }}
             />
           </Show>
           <div style={{ "margin-top": "1rem" }}>
@@ -503,8 +592,20 @@ export const BoardSettings = () => {
               Anyone with the URL can view this board — no sign-in required to read.
             </p>
           </Show>
+          <Show when={board()?.board.is_encrypted === true}>
+            <p class="muted" style={{ "font-size": "0.85rem" }}>
+              This board is encrypted — it cannot be made publicly visible.
+            </p>
+          </Show>
           <div style={{ "margin-top": "0.8rem" }}>
-            <button type="button" class="btn" onClick={toggleVisibility}>
+            <button
+              type="button"
+              class="btn"
+              disabled={
+                board()?.board.visibility === "private" && board()?.board.is_encrypted === true
+              }
+              onClick={toggleVisibility}
+            >
               Make {board()?.board.visibility === "public" ? "private" : "public"}
             </button>
           </div>

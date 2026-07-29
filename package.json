@@ -14,13 +14,15 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types",
-    "d1:migrate:local": "wrangler d1 execute evenflow --file=migrations/0001_init.sql --local",
-    "d1:migrate:remote": "wrangler d1 execute evenflow --file=migrations/0001_init.sql --remote",
+    "d1:migrate:local": "wrangler d1 migrations apply evenflow --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply evenflow --remote",
     "test": "vitest run"
   },
   "dependencies": {
+    "@noble/ciphers": "2.1.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
+    "@scure/base": "2.0.0",
     "effect": "^3.11.10",
     "hono": "^4.6.14",
     "nostr-tools": "^2.24.1"

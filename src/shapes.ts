@@ -26,6 +26,11 @@ export interface BoardShape {
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
+  // Private-board audience state (phase 16.5). Epoch bumps on member
+  // removal; audience_pubkey (the aud_id) is set when first flipped
+  // private and never rotates. NULL/1 for boards that were never private.
+  readonly audience_epoch: number;
+  readonly audience_pubkey: string | null;
   // Short-id prefix (FLOW) + the next unclaimed issue number. Nullable only
   // for rows that predate migration 0003's backfill; the create path derives
   // and persists a prefix on first use.
@@ -334,6 +339,8 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     labels: labels as ReadonlyArray<unknown>,
     member_policy: h.string(r["member_policy"], "member_policy"),
     is_encrypted: h.number(r["is_encrypted"], "is_encrypted") !== 0,
+    audience_epoch: h.number(r["audience_epoch"] ?? 1, "audience_epoch"),
+    audience_pubkey: h.stringOrNull(r["audience_pubkey"] ?? null, "audience_pubkey"),
     issue_prefix: h.stringOrNull(r["issue_prefix"] ?? null, "issue_prefix"),
     next_issue_number: h.number(r["next_issue_number"] ?? 1, "next_issue_number"),
     org_id: h.stringOrNull(r["org_id"] ?? null, "org_id"),

@@ -17,6 +17,7 @@ import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
 import { Email, EmailLive } from "./Email";
 import { Blossom, BlossomLive } from "./Blossom";
 import { S3, S3Live } from "./S3";
+import { Audience, AudienceLive } from "./Audience";
 
 /**
  * Raw Cloudflare Worker bindings. Members are optional while their
@@ -41,12 +42,18 @@ export interface WorkerEnv {
    * schnorr signing and ECDH.
    */
   readonly EVENFLOW_STORAGE_SECRET?: string;
+  /**
+   * 32-byte hex secret deriving the server audience keypair that seals
+   * private-board aud_id/epoch scalars at rest in D1 (phase 16.5). A third
+   * distinct secret — no key reuse with blossom or storage.
+   */
+  readonly EVENFLOW_AUDIENCE_SECRET?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
 
 /** Union of every service a handler can require. */
-export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter | Email | Blossom | S3;
+export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter | Email | Blossom | S3 | Audience;
 
 /** All Live services merged, still awaiting the per-request AppEnv. */
 export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
@@ -58,6 +65,7 @@ export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
   EmailLive,
   BlossomLive,
   S3Live,
+  AudienceLive,
 );
 
 /** Compose the full Live environment for one request from Hono's `c.env`. */

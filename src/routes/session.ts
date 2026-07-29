@@ -8,12 +8,14 @@
 // the client can populate the org switcher without a second round-trip.
 
 import { Hono } from "hono";
-import { Effect, Exit } from "effect";
-import { Db, bootstrap } from "../effects";
+import { Clock, Effect, Exit } from "effect";
+import { Db, bootstrap, hashToken } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { callerPubkey, requireCaller } from "../authz";
 import { ensurePersonalOrg } from "../membership";
-import { errorResponse } from "./errors";
+import { ValidationError, errorResponse, readJsonBody } from "./errors";
+
+const SESSION_PUBKEY_RE = /^[0-9a-f]{64}$/i;
 
 export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
   const session = new Hono<AppHonoEnv>();
@@ -62,6 +64,35 @@ export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
     return c.json(exit.value);
+  });
+
+  // ── POST /session/register-key — per-session client keypair (16.5) ──────
+  // Web users hold no long-lived secp256k1 keys, so each signed-in session
+  // generates one and registers the pub here. Private-board key grants are
+  // issued to these session pubs. Keyed by jwt_hash (one key per session,
+  // re-registering replaces); expiry rides the JWT's own exp.
+  session.post("/session/register-key", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const token = c.get("token") ?? "";
+      const pubkey = callerPubkey(claims);
+      const body = yield* readJsonBody(c);
+      const sessionPub = body["session_pubkey"];
+      if (typeof sessionPub !== "string" || !SESSION_PUBKEY_RE.test(sessionPub)) {
+        return yield* new ValidationError({ reason: "session_pubkey" });
+      }
+      const db = yield* Db;
+      const now = yield* Clock.currentTimeMillis;
+      const jwtHash = yield* hashToken(token);
+      yield* db.execute(
+        "INSERT OR REPLACE INTO sessionKeyRegistrations (jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)",
+        [jwtHash, pubkey, sessionPub.toLowerCase(), now, claims.exp * 1000],
+      );
+      return { registered: true, session_pubkey: sessionPub.toLowerCase() };
+    });
+    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
+    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
+    return c.json(exit.value, 201);
   });
 
   return session;

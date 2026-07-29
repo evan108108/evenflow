@@ -13,16 +13,17 @@ D1 (SQLite dialect) migrations for Evenflow's cache + config database.
 
 ## Running
 
+Since phase 19 the remote database carries wrangler's `d1_migrations`
+tracker (backfilled for 0001-0011), so `wrangler d1 migrations apply` only
+runs what's new. Never `d1 execute --file` a historical migration — 0004
+and 0010 are not idempotent.
+
 ```sh
 # Local dev database
-npm run d1:migrate:local
-# or directly:
-wrangler d1 execute evenflow --file=migrations/0001_init.sql --local
+npm run d1:migrate:local     # = wrangler d1 migrations apply evenflow --local
 
 # Production
-npm run d1:migrate:remote
-# or directly:
-wrangler d1 execute evenflow --file=migrations/0001_init.sql --remote
+npm run d1:migrate:remote    # = wrangler d1 migrations apply evenflow --remote
 ```
 
 First-time setup (create the database, record its id in `wrangler.toml`):

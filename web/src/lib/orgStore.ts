@@ -9,6 +9,7 @@
 import { createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
+import { registerSessionKey } from "./sessionKeys";
 
 const LAST_ACTIVE_ORG_KEY = "evenflow.lastActiveOrg";
 const CLAIM_KEY = "evenflow.claimHandle";
@@ -37,12 +38,20 @@ export interface BootstrapResponse {
 type BootstrapFetcher = (body: { claim?: string }) => Promise<BootstrapResponse>;
 
 const defaultFetcher: BootstrapFetcher = (body) =>
-  appRuntime.runPromise(
-    Effect.gen(function* () {
-      const client = yield* ApiClient;
-      return yield* client.post<BootstrapResponse>("/api/v0/session/bootstrap", body);
-    }),
-  );
+  appRuntime
+    .runPromise(
+      Effect.gen(function* () {
+        const client = yield* ApiClient;
+        return yield* client.post<BootstrapResponse>("/api/v0/session/bootstrap", body);
+      }),
+    )
+    .then((response) => {
+      // Phase 16.5: every session registers its keypair right after
+      // bootstrap so private-board grants have a recipient. Fire-and-forget
+      // — a failure self-heals through request-regrant at board load.
+      void registerSessionKey();
+      return response;
+    });
 
 let fetcher: BootstrapFetcher = defaultFetcher;
 

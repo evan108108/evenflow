@@ -20,6 +20,7 @@ import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import {
   AuditLog,
+  Audience,
   Blossom,
   BlossomError,
   BoardEmitter,
@@ -28,10 +29,10 @@ import {
   S3,
   S3Error,
   bootstrap,
-  emitBoardEvent,
   sha256Hex,
   type S3Target,
 } from "../effects";
+import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -303,7 +304,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, AttachmentsFailure, Db | AuditLog | BoardEmitter | Blossom | S3>,
+    program: Effect.Effect<unknown, AttachmentsFailure, Db | AuditLog | BoardEmitter | Audience | Blossom | S3>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -389,7 +390,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id, attachment: id, size: upload.bytes.byteLength },
       });
-      yield* emitBoardEvent(board.id, {
+      yield* emitSecureBoardEvent(board.id, {
         kind: "issue.updated",
         board_id: board.id,
         issue_id: issue.id,
@@ -446,7 +447,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { attachment: attachment.id, is_cover },
       });
-      yield* emitBoardEvent(issue.board_id, {
+      yield* emitSecureBoardEvent(issue.board_id, {
         kind: "issue.updated",
         board_id: issue.board_id,
         issue_id: issue.id,
@@ -479,7 +480,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { attachment: attachment.id },
       });
-      yield* emitBoardEvent(issue.board_id, {
+      yield* emitSecureBoardEvent(issue.board_id, {
         kind: "issue.updated",
         board_id: issue.board_id,
         issue_id: issue.id,

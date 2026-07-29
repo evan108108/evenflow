@@ -28,6 +28,9 @@ export interface DbMock {
   readonly orgAliases: Row[];
   readonly profiles: Row[];
   readonly storageConfigs: Row[];
+  readonly audienceKeys: Row[];
+  readonly keyGrants: Row[];
+  readonly sessionKeys: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -49,6 +52,9 @@ export const makeDbMock = (): DbMock => {
   const orgAliases: Row[] = [];
   const profiles: Row[] = [];
   const storageConfigs: Row[] = [];
+  const audienceKeys: Row[] = [];
+  const keyGrants: Row[] = [];
+  const sessionKeys: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
     issues
@@ -362,6 +368,20 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
           return;
         }
+        // Phase-16.5 boardCache updates — must precede the bare
+        // "UPDATE boardCache SET" fallback, which shares their prefix.
+        if (sql.startsWith("UPDATE boardCache SET is_encrypted = 1, audience_epoch = 1, audience_pubkey = ?")) {
+          const [audience_pubkey, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { is_encrypted: 1, audience_epoch: 1, audience_pubkey, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE boardCache SET audience_epoch = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [audience_epoch, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { audience_epoch, updated_at_ms });
+          return;
+        }
         if (sql.startsWith("UPDATE boardCache SET issue_prefix = ?")) {
           const [issue_prefix, id] = params;
           const row = boards.find((r) => r["id"] === id && r["issue_prefix"] == null);
@@ -396,6 +416,32 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         // ── phase 18b: BYOB storage config ──
+        // ── phase 16.5: private-board audiences ──
+        if (sql.startsWith("INSERT INTO boardAudienceKey")) {
+          const [board_id, epoch, aud_id_pubkey, epoch_pubkey, aud_id_priv_ciphertext, epoch_priv_ciphertext, sender_pubkey, created_at_ms] = params;
+          audienceKeys.push({ board_id, epoch, aud_id_pubkey, epoch_pubkey, aud_id_priv_ciphertext, epoch_priv_ciphertext, sender_pubkey, created_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO boardMemberKeyGrant")) {
+          const [id, board_id, member_pubkey, recipient_pubkey, epoch, grant_ciphertext, grant_sender_pubkey, issued_at_ms, revoked_at_ms] = params;
+          keyGrants.push({ id, board_id, member_pubkey, recipient_pubkey, epoch, grant_ciphertext, grant_sender_pubkey, issued_at_ms, revoked_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT OR REPLACE INTO sessionKeyRegistrations")) {
+          const [jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms] = params;
+          const row = sessionKeys.find((r) => r["jwt_hash"] === jwt_hash);
+          if (row) Object.assign(row, { member_pubkey, session_pubkey, created_at_ms, expires_at_ms });
+          else sessionKeys.push({ jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE boardMemberKeyGrant SET revoked_at_ms = ? WHERE board_id = ? AND revoked_at_ms IS NULL")) {
+          for (const row of keyGrants) {
+            if (row["board_id"] === params[1] && row["revoked_at_ms"] === null) {
+              row["revoked_at_ms"] = params[0];
+            }
+          }
+          return;
+        }
         if (sql.startsWith("INSERT INTO orgStorageConfig")) {
           const [org_id, kind, blossom_url, s3_endpoint, s3_region, s3_bucket, s3_path_style, s3_creds_ciphertext, s3_creds_sender_pubkey, updated_by_pubkey, updated_at_ms] = params;
           const next = { org_id, kind, blossom_url, s3_endpoint, s3_region, s3_bucket, s3_path_style, s3_creds_ciphertext, s3_creds_sender_pubkey, updated_by_pubkey, updated_at_ms };
@@ -627,6 +673,33 @@ export const makeDbMock = (): DbMock => {
           const r = profiles.find((x) => x["pubkey"] === params[0]);
           return (r ? { display_name: r["display_name"] ?? null, name: r["name"] ?? null } : null) as R | null;
         }
+        // ── phase 16.5: private-board audiences ──
+        if (sql.startsWith("SELECT * FROM boardAudienceKey WHERE board_id = ? AND epoch = ?")) {
+          const r = audienceKeys.find((x) => x["board_id"] === params[0] && x["epoch"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT id FROM boardMemberKeyGrant WHERE board_id = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL")) {
+          const r = keyGrants.find(
+            (x) => x["board_id"] === params[0] && x["recipient_pubkey"] === params[1] && x["epoch"] === params[2] && x["revoked_at_ms"] === null,
+          );
+          return (r ? { id: r["id"] } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT grant_ciphertext FROM boardMemberKeyGrant WHERE board_id = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL")) {
+          const r = keyGrants.find(
+            (x) => x["board_id"] === params[0] && x["recipient_pubkey"] === params[1] && x["epoch"] === params[2] && x["revoked_at_ms"] === null,
+          );
+          return (r ? { grant_ciphertext: r["grant_ciphertext"] } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM boardMemberKeyGrant WHERE board_id = ? AND member_pubkey = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL")) {
+          const r = keyGrants.find(
+            (x) => x["board_id"] === params[0] && x["member_pubkey"] === params[1] && x["recipient_pubkey"] === params[2] && x["epoch"] === params[3] && x["revoked_at_ms"] === null,
+          );
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT session_pubkey FROM sessionKeyRegistrations WHERE jwt_hash = ?")) {
+          const r = sessionKeys.find((x) => x["jwt_hash"] === params[0]);
+          return (r ? { session_pubkey: r["session_pubkey"] } : null) as R | null;
+        }
         if (sql.startsWith("SELECT * FROM orgStorageConfig WHERE org_id = ?")) {
           const r = storageConfigs.find((x) => x["org_id"] === params[0]);
           return (r ? { ...r } : null) as R | null;
@@ -824,9 +897,50 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT old_slug FROM orgSlugAlias")) {
           return orgAliases.map((r) => ({ old_slug: r["old_slug"] })) as R[];
         }
+        // ── phase 16.5: private-board audiences ──
+        if (sql.startsWith("SELECT pubkey FROM boardMemberCache WHERE board_id = ?")) {
+          return boardMembers
+            .filter((m) => m["board_id"] === params[0])
+            .map((m) => ({ pubkey: m["pubkey"] })) as R[];
+        }
+        if (sql.startsWith("SELECT session_pubkey FROM sessionKeyRegistrations WHERE member_pubkey = ? AND expires_at_ms > ?")) {
+          return sessionKeys
+            .filter((r) => r["member_pubkey"] === params[0] && num(r["expires_at_ms"]) > num(params[1]))
+            .map((r) => ({ session_pubkey: r["session_pubkey"] })) as R[];
+        }
+        if (sql.startsWith("SELECT member_pubkey, epoch, MAX(issued_at_ms) AS issued_at_ms FROM boardMemberKeyGrant WHERE board_id = ? AND epoch = ? AND revoked_at_ms IS NULL GROUP BY member_pubkey")) {
+          const grouped = new Map<string, { member_pubkey: unknown; epoch: unknown; issued_at_ms: number }>();
+          for (const r of keyGrants) {
+            if (r["board_id"] !== params[0] || r["epoch"] !== params[1] || r["revoked_at_ms"] !== null) continue;
+            const key = String(r["member_pubkey"]);
+            const prev = grouped.get(key);
+            const issued = num(r["issued_at_ms"]);
+            if (!prev || issued > prev.issued_at_ms) {
+              grouped.set(key, { member_pubkey: r["member_pubkey"], epoch: r["epoch"], issued_at_ms: issued });
+            }
+          }
+          return [...grouped.values()] as R[];
+        }
+        if (sql.startsWith("SELECT recipient_pubkey FROM boardMemberKeyGrant WHERE board_id = ? AND epoch = ? AND revoked_at_ms IS NULL")) {
+          return keyGrants
+            .filter((r) => r["board_id"] === params[0] && r["epoch"] === params[1] && r["revoked_at_ms"] === null)
+            .map((r) => ({ recipient_pubkey: r["recipient_pubkey"] })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM boardCache WHERE org_id = ? AND is_encrypted = 1")) {
+          return boards
+            .filter((r) => r["org_id"] === params[0] && r["is_encrypted"] === 1)
+            .map((r) => ({ ...r })) as R[];
+        }
         if (sql.startsWith("SELECT pubkey FROM orgMemberCache WHERE org_id = ? AND role IN")) {
           return orgMembers
             .filter((m) => m["org_id"] === params[0] && (m["role"] === "owner" || m["role"] === "admin"))
+            .map((m) => ({ pubkey: m["pubkey"] })) as R[];
+        }
+        // Bare (no role filter) — must sit AFTER the role-IN variant, whose
+        // SQL it prefixes.
+        if (sql.startsWith("SELECT pubkey FROM orgMemberCache WHERE org_id = ?")) {
+          return orgMembers
+            .filter((m) => m["org_id"] === params[0])
             .map((m) => ({ pubkey: m["pubkey"] })) as R[];
         }
         if (sql.startsWith("SELECT * FROM orgMemberCache WHERE org_id = ? ORDER BY")) {
@@ -922,6 +1036,9 @@ export const makeDbMock = (): DbMock => {
     orgAliases,
     profiles,
     storageConfigs,
+    audienceKeys,
+    keyGrants,
+    sessionKeys,
     layer: Layer.succeed(Db, service),
   };
 };
