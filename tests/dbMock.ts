@@ -27,6 +27,7 @@ export interface DbMock {
   readonly invites: Row[];
   readonly orgAliases: Row[];
   readonly profiles: Row[];
+  readonly storageConfigs: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -47,6 +48,7 @@ export const makeDbMock = (): DbMock => {
   const invites: Row[] = [];
   const orgAliases: Row[] = [];
   const profiles: Row[] = [];
+  const storageConfigs: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
     issues
@@ -393,6 +395,20 @@ export const makeDbMock = (): DbMock => {
           if (idx >= 0) boards.splice(idx, 1);
           return;
         }
+        // ── phase 18b: BYOB storage config ──
+        if (sql.startsWith("INSERT INTO orgStorageConfig")) {
+          const [org_id, kind, blossom_url, s3_endpoint, s3_region, s3_bucket, s3_path_style, s3_creds_ciphertext, s3_creds_sender_pubkey, updated_by_pubkey, updated_at_ms] = params;
+          const next = { org_id, kind, blossom_url, s3_endpoint, s3_region, s3_bucket, s3_path_style, s3_creds_ciphertext, s3_creds_sender_pubkey, updated_by_pubkey, updated_at_ms };
+          const existing = storageConfigs.find((r) => r["org_id"] === org_id);
+          if (existing) Object.assign(existing, next);
+          else storageConfigs.push(next);
+          return;
+        }
+        if (sql.startsWith("DELETE FROM orgStorageConfig WHERE org_id = ?")) {
+          const idx = storageConfigs.findIndex((r) => r["org_id"] === params[0]);
+          if (idx >= 0) storageConfigs.splice(idx, 1);
+          return;
+        }
         // ── phase 20: sprints ──
         if (sql.startsWith("INSERT INTO sprintCache")) {
           const [id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms] = params;
@@ -610,6 +626,10 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT display_name, name FROM profileCache WHERE pubkey = ?")) {
           const r = profiles.find((x) => x["pubkey"] === params[0]);
           return (r ? { display_name: r["display_name"] ?? null, name: r["name"] ?? null } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM orgStorageConfig WHERE org_id = ?")) {
+          const r = storageConfigs.find((x) => x["org_id"] === params[0]);
+          return (r ? { ...r } : null) as R | null;
         }
         if (sql.startsWith("SELECT * FROM sprintCache WHERE id = ? AND board_id = ?")) {
           const r = sprints.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
@@ -901,6 +921,7 @@ export const makeDbMock = (): DbMock => {
     invites,
     orgAliases,
     profiles,
+    storageConfigs,
     layer: Layer.succeed(Db, service),
   };
 };

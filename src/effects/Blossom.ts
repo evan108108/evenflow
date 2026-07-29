@@ -29,8 +29,15 @@ export class BlossomError extends Data.TaggedError("BlossomError")<{
 }> {}
 
 export interface BlossomService {
-  /** Upload bytes; returns the immutable sha256-addressed public URL. */
+  /** Upload bytes to the default host; returns the immutable sha256-addressed public URL. */
   readonly upload: (
+    bytes: Uint8Array,
+    contentType: string,
+    filename: string,
+  ) => Effect.Effect<{ url: string; sha256: string }, BlossomError>;
+  /** Upload bytes to a specific Blossom host (BYO Blossom, phase 18b). */
+  readonly uploadTo: (
+    blossomUrl: string,
     bytes: Uint8Array,
     contentType: string,
     filename: string,
@@ -39,7 +46,7 @@ export interface BlossomService {
 
 export class Blossom extends Context.Tag("evenflow/Blossom")<Blossom, BlossomService>() {}
 
-const sha256Hex = (bytes: Uint8Array): Promise<string> =>
+export const sha256Hex = (bytes: Uint8Array): Promise<string> =>
   crypto.subtle
     .digest("SHA-256", bytes as unknown as ArrayBuffer)
     .then((d) => bytesToHex(new Uint8Array(d)));
@@ -79,50 +86,74 @@ export const BlossomLive: Layer.Layer<Blossom, never, AppEnv> = Layer.effect(
   }),
 );
 
-const makeLive = (env: { EVENFLOW_DEFAULT_BLOSSOM_URL?: string; EVENFLOW_BLOSSOM_SECRET?: string }): BlossomService => ({
+const uploadToHost = async (
+  base: string,
+  secret: string,
+  bytes: Uint8Array,
+  contentType: string,
+  filename: string,
+): Promise<{ url: string; sha256: string }> => {
+  const sha256 = await sha256Hex(bytes);
+  const auth = await signUploadAuth(secret, sha256, filename);
+  const res = await fetch(`${base.replace(/\/$/, "")}/upload`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Nostr ${auth}`,
+      "Content-Type": contentType,
+    },
+    body: bytes as unknown as BodyInit,
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 256);
+    throw new BlossomError({ reason: "http", status: res.status, detail });
+  }
+  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  // BUD-02 blob descriptor; fall back to the sha256-addressed
+  // convention if a host omits `url`.
+  const url =
+    body !== null && typeof body["url"] === "string" && body["url"] !== ""
+      ? body["url"]
+      : `${base.replace(/\/$/, "")}/${sha256}`;
+  return { url, sha256 };
+};
+
+const asBlossomError = (e: unknown): BlossomError =>
+  e instanceof BlossomError ? e : new BlossomError({ reason: "network", detail: String(e) });
+
+const makeLive = (env: { EVENFLOW_DEFAULT_BLOSSOM_URL?: string; EVENFLOW_BLOSSOM_SECRET?: string }): BlossomService => {
+  // Both the default host and BYO hosts sign BUD-01 auth with the Evenflow
+  // service key — BYO Blossom is a public-URL override, not a key handoff.
+  const requireSecret = (): string => {
+    const secret = env.EVENFLOW_BLOSSOM_SECRET;
+    if (secret === undefined || secret === "") throw new BlossomError({ reason: "not-configured" });
+    return secret;
+  };
+  return {
     upload: (bytes, contentType, filename) =>
       Effect.tryPromise({
-        try: async () => {
+        try: () => {
           const base = env.EVENFLOW_DEFAULT_BLOSSOM_URL;
-          const secret = env.EVENFLOW_BLOSSOM_SECRET;
-          if (base === undefined || base === "" || secret === undefined || secret === "") {
-            throw new BlossomError({ reason: "not-configured" });
-          }
-          const sha256 = await sha256Hex(bytes);
-          const auth = await signUploadAuth(secret, sha256, filename);
-          const res = await fetch(`${base.replace(/\/$/, "")}/upload`, {
-            method: "PUT",
-            headers: {
-              Authorization: `Nostr ${auth}`,
-              "Content-Type": contentType,
-            },
-            body: bytes as unknown as BodyInit,
-          });
-          if (!res.ok) {
-            const detail = (await res.text().catch(() => "")).slice(0, 256);
-            throw new BlossomError({ reason: "http", status: res.status, detail });
-          }
-          const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-          // BUD-02 blob descriptor; fall back to the sha256-addressed
-          // convention if a host omits `url`.
-          const url =
-            body !== null && typeof body["url"] === "string" && body["url"] !== ""
-              ? body["url"]
-              : `${base.replace(/\/$/, "")}/${sha256}`;
-          return { url, sha256 };
+          if (base === undefined || base === "") throw new BlossomError({ reason: "not-configured" });
+          return uploadToHost(base, requireSecret(), bytes, contentType, filename);
         },
-        catch: (e) =>
-          e instanceof BlossomError
-            ? e
-            : new BlossomError({ reason: "network", detail: String(e) }),
+        catch: asBlossomError,
       }),
-});
+    uploadTo: (blossomUrl, bytes, contentType, filename) =>
+      Effect.tryPromise({
+        try: () => uploadToHost(blossomUrl, requireSecret(), bytes, contentType, filename),
+        catch: asBlossomError,
+      }),
+  };
+};
 
 // ─── test double ────────────────────────────────────────────────────────────
 
 export interface BlossomTestHandle {
   readonly layer: Layer.Layer<Blossom>;
-  /** Every upload in order: `${contentType}:${filename}:${byteLength}`. */
+  /**
+   * Every upload in order: `${contentType}:${filename}:${byteLength}` for
+   * the default host, prefixed `${blossomUrl}|` for uploadTo targets.
+   */
   readonly calls: string[];
   /** When set, uploads fail with an http error (host-down tests). */
   failUploads: boolean;
@@ -130,20 +161,30 @@ export interface BlossomTestHandle {
 
 export const makeBlossomTest = (): BlossomTestHandle => {
   const calls: string[] = [];
+  const record = (
+    prefix: string,
+    bytes: Uint8Array,
+    contentType: string,
+    filename: string,
+    host: string,
+  ) => {
+    calls.push(`${prefix}${contentType}:${filename}:${bytes.byteLength}`);
+    if (handle.failUploads) {
+      return Effect.fail(new BlossomError({ reason: "http", status: 502, detail: "test-outage" }));
+    }
+    return Effect.succeed({
+      url: `${host}/sha-${bytes.byteLength}`,
+      sha256: `sha-${bytes.byteLength}`,
+    });
+  };
   const handle: BlossomTestHandle = {
     calls,
     failUploads: false,
     layer: Layer.succeed(Blossom, {
-      upload: (bytes, contentType, filename) => {
-        calls.push(`${contentType}:${filename}:${bytes.byteLength}`);
-        if (handle.failUploads) {
-          return Effect.fail(new BlossomError({ reason: "http", status: 502, detail: "test-outage" }));
-        }
-        return Effect.succeed({
-          url: `https://blossom.test/sha-${bytes.byteLength}`,
-          sha256: `sha-${bytes.byteLength}`,
-        });
-      },
+      upload: (bytes, contentType, filename) =>
+        record("", bytes, contentType, filename, "https://blossom.test"),
+      uploadTo: (blossomUrl, bytes, contentType, filename) =>
+        record(`${blossomUrl}|`, bytes, contentType, filename, blossomUrl.replace(/\/$/, "")),
     }),
   };
   return handle;
