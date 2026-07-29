@@ -17,6 +17,7 @@ import {
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
   makeAuditLogTest,
+  makeBlossomTest,
   makeBoardEmitterTest,
   makeEmailTest,
   makeFourATest,
@@ -25,6 +26,7 @@ import {
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
 import { optionalAuth } from "../src/middleware/requireAuth";
+import { makeAttachmentsRouter } from "../src/routes/attachments";
 import { makeBoardsRouter } from "../src/routes/boards";
 import { makeCommentsRouter } from "../src/routes/comments";
 import { makeFeedRouter } from "../src/routes/feed";
@@ -70,6 +72,7 @@ export const makeHarness = () => {
   const emitter = makeBoardEmitterTest();
   const fourA = makeFourATest();
   const email = makeEmailTest();
+  const blossom = makeBlossomTest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtMultiTest,
     db.layer,
@@ -77,6 +80,7 @@ export const makeHarness = () => {
     emitter.layer,
     fourA.layer,
     email.layer,
+    blossom.layer,
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", optionalAuth(() => layer));
@@ -87,13 +91,15 @@ export const makeHarness = () => {
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeCommentsRouter(() => layer));
   app.route("/api/v0", makeFeedRouter(() => layer));
+  app.route("/api/v0", makeAttachmentsRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeBoardsRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeIssuesRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeCommentsRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeFeedRouter(() => layer));
+  app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter(() => layer));
   app.route("/", makeWellKnownRouter());
   app.route("/", makeMcpRouter(() => layer));
-  return { app, db, audit, emitter, fourA, email };
+  return { app, db, audit, emitter, fourA, email, blossom };
 };
 
 export type Harness = ReturnType<typeof makeHarness>;

@@ -18,6 +18,7 @@ export interface DbMock {
   readonly issues: Row[];
   readonly comments: Row[];
   readonly statusChanges: Row[];
+  readonly attachments: Row[];
   readonly orgs: Row[];
   readonly orgMembers: Row[];
   readonly boardMembers: Row[];
@@ -35,6 +36,7 @@ export const makeDbMock = (): DbMock => {
   const issues: Row[] = [];
   const comments: Row[] = [];
   const statusChanges: Row[] = [];
+  const attachments: Row[] = [];
   const orgs: Row[] = [];
   const orgMembers: Row[] = [];
   const boardMembers: Row[] = [];
@@ -114,11 +116,50 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO issueCache")) {
-          const [id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
+          const [id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms] = params;
           if (issues.some((r) => r["short_id"] !== null && r["short_id"] === short_id)) {
             throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
           }
-          issues.push({ id, short_id, board_id, title, body, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
+          issues.push({ id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, created_at_ms, updated_at_ms, completed_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO issueAttachmentCache")) {
+          const [id, issue_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms] = params;
+          attachments.push({ id, issue_id, blob_url, sha256, filename, content_type, size_bytes, storage_kind, is_cover, uploaded_by, uploaded_at_ms, deleted_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET is_cover = 0 WHERE issue_id = ?")) {
+          for (const row of attachments) {
+            if (row["issue_id"] === params[0] && row["is_cover"] === 1 && row["deleted_at_ms"] === null) {
+              row["is_cover"] = 0;
+            }
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET is_cover = 1 WHERE id = ?")) {
+          const row = attachments.find((r) => r["id"] === params[0]);
+          if (row) {
+            // Mirror the 0006 partial unique index: at most one live cover.
+            if (
+              attachments.some(
+                (o) => o !== row && o["issue_id"] === row["issue_id"] && o["is_cover"] === 1 && o["deleted_at_ms"] === null,
+              )
+            ) {
+              throw new Error("DbMock: UNIQUE violation on idx_issueAttachmentCache_one_cover_per_issue");
+            }
+            row["is_cover"] = 1;
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET is_cover = 0 WHERE id = ?")) {
+          const row = attachments.find((r) => r["id"] === params[0]);
+          if (row) row["is_cover"] = 0;
+          return;
+        }
+        if (sql.startsWith("UPDATE issueAttachmentCache SET deleted_at_ms = ?")) {
+          const [deleted_at_ms, id] = params;
+          const row = attachments.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { deleted_at_ms, is_cover: 0 });
           return;
         }
         if (sql.startsWith("INSERT INTO commentCache")) {
@@ -268,9 +309,9 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("UPDATE issueCache SET title = ?")) {
-          const [title, body, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
+          const [title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, body, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
+          if (row) Object.assign(row, { title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE boardCache SET issue_prefix = ?")) {
@@ -351,6 +392,18 @@ export const makeDbMock = (): DbMock => {
         }
         if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND id = ?")) {
           const r = issues.find((x) => x["board_id"] === params[0] && x["id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueCache WHERE id = ? AND board_id = ?")) {
+          const r = issues.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueCache WHERE short_id = ? AND board_id = ?")) {
+          const r = issues.find((x) => x["short_id"] === params[0] && x["board_id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND deleted_at_ms IS NULL")) {
+          const r = attachments.find((x) => x["id"] === params[0] && x["deleted_at_ms"] === null);
           return (r ? { ...r } : null) as R | null;
         }
         if (sql.startsWith("SELECT * FROM issueCache WHERE id = ?")) {
@@ -531,6 +584,22 @@ export const makeDbMock = (): DbMock => {
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
         }
+        if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL")) {
+          return attachments
+            .filter((r) => r["issue_id"] === params[0] && r["deleted_at_ms"] === null)
+            .sort((a, b) => num(a["uploaded_at_ms"]) - num(b["uploaded_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT issue_id, blob_url, content_type FROM issueAttachmentCache WHERE is_cover = 1")) {
+          return attachments
+            .filter(
+              (r) =>
+                r["is_cover"] === 1 &&
+                r["deleted_at_ms"] === null &&
+                (params as unknown[]).includes(r["issue_id"]),
+            )
+            .map((r) => ({ issue_id: r["issue_id"], blob_url: r["blob_url"], content_type: r["content_type"] })) as R[];
+        }
         if (sql.startsWith("SELECT id, title, short_id FROM issueCache WHERE id IN")) {
           return issues
             .filter((r) => (params as unknown[]).includes(r["id"]))
@@ -653,6 +722,7 @@ export const makeDbMock = (): DbMock => {
     issues,
     comments,
     statusChanges,
+    attachments,
     orgs,
     orgMembers,
     boardMembers,
