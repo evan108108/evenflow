@@ -53,7 +53,12 @@ export const IssueCard = (props: {
    *  (Backlog / Icebox) where a full-width 3:4 cover would eat the page. */
   compact?: boolean;
 }) => {
+  // Compact mode skips the tall portrait cover. If the issue still HAS a cover,
+  // we render it as a small square thumbnail on the left instead (list-view
+  // affordance so you can still tell at a glance which issue this is).
   const cover = () => (props.compact === true ? null : props.issue.cover_url ?? null);
+  const thumb = () =>
+    props.compact === true ? props.issue.cover_url ?? null : null;
 
   let cardEl: HTMLDivElement | undefined;
   let coverImg: HTMLImageElement | undefined;
@@ -71,7 +76,7 @@ export const IssueCard = (props: {
     <div
       ref={cardEl}
       class="issue-card"
-      classList={{ "has-cover": cover() !== null }}
+      classList={{ "has-cover": cover() !== null, "has-thumb": thumb() !== null }}
       data-issue-id={props.issue.id}
       onPointerDown={(e) =>
         props.dnd.startDrag(e, props.issue.id, () =>
@@ -79,7 +84,24 @@ export const IssueCard = (props: {
         )
       }
     >
-      <Show when={cover()} fallback={<CardMeta issue={props.issue} />}>
+      <Show
+        when={cover()}
+        fallback={
+          <Show
+            when={thumb()}
+            fallback={<CardMeta issue={props.issue} />}
+          >
+            {(url) => (
+              <>
+                <img class="issue-thumb" src={url()} alt="" draggable={false} />
+                <div class="issue-thumb-meta">
+                  <CardMeta issue={props.issue} />
+                </div>
+              </>
+            )}
+          </Show>
+        }
+      >
         {(url) => (
           <div class="issue-cover">
             <img ref={coverImg} src={url()} alt="" draggable={false} />

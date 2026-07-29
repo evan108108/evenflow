@@ -48,14 +48,12 @@ export const App = () => (
     <Route path="/:handle" component={HandlePage} matchFilters={HANDLE_FILTER} />
     <Route path="/:handle/settings" component={OrgSettings} matchFilters={HANDLE_FILTER} />
     <Route path="/:handle/members" component={OrgMembers} matchFilters={HANDLE_FILTER} />
-    <Route path="/:handle/:board_slug" component={BoardPage} matchFilters={HANDLE_FILTER} />
-    <Route path="/:handle/:board_slug/backlog" component={BoardPage} matchFilters={HANDLE_FILTER} />
-    <Route path="/:handle/:board_slug/icebox" component={BoardPage} matchFilters={HANDLE_FILTER} />
-    <Route
-      path="/:handle/:board_slug/issues/:issueRef"
-      component={BoardPage}
-      matchFilters={HANDLE_FILTER}
-    />
+    <Route path="/:handle/:board_slug" component={BoardPage} matchFilters={HANDLE_FILTER}>
+      <Route path="/" />
+      <Route path="/backlog" />
+      <Route path="/icebox" />
+      <Route path="/issues/:issueRef" />
+    </Route>
     <Route
       path="/:handle/:board_slug/settings"
       component={BoardSettings}

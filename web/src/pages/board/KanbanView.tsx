@@ -24,6 +24,8 @@ export const KanbanView = (props: {
     active()
       .filter((i) => (i.column_id !== null ? i.column_id === column.id : i.status === column.name))
       .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+  const pointsIn = (issues: readonly Issue[]) =>
+    issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0);
 
   return (
     <Show
@@ -42,7 +44,12 @@ export const KanbanView = (props: {
               >
                 <div class="kanban-column-content">
                   <h3>
-                    {column.name} <span class="count figure">{inColumn(column).length}</span>
+                    {column.name}{" "}
+                    <span class="count figure">{inColumn(column).length}</span>
+                    <Show when={pointsIn(inColumn(column)) > 0}>
+                      <span class="count-sep"> · </span>
+                      <span class="count figure">{pointsIn(inColumn(column))}pts</span>
+                    </Show>
                   </h3>
                   <For each={inColumn(column)}>
                     {(issue: Issue) => (
