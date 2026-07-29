@@ -10,9 +10,8 @@ import {
   JwtTest,
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
-  KmsClient,
-  KmsClientLive,
   makeAuditLogTest,
+  makeFourATest,
 } from "../src/effects";
 
 const enc = new TextEncoder();
@@ -150,14 +149,22 @@ describe("AuditLog.Test", () => {
   });
 });
 
-describe("KmsClient.Live (stub)", () => {
-  it("fails with not-yet-wired", async () => {
-    const exit = await Effect.runPromiseExit(
-      Effect.gen(function* () {
-        const kms = yield* KmsClient;
-        return yield* kms.derivePubkey("github", "12345");
-      }).pipe(Effect.provide(KmsClientLive)),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
+describe("FourA test double", () => {
+  it("resolves deterministic pubkeys, records calls, honors failWhoami", async () => {
+    const fourA = makeFourATest();
+    const { FourA } = await import("../src/effects");
+    const whoami = (token: string) =>
+      Effect.runPromiseExit(
+        Effect.flatMap(FourA, (svc) => svc.whoami(token)).pipe(Effect.provide(fourA.layer)),
+      );
+
+    const ok = await whoami("token-abc-123");
+    expect(Exit.isSuccess(ok)).toBe(true);
+    if (Exit.isSuccess(ok)) expect(ok.value.pubkey).toBe("hex-token-ab");
+    expect(fourA.calls).toEqual([{ method: "whoami", arg: "token-abc-123" }]);
+
+    fourA.failWhoami = true;
+    const failed = await whoami("token-abc-123");
+    expect(Exit.isFailure(failed)).toBe(true);
   });
 });

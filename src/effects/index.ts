@@ -13,12 +13,15 @@ export {
   type JwtService,
 } from "./Jwt";
 export {
-  KmsClient,
-  KmsClientLive,
-  KmsClientTest,
-  KmsError,
-  type KmsClientService,
-} from "./KmsClient";
+  FourA,
+  FourAError,
+  FourALive,
+  makeFourATest,
+  type FourAService,
+  type FourATestHandle,
+  type ProfileFields,
+  type RemoteProfile,
+} from "./FourA";
 export {
   AuditLog,
   AuditLogLive,

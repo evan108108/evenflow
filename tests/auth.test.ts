@@ -7,10 +7,9 @@ import {
   JwtTest,
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
-  KmsClientLive,
-  KmsClientTest,
   makeAuditLogTest,
   makeBoardEmitterTest,
+  makeFourATest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
@@ -42,17 +41,19 @@ const makeDbSpy = (): DbSpy => {
   return { executes, layer: Layer.succeed(Db, service) };
 };
 
-/** Full AppServices test environment; kms defaults to the deterministic fake. */
-const makeHarness = (opts?: { kmsStub?: boolean }) => {
+/** Full AppServices test environment; 4a defaults to the deterministic fake. */
+const makeHarness = (opts?: { fourAFails?: boolean }) => {
   const db = makeDbSpy();
   const audit = makeAuditLogTest();
   const emitter = makeBoardEmitterTest();
+  const fourA = makeFourATest();
+  fourA.failWhoami = opts?.fourAFails === true;
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtTest,
     db.layer,
     audit.layer,
     emitter.layer,
-    opts?.kmsStub === true ? KmsClientLive : KmsClientTest,
+    fourA.layer,
   );
   const app = new Hono<AppHonoEnv>();
   app.route("/auth", makeAuthRouter(() => layer));
@@ -89,23 +90,29 @@ describe("requireAuth", () => {
 });
 
 describe("GET /auth/whoami", () => {
-  it("returns claims + derived pubkey when KMS works", async () => {
-    const { app } = makeHarness();
+  it("returns claims + gateway-derived pubkey and upgrades the session row", async () => {
+    const { app, db } = makeHarness();
     const res = await app.request("/auth/whoami", bearer(JWT_TEST_TOKEN), {});
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       claims: JWT_TEST_CLAIMS,
-      pubkey: `test-pubkey-${JWT_TEST_CLAIMS.provider}-${JWT_TEST_CLAIMS.oauth_id}`,
+      pubkey: `hex-${JWT_TEST_TOKEN.slice(0, 8)}`,
     });
+    // The resolved pubkey lands back on sessionCache for this token's hash.
+    expect(db.executes).toHaveLength(1);
+    expect(db.executes[0]!.sql).toContain("UPDATE sessionCache SET pubkey = ?");
+    expect(db.executes[0]!.params?.[0]).toBe(`hex-${JWT_TEST_TOKEN.slice(0, 8)}`);
   });
 
-  it("returns pubkey null + audits when KMS is the not-yet-wired stub", async () => {
-    const { app, audit } = makeHarness({ kmsStub: true });
+  it("returns pubkey null + audits when the gateway is unreachable", async () => {
+    const { app, audit, db } = makeHarness({ fourAFails: true });
     const res = await app.request("/auth/whoami", bearer(JWT_TEST_TOKEN), {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { pubkey: string | null };
     expect(body.pubkey).toBeNull();
-    expect(audit.events.some((e) => e.event_type === "kms_not_wired")).toBe(true);
+    expect(audit.events.some((e) => e.event_type === "pubkey_resolve_failed")).toBe(true);
+    // No session-row write when resolution failed.
+    expect(db.executes).toHaveLength(0);
   });
 
   it("is protected", async () => {

@@ -5,13 +5,13 @@
 // needs from AppEnv, so the only per-request wiring is
 // `Layer.succeed(AppEnv, c.env)` — done once inside `bootstrap`.
 //
-// Handlers are written against the service Tags (Db, Jwt, KmsClient,
+// Handlers are written against the service Tags (Db, Jwt, FourA,
 // AuditLog) and never touch AppEnv directly.
 
 import { Context, Layer } from "effect";
 import { Db, DbLive } from "./Db";
+import { FourA, FourALive } from "./FourA";
 import { Jwt, JwtLive } from "./Jwt";
-import { KmsClient, KmsClientLive } from "./KmsClient";
 import { AuditLog, AuditLogLive } from "./AuditLog";
 import { BoardEmitter, BoardEmitterLive } from "./BoardEmitter";
 
@@ -31,13 +31,13 @@ export interface WorkerEnv {
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
 
 /** Union of every service a handler can require. */
-export type AppServices = Db | Jwt | KmsClient | AuditLog | BoardEmitter;
+export type AppServices = Db | Jwt | FourA | AuditLog | BoardEmitter;
 
 /** All Live services merged, still awaiting the per-request AppEnv. */
 export const AppLive: Layer.Layer<AppServices, never, AppEnv> = Layer.mergeAll(
   DbLive,
   JwtLive,
-  KmsClientLive,
+  FourALive,
   AuditLogLive,
   BoardEmitterLive,
 );

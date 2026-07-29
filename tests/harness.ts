@@ -9,9 +9,9 @@ import {
   JwtTest,
   JWT_TEST_CLAIMS,
   JWT_TEST_TOKEN,
-  KmsClientTest,
   makeAuditLogTest,
   makeBoardEmitterTest,
+  makeFourATest,
   type AppServices,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
@@ -32,12 +32,13 @@ export const makeHarness = () => {
   const db = makeDbMock();
   const audit = makeAuditLogTest();
   const emitter = makeBoardEmitterTest();
+  const fourA = makeFourATest();
   const layer: Layer.Layer<AppServices> = Layer.mergeAll(
     JwtTest,
     db.layer,
     audit.layer,
     emitter.layer,
-    KmsClientTest,
+    fourA.layer,
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", requireAuth(() => layer));
@@ -47,7 +48,7 @@ export const makeHarness = () => {
   app.route("/api/v0", makeFeedRouter(() => layer));
   app.route("/", makeWellKnownRouter());
   app.route("/", makeMcpRouter(() => layer));
-  return { app, db, audit, emitter };
+  return { app, db, audit, emitter, fourA };
 };
 
 export type Harness = ReturnType<typeof makeHarness>;

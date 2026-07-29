@@ -13,8 +13,8 @@ import { Cause, Clock, Effect, Exit, Option } from "effect";
 import {
   AuditLog,
   Db,
+  FourA,
   Jwt,
-  KmsClient,
   bootstrap,
   hashToken,
 } from "../effects";
@@ -52,24 +52,37 @@ const oauthCookie = (name: string, value: string, maxAge = OAUTH_COOKIE_TTL_SECO
 export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   const auth = new Hono<AppHonoEnv>();
 
-  // Verified identity of the caller, plus their KMS-derived pubkey once the
-  // KMS client is wired. Until then pubkey is null (audited, not fatal).
+  // Verified identity of the caller, plus their KMS-derived hex pubkey from
+  // the gateway's /v0/whoami (the same derivation every publish signs
+  // with). Resolution failure is audited, not fatal — pubkey null. On
+  // success the sessionCache row is upgraded in place, closing out the
+  // pubkey '' sentinel rows the KmsClient-stub era wrote.
   auth.get("/whoami", requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
+    const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
     const program = Effect.gen(function* () {
-      const kms = yield* KmsClient;
+      const fourA = yield* FourA;
       const audit = yield* AuditLog;
-      const pubkey = yield* kms.derivePubkey(claims.provider, claims.oauth_id).pipe(
+      const pubkey = yield* fourA.whoami(token).pipe(
+        Effect.map((r) => r.pubkey),
         Effect.catchAll((err) =>
           audit
             .record({
-              event_type: "kms_not_wired",
+              event_type: "pubkey_resolve_failed",
               actor: claims.login,
               details: { reason: err.reason },
             })
             .pipe(Effect.as(null)),
         ),
       );
+      if (pubkey !== null) {
+        const db = yield* Db;
+        const hash = yield* hashToken(token);
+        yield* db.execute(
+          "UPDATE sessionCache SET pubkey = ? WHERE jwt_hash = ?",
+          [pubkey, hash],
+        );
+      }
       return { claims, pubkey };
     });
     return c.json(await Effect.runPromise(Effect.provide(program, layerFor(c.env))));
@@ -95,13 +108,17 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const hash = yield* hashToken(jwt);
       const now = yield* Clock.currentTimeMillis;
-      // TODO(kms-backfill): pubkey '' = KMS-not-wired sentinel; the column
-      // is NOT NULL in migration 0001. When KmsClient.Live lands, derive
-      // real pubkeys here AND backfill existing '' rows in that phase's
-      // migration (Sona-ratified 2026-07-28).
+      // Resolve the caller's hex pubkey at session creation so the row is
+      // born complete. Non-fatal: a gateway hiccup falls back to the ''
+      // sentinel, and /auth/whoami repairs the row on its next call.
+      const fourA = yield* FourA;
+      const pubkey = yield* fourA.whoami(jwt).pipe(
+        Effect.map((r) => r.pubkey),
+        Effect.catchAll(() => Effect.succeed("")),
+      );
       yield* db.execute(
         "INSERT OR REPLACE INTO sessionCache (jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)",
-        [hash, "", claims.provider, claims.oauth_id, claims.exp * 1000, now],
+        [hash, pubkey, claims.provider, claims.oauth_id, claims.exp * 1000, now],
       );
       yield* audit.record({
         event_type: "session_created",
