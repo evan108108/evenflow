@@ -7,6 +7,7 @@ import { ISSUE_TYPES, type Column } from "../lib/columns";
 import type { DndHandle } from "../lib/dnd";
 import type { BoardStore } from "../pages/board/store";
 import { BacklogView } from "../pages/board/BacklogView";
+import { KanbanView } from "../pages/board/KanbanView";
 import { IssueCard } from "./IssueCard";
 import { IssueSheet } from "./IssueSheet";
 import { IssueTypeIcon } from "./IssueTypeIcon";
@@ -524,6 +525,40 @@ describe("BacklogView sprint length (migration 0011)", () => {
     ));
     await flush();
     expect(container.querySelector(".sprint-days")).toBeNull();
+    cleanup();
+  });
+});
+
+describe("KanbanView vertical layout", () => {
+  const kanbanStore = {
+    ...storeStub,
+    board: () => board,
+    issues: () => [issue],
+    sprints: () => [],
+  } as unknown as BoardStore;
+
+  it("layout='vertical' restacks via the layout-vertical class, same zones", async () => {
+    const { container, cleanup } = mount(() => (
+      <KanbanView store={kanbanStore} dnd={clickDnd} onOpen={() => undefined} layout="vertical" />
+    ));
+    await flush();
+    const root = container.querySelector(".kanban")!;
+    expect(root.classList.contains("layout-vertical")).toBe(true);
+    // Same drop-zone DOM as the columns layout — enabled columns only.
+    const zones = [...container.querySelectorAll("[data-dropzone^='transition:']")].map((el) =>
+      el.getAttribute("data-dropzone"),
+    );
+    expect(zones).toEqual(["transition:c1", "transition:c2", "transition:c3"]);
+    expect(container.querySelector("[data-dropzone^='card:']")).not.toBeNull();
+    cleanup();
+  });
+
+  it("defaults to the columns layout when no layout prop is given", async () => {
+    const { container, cleanup } = mount(() => (
+      <KanbanView store={kanbanStore} dnd={clickDnd} onOpen={() => undefined} />
+    ));
+    await flush();
+    expect(container.querySelector(".kanban")!.classList.contains("layout-vertical")).toBe(false);
     cleanup();
   });
 });

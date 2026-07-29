@@ -2114,3 +2114,59 @@ input.sprint-name:focus {
   border-radius: 6px;
   padding: 0.45rem 0.6rem;
 }
+
+/* ── vertical Kanban (Linear-style single scroll) ── */
+/* Same DOM as the columns layout — the class just restacks it. Zones,
+   insertion indicators, and drop targets are layout-agnostic. */
+.kanban.layout-vertical {
+  flex-direction: column;
+  overflow-x: visible;
+  gap: 1.2rem;
+  max-width: var(--measure);
+}
+
+.kanban.layout-vertical .kanban-column {
+  flex: none;
+  min-width: 0;
+  /* Columns reserve 60vh as a drop runway; stacked sections must not.
+     A slim floor keeps an empty section's header a usable drop target. */
+  min-height: 0;
+}
+
+.kanban.layout-vertical .kanban-column-content {
+  min-height: 3.2rem;
+}
+
+/* Icon-only layout toggle in the tabs-row. */
+.layout-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.layout-toggle:hover {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+}
+
+/* Below this width the columns layout is unusable — the JS breakpoint
+   (FORCE_VERTICAL_MAX_PX) already renders vertical; this rule is the
+   belt-and-braces for the first paint before any resize event. */
+@media (max-width: 479px) {
+  .kanban {
+    flex-direction: column;
+    overflow-x: visible;
+  }
+  .kanban .kanban-column {
+    flex: none;
+    min-width: 0;
+    min-height: 0;
+  }
+}
