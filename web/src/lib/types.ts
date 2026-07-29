@@ -18,6 +18,9 @@ export interface Board {
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
   readonly is_encrypted: boolean;
+  // Phase 16.5 audience state. Optional so pre-16.5 payloads still parse.
+  readonly audience_epoch?: number;
+  readonly audience_pubkey?: string | null;
   // Short-id prefix (FLOW) + next unclaimed issue number. Prefix is null
   // only for boards that predate the 0003 backfill.
   readonly issue_prefix: string | null;

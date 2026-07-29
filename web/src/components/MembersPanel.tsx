@@ -20,6 +20,8 @@ export const MembersPanel = (props: {
   selfPubkey: string | null;
   onRoleChange: (pubkey: string, role: string) => void;
   onKick: (pubkey: string) => void;
+  /** Private boards: per-member key-grant status line (phase 16.5). */
+  grantLabel?: (pubkey: string) => string | null;
 }) => (
   <Show when={props.members.length > 0} fallback={<p class="muted">Quiet so far.</p>}>
     <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
@@ -27,6 +29,13 @@ export const MembersPanel = (props: {
         {(member) => (
           <li class="member-row">
             <Author pubkey={member.pubkey} />
+            <Show when={props.grantLabel?.(member.pubkey) ?? null}>
+              {(label) => (
+                <span class="muted" style={{ "font-size": "0.78rem", "margin-left": "0.6rem" }}>
+                  {label()}
+                </span>
+              )}
+            </Show>
             <span class="grow" />
             <Show
               when={props.canManage && member.pubkey !== props.selfPubkey}

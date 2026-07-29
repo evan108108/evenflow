@@ -563,7 +563,28 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         "SELECT * FROM boardMemberCache WHERE board_id = ? ORDER BY added_at_ms ASC",
         [board.id],
       );
-      return { members: rows.map(parseMemberRow) };
+      // Private boards: surface each member's current-epoch grant state so
+      // the settings page can show "Key grant issued … (epoch n)".
+      let grants: Array<{ member_pubkey: string; epoch: number; issued_at_ms: number }> = [];
+      if (board.is_encrypted) {
+        const grantRows = yield* db.queryAll<{
+          member_pubkey: string;
+          epoch: number;
+          issued_at_ms: number;
+        }>(
+          "SELECT member_pubkey, epoch, MAX(issued_at_ms) AS issued_at_ms FROM boardMemberKeyGrant WHERE board_id = ? AND epoch = ? AND revoked_at_ms IS NULL GROUP BY member_pubkey",
+          [board.id, board.audience_epoch],
+        );
+        grants = grantRows.map((g) => ({
+          member_pubkey: g.member_pubkey,
+          epoch: board.audience_epoch,
+          issued_at_ms: g.issued_at_ms,
+        }));
+      }
+      return {
+        members: rows.map(parseMemberRow),
+        ...(board.is_encrypted ? { audience_epoch: board.audience_epoch, key_grants: grants } : {}),
+      };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);

@@ -11,6 +11,7 @@ import type { RuntimeFiber } from "effect/Fiber";
 import "../../lib/board.css";
 import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effects";
 import { createDnd, parseZone } from "../../lib/dnd";
+import { decryptBoardPayload, isEncryptedPayload } from "../../lib/boardKeys";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import { doneNames } from "../../lib/columns";
 import {
@@ -204,6 +205,14 @@ export const BoardPage = () => {
   });
 
   const handleSse = (event: BoardEvent) => {
+    // Private boards ship {enc, epoch, ciphertext} payloads. Decrypt with
+    // the granted epoch key (fetching/regranting on first touch or after a
+    // rotation); the refetch-driven UI below never needs the plaintext, so
+    // an undecryptable event (we were rotated out) degrades to refetch —
+    // where REST authz gives the authoritative answer.
+    if (isEncryptedPayload(event.payload)) {
+      void decryptBoardPayload(apiBase, event.board_id, event.payload);
+    }
     if (event.kind.startsWith("issue.")) {
       void store.refetchIssues();
       void store.refetchStatusFeed();

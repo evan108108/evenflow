@@ -908,6 +908,19 @@ export const makeDbMock = (): DbMock => {
             .filter((r) => r["member_pubkey"] === params[0] && num(r["expires_at_ms"]) > num(params[1]))
             .map((r) => ({ session_pubkey: r["session_pubkey"] })) as R[];
         }
+        if (sql.startsWith("SELECT member_pubkey, epoch, MAX(issued_at_ms) AS issued_at_ms FROM boardMemberKeyGrant WHERE board_id = ? AND epoch = ? AND revoked_at_ms IS NULL GROUP BY member_pubkey")) {
+          const grouped = new Map<string, { member_pubkey: unknown; epoch: unknown; issued_at_ms: number }>();
+          for (const r of keyGrants) {
+            if (r["board_id"] !== params[0] || r["epoch"] !== params[1] || r["revoked_at_ms"] !== null) continue;
+            const key = String(r["member_pubkey"]);
+            const prev = grouped.get(key);
+            const issued = num(r["issued_at_ms"]);
+            if (!prev || issued > prev.issued_at_ms) {
+              grouped.set(key, { member_pubkey: r["member_pubkey"], epoch: r["epoch"], issued_at_ms: issued });
+            }
+          }
+          return [...grouped.values()] as R[];
+        }
         if (sql.startsWith("SELECT recipient_pubkey FROM boardMemberKeyGrant WHERE board_id = ? AND epoch = ? AND revoked_at_ms IS NULL")) {
           return keyGrants
             .filter((r) => r["board_id"] === params[0] && r["epoch"] === params[1] && r["revoked_at_ms"] === null)
