@@ -480,3 +480,112 @@ describe("short ids", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ── phase 18d: fractional positions + PATCH /issues/:id/reorder ───────────
+
+const reorder = (
+  h: ReturnType<typeof makeHarness>,
+  issueId: string,
+  body: Record<string, unknown>,
+) => h.app.request(`/api/v0/issues/${issueId}/reorder`, jsonReq("PATCH", body), {});
+
+describe("PATCH /api/v0/issues/:id/reorder", () => {
+  it("creates assign appended positions (max + 1000)", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const b = await createIssue(h, { title: "B" });
+    const c = await createIssue(h, { title: "C" });
+    expect([a.position, b.position, c.position]).toEqual([1000, 2000, 3000]);
+  });
+
+  it("computes the neighbor midpoint, or steps past a single edge neighbor", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h); // 1000
+    const b = await createIssue(h, { title: "B" }); // 2000
+    const c = await createIssue(h, { title: "C" }); // 3000
+
+    // c between a and b → 1500
+    const mid = await reorder(h, c.id, { before_issue_id: a.id, after_issue_id: b.id });
+    expect(mid.status).toBe(200);
+    expect(((await mid.json()) as { issue: IssueShape }).issue.position).toBe(1500);
+
+    // b to the very top → a.position - 1000
+    const top = await reorder(h, b.id, { after_issue_id: a.id });
+    expect(((await top.json()) as { issue: IssueShape }).issue.position).toBe(0);
+
+    // a to the very bottom → c's CURRENT position (1500 after the move
+    // above) + 1000
+    const bottom = await reorder(h, a.id, { before_issue_id: c.id });
+    expect(((await bottom.json()) as { issue: IssueShape }).issue.position).toBe(2500);
+  });
+
+  it("rebalances the whole column when legacy NULL positions are involved", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const boardId = a.board_id;
+    // Two legacy rows, no position — display order is updated_at_ms DESC.
+    h.db.issues.push(
+      {
+        id: "legacy-new", short_id: null, board_id: boardId, title: "L1", body: null,
+        status: "Todo", column_id: null, container: "backlog", assignee_pubkey: null,
+        priority: null, estimate: null, labels: "[]", github_links: "[]",
+        created_at_ms: 2, updated_at_ms: 900, completed_at_ms: null,
+      },
+      {
+        id: "legacy-old", short_id: null, board_id: boardId, title: "L2", body: null,
+        status: "Todo", column_id: null, container: "backlog", assignee_pubkey: null,
+        priority: null, estimate: null, labels: "[]", github_links: "[]",
+        created_at_ms: 1, updated_at_ms: 800, completed_at_ms: null,
+      },
+    );
+
+    // Move `a` between the two legacy rows: a NULL neighbor forces the
+    // rebalance path — every column-mate comes out positioned in display
+    // order (a: 1000 · legacy-new first, then a, then legacy-old).
+    const res = await reorder(h, a.id, { before_issue_id: "legacy-new", after_issue_id: "legacy-old" });
+    expect(res.status).toBe(200);
+    const posOf = (id: string) => h.db.issues.find((r) => r["id"] === id)?.["position"];
+    expect(posOf("legacy-new")).toBe(1000);
+    expect(posOf(a.id)).toBe(2000);
+    expect(posOf("legacy-old")).toBe(3000);
+  });
+
+  it("validates neighbors: none given, self, unknown, or cross-column all 400", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const b = await createIssue(h, { title: "B", status: "Done" });
+
+    expect((await reorder(h, a.id, {})).status).toBe(400);
+    expect((await reorder(h, a.id, { before_issue_id: a.id })).status).toBe(400);
+    expect((await reorder(h, a.id, { before_issue_id: "nope" })).status).toBe(400);
+    // b sits in a different column (Done) — not a valid neighbor.
+    expect((await reorder(h, a.id, { before_issue_id: b.id })).status).toBe(400);
+  });
+
+  it("position is immutable through plain PATCH", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const res = await h.app.request(
+      `/api/v0/issues/${a.id}`,
+      jsonReq("PATCH", { position: 42 }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-body", reason: "position-immutable" });
+  });
+
+  it("requires auth", async () => {
+    const h = makeHarness();
+    const res = await h.app.request(
+      "/api/v0/issues/x/reorder",
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" },
+      {},
+    );
+    expect(res.status).toBe(401);
+  });
+});

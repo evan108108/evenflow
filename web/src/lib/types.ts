@@ -49,6 +49,10 @@ export interface Issue {
   readonly estimate: number | null;
   readonly labels: ReadonlyArray<string>;
   readonly github_links: ReadonlyArray<{ repo: string; pr: number; state: string }>;
+  // Intra-column fractional sort key (phase 18d). Null = legacy row —
+  // sorts after every positioned row, by updated_at_ms DESC. Optional so
+  // pre-18d cached payloads still parse.
+  readonly position?: number | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
@@ -62,8 +66,12 @@ export interface Comment {
   readonly issue_id: string;
   readonly author_pubkey: string;
   readonly body: string;
+  // 'markdown' since phase 18c; pre-0007 rows stay 'plain' (pre-wrap render).
+  readonly body_format: import("./attachments").BodyFormat;
   readonly in_reply_to: string | null;
   readonly created_at_ms: number;
+  // Comment-owned attachments (phase 18c list enrichment).
+  readonly attachments?: ReadonlyArray<import("./attachments").Attachment>;
 }
 
 export interface FeedItem {

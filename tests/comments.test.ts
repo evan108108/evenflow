@@ -155,3 +155,98 @@ describe("auth gating", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ── phase 18c: rich comments — body_format + attachment claims ────────────
+
+const uploadTo = async (h: ReturnType<typeof makeHarness>, issueId: string) => {
+  const res = await h.app.request(
+    `/api/v0/boards/kb/issues/${issueId}/attachments`,
+    jsonReq("POST", {
+      file_b64: btoa("png-bytes"),
+      filename: "shot.png",
+      content_type: "image/png",
+    }),
+    {},
+  );
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { attachment: { id: string } }).attachment;
+};
+
+describe("comment attachments (phase 18c)", () => {
+  it("new comments are markdown-format", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const res = await postComment(h, issue.id, { body: "**bold**" });
+    const { comment } = (await res.json()) as { comment: CommentShape };
+    expect(comment.body_format).toBe("markdown");
+  });
+
+  it("claims uploaded attachments for the comment and hides them from the Files list", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const a = await uploadTo(h, issue.id);
+    const b = await uploadTo(h, issue.id);
+
+    const res = await postComment(h, issue.id, { body: "see attached", attachment_ids: [a.id, b.id] });
+    expect(res.status).toBe(201);
+    const { comment } = (await res.json()) as {
+      comment: CommentShape & { attachments: Array<{ id: string; comment_id: string | null }> };
+    };
+    expect(comment.attachments.map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
+    expect(comment.attachments.every((x) => x.comment_id === comment.id)).toBe(true);
+
+    // GET comments carries the enrichment.
+    const list = await h.app.request(`/api/v0/issues/${issue.id}/comments`, { headers: bearer }, {});
+    const listed = (await list.json()) as {
+      comments: Array<{ id: string; attachments: Array<{ id: string }> }>;
+    };
+    expect(listed.comments[0]!.attachments).toHaveLength(2);
+
+    // The issue's Files panel no longer lists claimed attachments.
+    const files = await h.app.request(
+      `/api/v0/boards/kb/issues/${issue.id}/attachments`,
+      { headers: bearer },
+      {},
+    );
+    expect(((await files.json()) as { attachments: unknown[] }).attachments).toHaveLength(0);
+  });
+
+  it("rejects unknown, cross-issue, and double-claimed attachment ids", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const other = await createIssue(h, { title: "Other" });
+    const mine = await uploadTo(h, issue.id);
+    const theirs = await uploadTo(h, other.id);
+
+    const unknown = await postComment(h, issue.id, { body: "x", attachment_ids: ["nope"] });
+    expect(unknown.status).toBe(400);
+
+    const crossIssue = await postComment(h, issue.id, { body: "x", attachment_ids: [theirs.id] });
+    expect(crossIssue.status).toBe(400);
+
+    const first = await postComment(h, issue.id, { body: "x", attachment_ids: [mine.id] });
+    expect(first.status).toBe(201);
+    const doubleClaim = await postComment(h, issue.id, { body: "y", attachment_ids: [mine.id] });
+    expect(doubleClaim.status).toBe(400);
+
+    const notArray = await postComment(h, issue.id, { body: "x", attachment_ids: "nope" });
+    expect(notArray.status).toBe(400);
+  });
+
+  it("deleting a comment soft-deletes its attachments", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const a = await uploadTo(h, issue.id);
+    const res = await postComment(h, issue.id, { body: "x", attachment_ids: [a.id] });
+    const { comment } = (await res.json()) as { comment: CommentShape };
+
+    const del = await h.app.request(`/api/v0/comments/${comment.id}`, jsonReq("DELETE"), {});
+    expect(del.status).toBe(200);
+    const row = h.db.attachments.find((r) => r["id"] === a.id);
+    expect(row?.["deleted_at_ms"]).not.toBeNull();
+  });
+});

@@ -6,8 +6,9 @@
 
 import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
-import { transitionZone, type DndHandle } from "../../lib/dnd";
+import { cardZone, parseZone, transitionZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
+import { issuesInColumn } from "../../lib/order";
 import type { Issue } from "../../lib/types";
 import type { BoardStore } from "./store";
 
@@ -18,14 +19,28 @@ export const KanbanView = (props: {
 }) => {
   const active = () => props.store.issues().filter((i) => i.container === "active");
   const columns = () => enabledColumns(props.store.board()?.columns ?? []);
-  // column_id is the identity; status-name match covers rows awaiting the
-  // 0005 backfill.
-  const inColumn = (column: Column) =>
-    active()
-      .filter((i) => (i.column_id !== null ? i.column_id === column.id : i.status === column.name))
-      .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+  const inColumn = (column: Column) => issuesInColumn(active(), column);
   const pointsIn = (issues: readonly Issue[]) =>
     issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0);
+
+  // The card zone under the pointer, when there is one.
+  const overCard = () => {
+    const zone = props.dnd.overZone();
+    if (zone === null) return null;
+    const parsed = parseZone(zone);
+    return parsed?.type === "card" ? parsed : null;
+  };
+  // Insertion indicator on this card — only for a drag within its own
+  // column (a cross-column drop is a transition, not a reorder).
+  const indicatorFor = (column: Column, issue: Issue): "before" | "after" | null => {
+    const over = overCard();
+    if (over === null || over.issue !== issue.id || over.column !== column.id) return null;
+    const dragging = props.dnd.draggingId();
+    if (dragging === null || dragging === issue.id) return null;
+    const draggedIssue = props.store.issues().find((i) => i.id === dragging);
+    if (draggedIssue === undefined || !inColumn(column).some((i) => i.id === dragging)) return null;
+    return over.half;
+  };
 
   return (
     <Show
@@ -36,10 +51,25 @@ export const KanbanView = (props: {
         <For each={columns()}>
           {(column) => {
             const zone = transitionZone(column.id);
+            // The column highlights for a direct hover, or when the pointer
+            // is over one of its cards during a CROSS-column drag (that
+            // drop transitions here; same-column card hovers show the
+            // insertion indicator instead).
+            const dropOver = () => {
+              if (props.dnd.overZone() === zone) return true;
+              const over = overCard();
+              const dragging = props.dnd.draggingId();
+              return (
+                over !== null &&
+                over.column === column.id &&
+                dragging !== null &&
+                !inColumn(column).some((i) => i.id === dragging)
+              );
+            };
             return (
               <div
                 class="kanban-column"
-                classList={{ "drop-over": props.dnd.overZone() === zone }}
+                classList={{ "drop-over": dropOver() }}
                 data-dropzone={zone}
               >
                 <div class="kanban-column-content">
@@ -53,7 +83,13 @@ export const KanbanView = (props: {
                   </h3>
                   <For each={inColumn(column)}>
                     {(issue: Issue) => (
-                      <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} />
+                      <IssueCard
+                        issue={issue}
+                        dnd={props.dnd}
+                        onOpen={props.onOpen}
+                        zone={cardZone(column.id, issue.id)}
+                        indicator={indicatorFor(column, issue)}
+                      />
                     )}
                   </For>
                 </div>

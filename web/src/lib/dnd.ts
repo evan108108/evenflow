@@ -45,7 +45,15 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
       setPos({ x: ev.clientX, y: ev.clientY });
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
       const zoneEl = under?.closest("[data-dropzone]") ?? null;
-      setOverZone(zoneEl?.getAttribute("data-dropzone") ?? null);
+      let zone = zoneEl?.getAttribute("data-dropzone") ?? null;
+      // Card zones resolve to an insertion slot: top half = before that
+      // card, bottom half = after it. The half rides in the zone string so
+      // both the drop handler and the indicator styling read one value.
+      if (zone !== null && zone.startsWith("card:") && zoneEl !== null) {
+        const rect = zoneEl.getBoundingClientRect();
+        zone = `${zone}:${ev.clientY < rect.top + rect.height / 2 ? "before" : "after"}`;
+      }
+      setOverZone(zone);
     };
 
     const up = () => {
@@ -69,11 +77,24 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
 /** Zone string builders — keep the encoding in one place. */
 export const transitionZone = (column: string) => `transition:${column}`;
 export const moveZone = (action: string) => `move:${action}`;
+/** A card's own zone; the dnd move handler appends `:before` / `:after`. */
+export const cardZone = (column: string, issue: string) => `card:${column}:${issue}`;
 
 export const parseZone = (
   zone: string,
-): { type: "transition"; column: string } | { type: "move"; action: string } | null => {
+):
+  | { type: "transition"; column: string }
+  | { type: "move"; action: string }
+  | { type: "card"; column: string; issue: string; half: "before" | "after" }
+  | null => {
   if (zone.startsWith("transition:")) return { type: "transition", column: zone.slice(11) };
   if (zone.startsWith("move:")) return { type: "move", action: zone.slice(5) };
+  if (zone.startsWith("card:")) {
+    const [, column, issue, half] = zone.split(":");
+    if (column === undefined || issue === undefined || (half !== "before" && half !== "after")) {
+      return null;
+    }
+    return { type: "card", column, issue, half };
+  }
   return null;
 };

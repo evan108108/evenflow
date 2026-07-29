@@ -1654,3 +1654,91 @@
   color: inherit;
   font-weight: 600;
 }
+
+/* ── phase 18c: rich comments + buffered composer attachments ── */
+.comment-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.comment-composer .actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.comment-body {
+  font-size: 0.9rem;
+}
+
+/* Comment markdown reuses the issue-body rendering at comment scale. */
+.comment-body p:first-child {
+  margin-top: 0;
+}
+
+.comment-body p:last-child {
+  margin-bottom: 0;
+}
+
+.comment-attachments {
+  margin-top: 0.35rem;
+}
+
+.comment-attachments .attachment-row {
+  border-bottom: none;
+  padding: 0.25rem 0.1rem;
+}
+
+.comment-attachments .attachment-thumb {
+  width: 64px;
+  height: 64px;
+}
+
+.pending-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.pending-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.pending-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.1rem;
+}
+
+.pending-row .file-card {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  color: var(--color-ink-soft);
+  font-size: 0.95rem;
+}
+
+.pending-row .attachment-thumb {
+  width: 32px;
+  height: 32px;
+}
+
+/* ── phase 18d: intra-column reorder insertion indicator ── */
+/* Box-shadow lines avoid any layout shift while hovering an insertion
+   slot; color matches the ink accent the drop-over columns use. */
+.issue-card.reorder-before {
+  box-shadow: 0 -3px 0 0 var(--color-ink);
+}
+
+.issue-card.reorder-after {
+  box-shadow: 0 3px 0 0 var(--color-ink);
+}

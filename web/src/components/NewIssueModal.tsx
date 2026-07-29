@@ -7,6 +7,8 @@ import type { NewIssueInput } from "../pages/board/store";
 import { decodeJwtClaims, pubkeyOfJwt } from "../lib/jwt";
 import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
 import { DEFAULT_ISSUE_TYPE, ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
+import { MarkdownEditor } from "./MarkdownEditor";
+import { PendingAttachments } from "./PendingAttachments";
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 
@@ -28,11 +30,12 @@ const selfAssignee = (): { pubkey: string; login: string } | null => {
 export const NewIssueModal = (props: {
   board: Board;
   onClose: () => void;
-  onCreate: (input: NewIssueInput) => Promise<void>;
+  onCreate: (input: NewIssueInput, files: ReadonlyArray<File>) => Promise<void>;
 }) => {
   const [title, setTitle] = createSignal("");
   const [type, setType] = createSignal<string>(DEFAULT_ISSUE_TYPE);
   const [body, setBody] = createSignal("");
+  const [files, setFiles] = createSignal<File[]>([]);
   const columns = enabledColumns(props.board.columns);
   const [status, setStatus] = createSignal(columns[0]?.name ?? "");
   const [container, setContainer] = createSignal("backlog");
@@ -68,7 +71,7 @@ export const NewIssueModal = (props: {
       ...(assignee() === "" ? {} : { assignee_pubkey: assignee() }),
     };
     try {
-      await props.onCreate(input);
+      await props.onCreate(input, files());
     } finally {
       setBusy(false);
     }
@@ -90,11 +93,13 @@ export const NewIssueModal = (props: {
           <For each={[...ISSUE_TYPES]}>{(t) => <option value={t}>{typeLabel(t)}</option>}</For>
         </select>
         <label for="ni-body">Body</label>
-        <textarea
-          id="ni-body"
-          rows={4}
-          value={body()}
-          onInput={(e) => setBody(e.currentTarget.value)}
+        <MarkdownEditor value={body()} onInput={setBody} />
+        <label>Files</label>
+        <PendingAttachments
+          files={files()}
+          onAdd={(file) => setFiles((list) => [...list, file])}
+          onRemove={(index) => setFiles((list) => list.filter((_, i) => i !== index))}
+          disabled={busy()}
         />
         <label for="ni-status">Status</label>
         <select id="ni-status" value={status()} onInput={(e) => setStatus(e.currentTarget.value)}>
