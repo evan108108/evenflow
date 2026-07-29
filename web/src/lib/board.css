@@ -12,7 +12,6 @@
 .user-nav {
   position: relative;
   display: inline-block;
-  align-self: center;
 }
 
 .user-nav-btn {
@@ -92,7 +91,7 @@
 
 .board-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 1.5rem;
   flex-wrap: wrap;
   margin-bottom: 1.6rem;

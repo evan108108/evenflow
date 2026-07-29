@@ -68,13 +68,13 @@ export const BoardsList = () => {
       <header
         style={{
           display: "flex",
-          "align-items": "baseline",
+          "align-items": "center",
           "justify-content": "space-between",
           "margin-bottom": "2.5rem",
         }}
       >
         <h1 style={{ "font-size": "2.6rem" }}>Boards</h1>
-        <div style={{ display: "flex", gap: "0.6rem", "align-items": "baseline" }}>
+        <div style={{ display: "flex", gap: "0.6rem", "align-items": "center" }}>
           <button class="btn btn-solid" onClick={() => setShowModal(true)}>
             Create board
           </button>
