@@ -9,6 +9,7 @@ import { Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
 import { primeProfile, type ProfileData } from "../lib/profileStore";
+import "../lib/board.css";
 
 const SAVED_FLASH_MS = 2200;
 
@@ -91,7 +92,7 @@ export const Profile = () => {
       </header>
 
       <Show when={!me.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
-        <form onSubmit={save}>
+        <form class="profile-form" onSubmit={save}>
           <label for="pf-display">Display name</label>
           <input
             id="pf-display"
@@ -111,15 +112,33 @@ export const Profile = () => {
             onInput={(e) => setName(e.currentTarget.value)}
           />
 
-          <label for="pf-picture">Picture URL</label>
-          <input
-            id="pf-picture"
-            type="text"
-            maxlength="512"
-            placeholder="https://…"
-            value={pictureValue()}
-            onInput={(e) => setPicture(e.currentTarget.value)}
-          />
+          <label>Picture</label>
+          <div class="profile-avatar-row">
+            <Show
+              when={pictureValue().trim() !== ""}
+              fallback={<div class="profile-avatar-placeholder">no image</div>}
+            >
+              <img
+                class="profile-avatar-preview"
+                src={pictureValue()}
+                alt=""
+                onError={(e) => (e.currentTarget.style.display = "none")}
+              />
+            </Show>
+            <div class="profile-avatar-actions">
+              <input
+                id="pf-picture"
+                type="text"
+                maxlength="512"
+                placeholder="https://…"
+                value={pictureValue()}
+                onInput={(e) => setPicture(e.currentTarget.value)}
+              />
+              <span class="muted" style={{ "font-size": "0.75rem" }}>
+                Public URL for now — upload + auto-fetch from Google/GitHub coming next.
+              </span>
+            </div>
+          </div>
 
           <label for="pf-about">About</label>
           <textarea
@@ -138,7 +157,7 @@ export const Profile = () => {
 
           <div
             class="actions"
-            style={{ display: "flex", gap: "0.6rem", "align-items": "center", "margin-top": "1.2rem" }}
+            style={{ display: "flex", gap: "0.6rem", "align-items": "center", "margin-top": "1.4rem" }}
           >
             <button class="btn btn-solid" type="submit" disabled={busy()}>
               {busy() ? "Saving…" : "Save"}

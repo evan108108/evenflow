@@ -619,3 +619,71 @@
   font-size: 0.8rem;
   margin: -0.4rem 0 0.4rem;
 }
+
+/* ── /profile form (full-page, not a modal) ── */
+.profile-form label {
+  display: block;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  margin: 1.1rem 0 0.35rem;
+}
+
+.profile-form input[type="text"],
+.profile-form input[type="file"],
+.profile-form textarea {
+  display: block;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  box-sizing: border-box;
+}
+
+.profile-form textarea {
+  min-height: 6rem;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.profile-avatar-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-top: 0.35rem;
+}
+
+.profile-avatar-preview {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--color-ink-faint);
+  background: var(--color-paper-raised);
+  flex-shrink: 0;
+}
+
+.profile-avatar-placeholder {
+  width: 4rem;
+  height: 4rem;
+  border-radius: 50%;
+  border: 1px dashed var(--color-ink-faint);
+  background: var(--color-paper-raised);
+  display: grid;
+  place-items: center;
+  color: var(--color-ink-soft);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+}
