@@ -93,7 +93,7 @@ export const BoardsList = () => {
   const totalBoards = () => (groups() ?? []).reduce((n, g) => n + g.boards.length, 0);
 
   return (
-    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem" }}>
+    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
       <TopBar crumbs={[{ label: "Boards" }]} />
       <header
         style={{

@@ -78,7 +78,7 @@ export const NewOrg = () => {
   };
 
   return (
-    <main style={{ "max-width": "30rem", margin: "0 auto", padding: "4rem 1.5rem" }}>
+    <main style={{ "max-width": "30rem", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
       <header style={{ "margin-bottom": "2rem" }}>
         <h1 style={{ "font-size": "2.2rem" }}>New org</h1>
         <p class="muted" style={{ "margin-top": "0.4rem" }}>

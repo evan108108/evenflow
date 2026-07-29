@@ -172,7 +172,7 @@ export const OrgSettings = () => {
   };
 
   return (
-    <main style={{ "max-width": "34rem", margin: "0 auto", padding: "4rem 1.5rem" }}>
+    <main style={{ "max-width": "34rem", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
       <nav class="crumb muted" style={{ "margin-bottom": "1rem" }}>
         <a href="/boards">← Boards</a> / <a href={`/@${handle()}`}>@{handle()}</a> / settings
       </nav>

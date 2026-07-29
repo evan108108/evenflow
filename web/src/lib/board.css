@@ -5,7 +5,10 @@
 .board-page {
   max-width: 1440px;
   margin: 0 auto;
-  padding: 2.5rem 1.5rem 4rem;
+  /* Left inset is intentionally larger — reserving vertical rail for
+     the eventual circular seal logo + rotated-text mark (see ERA
+     RESIDENCE inspiration). Bump this variable when the logo lands. */
+  padding: 2.5rem 1.5rem 4rem var(--page-inset-left, 3rem);
 }
 
 /* ── persistent top bar (Evenflow wordmark + breadcrumb + user nav) ── */

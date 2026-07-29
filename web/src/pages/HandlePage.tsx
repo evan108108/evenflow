@@ -110,7 +110,7 @@ export const HandlePage = () => {
 
   return (
     <Show when={page() !== NOT_FOUND} fallback={<ClaimCta handle={handle()} />}>
-      <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem" }}>
+      <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
         <TopBar
           crumbs={[
             { label: "Boards", href: "/boards" },
