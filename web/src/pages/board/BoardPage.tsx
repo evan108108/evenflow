@@ -283,8 +283,20 @@ export const BoardPage = () => {
   const buckets = createMemo(() => {
     const estimates = new Map(store.issues().map((i) => [i.id, i.estimate ?? 0]));
     const done = doneNames(store.board()?.columns ?? []);
+    // EFB-follow-up: when the sprint filter chip is ON, The Current should
+    // reflect only the current sprint's velocity. Restrict feed rows to
+    // issues currently members of the active sprint. Members-are-current is
+    // the same lens the Kanban board uses; sums stay consistent.
+    let feed = store.statusFeed();
+    const active = activeSprint();
+    if (active !== undefined && !sprintFilterOff()) {
+      const members = new Set(
+        store.issues().filter((i) => i.sprint_id === active.id).map((i) => i.id),
+      );
+      feed = feed.filter((r) => members.has(r.issue_id));
+    }
     return velocityBuckets(
-      store.statusFeed(),
+      feed,
       (id) => estimates.get(id) ?? 0,
       Date.now(),
       (name) => done.has(name),
@@ -443,8 +455,22 @@ export const BoardPage = () => {
                     </Show>
                   </button>
                 </Show>
-                <div class="current" title="Estimate points completed from Active, trailing 7 days">
-                  <span class="label">The Current</span>
+                <div
+                  class="current"
+                  title={
+                    activeSprint() !== undefined && !sprintFilterOff()
+                      ? `Points transitioned into a done column during the trailing 7 days, filtered to ${activeSprint()!.name}. Each transition counts — an issue that goes to Done, out, and back to Done counts twice.`
+                      : "Points transitioned into a done column during the trailing 7 days. Each transition counts — an issue that goes to Done, out, and back to Done counts twice."
+                  }
+                >
+                  <span class="label">
+                    The Current
+                    <Show when={activeSprint() !== undefined && !sprintFilterOff()}>
+                      <span class="muted" style={{ "margin-left": "0.35rem", "font-size": "0.72rem" }}>
+                        · {activeSprint()!.name}
+                      </span>
+                    </Show>
+                  </span>
                   <Sparkline buckets={buckets()} />
                   <span class="figure">{velocityTotal()}</span>
                 </div>
