@@ -19,6 +19,7 @@ import { makeOrgsRouter } from "./routes/orgs";
 import { makeProfileRouter } from "./routes/profile";
 import { makeSessionRouter } from "./routes/session";
 import { makeSprintsRouter } from "./routes/sprints";
+import { makeNotificationsRouter } from "./routes/notifications";
 import { makeStorageRouter } from "./routes/storage";
 import { makeWellKnownRouter } from "./routes/wellknown";
 
@@ -67,6 +68,7 @@ app.route("/api/v0", makeKeysRouter());
 // BYOB storage (phase 18b): /server-pubkey + /orgs/:handle/storage — before
 // the org-scoped board mounts for the same reason the orgs router is.
 app.route("/api/v0", makeStorageRouter());
+app.route("/api/v0", makeNotificationsRouter());
 
 // Board-family routers, mounted twice: legacy compat at /api/v0 and the
 // canonical org-scoped namespace at /api/v0/orgs/:org_slug. Handlers branch

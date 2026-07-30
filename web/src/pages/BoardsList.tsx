@@ -17,12 +17,14 @@ interface BoardRow {
   title: string;
   visibility?: "private" | "public";
   issue_prefix: string | null;
+  archived_at_ms?: number | null;
   updated_at_ms: number;
 }
 
 interface OrgGroup {
   org: OrgSummary;
   boards: BoardRow[];
+  archived: BoardRow[];
 }
 
 const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promise<T> =>
@@ -41,12 +43,18 @@ const fetchGroups = async (me: BootstrapMe | null): Promise<OrgGroup[]> => {
   const groups = await Promise.all(
     ordered.map(async (org) => {
       try {
+        // One fetch covers both views: live boards render here, archived
+        // ones back the /boards/archived view + its count link.
         const res = await api<{ boards: BoardRow[] }>((c) =>
-          c.get(`/api/v0/orgs/${encodeURIComponent(org.slug)}/boards`),
+          c.get(`/api/v0/orgs/${encodeURIComponent(org.slug)}/boards?include_archived=1`),
         );
-        return { org, boards: res.boards };
+        return {
+          org,
+          boards: res.boards.filter((b) => (b.archived_at_ms ?? null) === null),
+          archived: res.boards.filter((b) => (b.archived_at_ms ?? null) !== null),
+        };
       } catch {
-        return { org, boards: [] as BoardRow[] };
+        return { org, boards: [] as BoardRow[], archived: [] as BoardRow[] };
       }
     }),
   );
@@ -56,7 +64,7 @@ const fetchGroups = async (me: BootstrapMe | null): Promise<OrgGroup[]> => {
 const createBoard = (input: NewBoardInput): Promise<{ board: BoardRow }> =>
   api((c) => c.post<{ board: BoardRow }>("/api/v0/boards", input));
 
-export const BoardsList = () => {
+export const BoardsList = (props: { archived?: boolean }) => {
   const navigate = useNavigate();
   const [showModal, setShowModal] = createSignal(false);
   const [me, setMe] = createSignal<BootstrapMe | null | undefined>(undefined);
@@ -91,6 +99,75 @@ export const BoardsList = () => {
   };
 
   const totalBoards = () => (groups() ?? []).reduce((n, g) => n + g.boards.length, 0);
+  const totalArchived = () => (groups() ?? []).reduce((n, g) => n + g.archived.length, 0);
+
+  const unarchive = async (org: OrgSummary, board: BoardRow) => {
+    try {
+      await api((c) =>
+        c.post(
+          `/api/v0/orgs/${encodeURIComponent(org.slug)}/boards/${encodeURIComponent(board.slug)}/unarchive`,
+          {},
+        ),
+      );
+      void refetch();
+    } catch {
+      /* the list simply stays put; a retry is one click away */
+    }
+  };
+
+  if (props.archived === true) {
+    return (
+      <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
+        <TopBar crumbs={[{ label: "Boards", href: "/boards" }, { label: "Archived" }]} />
+        <header style={{ margin: "1.6rem 0 2.5rem" }}>
+          <h1 style={{ "font-size": "2.6rem" }}>Archived boards</h1>
+        </header>
+        <Show
+          when={me() !== undefined && !groups.loading}
+          fallback={<p class="muted">Finding the rhythm…</p>}
+        >
+          <Show
+            when={totalArchived() > 0}
+            fallback={<p class="muted">Nothing resting here.</p>}
+          >
+            <For each={groups()}>
+              {(group) => (
+                <Show when={group.archived.length > 0}>
+                  <section style={{ "margin-bottom": "2.2rem" }}>
+                    <h2 class="serif" style={{ "font-size": "1.15rem", "margin-bottom": "0.8rem" }}>
+                      @{group.org.slug}
+                    </h2>
+                    <ul style={{ "list-style": "none", margin: 0, padding: 0 }}>
+                      <For each={group.archived}>
+                        {(board) => (
+                          <li
+                            class="board-card"
+                            style={{ "margin-bottom": "0.8rem", display: "flex", "align-items": "center", "justify-content": "space-between" }}
+                          >
+                            <span class="serif" style={{ "font-size": "1.25rem" }}>
+                              {board.title}
+                            </span>
+                            <span style={{ display: "flex", "align-items": "center", gap: "0.8rem" }}>
+                              <span class="muted" style={{ "font-size": "0.85rem" }}>
+                                archived {new Date(board.archived_at_ms ?? 0).toLocaleDateString()}
+                              </span>
+                              <button type="button" class="btn" onClick={() => void unarchive(group.org, board)}>
+                                Unarchive
+                              </button>
+                            </span>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </section>
+                </Show>
+              )}
+            </For>
+          </Show>
+        </Show>
+      </main>
+    );
+  }
 
   return (
     <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
@@ -160,6 +237,13 @@ export const BoardsList = () => {
             )}
           </For>
         </Show>
+        <Show when={totalArchived() > 0}>
+          <p style={{ "margin-top": "1.6rem" }}>
+            <a class="muted" href="/boards/archived" style={{ "font-size": "0.9rem" }}>
+              View archived ({totalArchived()})
+            </a>
+          </p>
+        </Show>
       </Show>
 
       <Show when={showModal()}>
@@ -168,3 +252,6 @@ export const BoardsList = () => {
     </main>
   );
 };
+
+/** /boards/archived — same data, resting view with per-row Unarchive. */
+export const ArchivedBoardsList = () => <BoardsList archived />;

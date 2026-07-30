@@ -28,6 +28,7 @@ export interface DbMock {
   readonly orgAliases: Row[];
   readonly profiles: Row[];
   readonly storageConfigs: Row[];
+  readonly notificationConfigs: Row[];
   readonly audienceKeys: Row[];
   readonly keyGrants: Row[];
   readonly sessionKeys: Row[];
@@ -52,6 +53,7 @@ export const makeDbMock = (): DbMock => {
   const orgAliases: Row[] = [];
   const profiles: Row[] = [];
   const storageConfigs: Row[] = [];
+  const notificationConfigs: Row[] = [];
   const audienceKeys: Row[] = [];
   const keyGrants: Row[] = [];
   const sessionKeys: Row[] = [];
@@ -73,6 +75,12 @@ export const makeDbMock = (): DbMock => {
           num(a["created_at_ms"]) - num(b["created_at_ms"]) ||
           str(a["id"]).localeCompare(str(b["id"])),
       );
+
+  /** Apply the archive filter iff the SQL carries it (polish batch). */
+  const liveOnly = (rows: Row[], sql: string) =>
+    sql.includes("archived_at_ms IS NULL")
+      ? rows.filter((r) => (r["archived_at_ms"] ?? null) === null)
+      : rows;
 
   /** The boards router's visibility predicate: org member ∪ explicit grant ∪ creator. */
   const visibleBoards = (pubkey: unknown) => {
@@ -388,6 +396,14 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { issue_prefix });
           return;
         }
+        // Archive toggle (polish batch) — must precede the generic
+        // board-PATCH branch below, which shares its prefix.
+        if (sql.startsWith("UPDATE boardCache SET archived_at_ms = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [archived_at_ms, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { archived_at_ms, updated_at_ms });
+          return;
+        }
         if (sql.startsWith("UPDATE boardCache SET")) {
           const [title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, updated_at_ms, id] = params;
           const row = boards.find((r) => r["id"] === id);
@@ -477,6 +493,21 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { status: "completed", completed_at_ms: params[0] });
           return;
         }
+        // ── polish batch: cross-board move + notifications ──
+        if (sql.startsWith("UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [board_id, short_id, column_id, status, position, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { board_id, short_id, column_id, status, sprint_id: null, position, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO notificationsConfig")) {
+          const [pubkey, email_on_mention, email_on_assignment, email_on_issue_moved_to_me, email_digest, updated_at_ms] = params;
+          const next = { pubkey, email_on_mention, email_on_assignment, email_on_issue_moved_to_me, email_digest, updated_at_ms };
+          const existing = notificationConfigs.find((r) => r["pubkey"] === pubkey);
+          if (existing) Object.assign(existing, next);
+          else notificationConfigs.push(next);
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?")) {
           const [sprint_id, updated_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
@@ -516,10 +547,14 @@ export const makeDbMock = (): DbMock => {
           return (r ? { ...r } : null) as R | null;
         }
         if (sql.includes("boardCache.org_id IN (SELECT org_id FROM orgMemberCache") && sql.startsWith("SELECT COUNT(*)")) {
-          return { n: visibleBoards(params[0]).length } as R;
+          return { n: liveOnly(visibleBoards(params[0]), sql).length } as R;
         }
         if (sql.includes("boardCache.org_id IN (SELECT org_id FROM orgMemberCache") && sql.includes("AND id = ?")) {
-          const r = visibleBoards(params[0]).find((x) => x["id"] === params[3]);
+          const r = liveOnly(visibleBoards(params[0]), sql).find((x) => x["id"] === params[3]);
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM notificationsConfig WHERE pubkey = ?")) {
+          const r = notificationConfigs.find((x) => x["pubkey"] === params[0]);
           return (r ? { ...r } : null) as R | null;
         }
         if (sql.startsWith("SELECT * FROM boardCache WHERE id = ?")) {
@@ -874,11 +909,11 @@ export const makeDbMock = (): DbMock => {
             })
             .map((r) => ({ ...r })) as R[];
         }
-        if (sql.startsWith("SELECT * FROM boardCache WHERE org_id = ? ORDER BY")) {
-          return byUpdatedDesc(boards.filter((r) => r["org_id"] === params[0])).map((r) => ({ ...r })) as R[];
+        if (sql.startsWith("SELECT * FROM boardCache WHERE org_id = ?") && sql.includes("ORDER BY")) {
+          return byUpdatedDesc(liveOnly(boards.filter((r) => r["org_id"] === params[0]), sql)).map((r) => ({ ...r })) as R[];
         }
         if (sql.includes("boardCache.org_id IN (SELECT org_id FROM orgMemberCache")) {
-          let rows = byUpdatedDesc(visibleBoards(params[0]));
+          let rows = byUpdatedDesc(liveOnly(visibleBoards(params[0]), sql));
           let at = 3;
           if (sql.includes("(updated_at_ms < ?")) {
             const [upd, , afterId] = [params[at], params[at + 1], params[at + 2]];
@@ -1036,6 +1071,7 @@ export const makeDbMock = (): DbMock => {
     orgAliases,
     profiles,
     storageConfigs,
+    notificationConfigs,
     audienceKeys,
     keyGrants,
     sessionKeys,

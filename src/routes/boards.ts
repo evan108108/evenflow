@@ -263,6 +263,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         org_id: org.id,
         visibility: "private",
         default_sprint_days: DEFAULT_SPRINT_DAYS,
+        archived_at_ms: null,
         created_at_ms: now,
         updated_at_ms: now,
       };
@@ -313,6 +314,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   boards.get("/boards", async (c) => {
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
+    const includeArchived = c.req.query("include_archived") === "1";
 
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
@@ -330,7 +332,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       // (pre-backfill compat). Positional params, so pubkey binds three
       // times per use of the predicate.
       const VISIBLE_PREDICATE =
-        "(boardCache.org_id IN (SELECT org_id FROM orgMemberCache WHERE pubkey = ?) OR boardCache.id IN (SELECT board_id FROM boardMemberCache WHERE pubkey = ?) OR boardCache.pubkey = ?)";
+        "(boardCache.org_id IN (SELECT org_id FROM orgMemberCache WHERE pubkey = ?) OR boardCache.id IN (SELECT board_id FROM boardMemberCache WHERE pubkey = ?) OR boardCache.pubkey = ?)" +
+        (includeArchived ? "" : " AND archived_at_ms IS NULL");
       const visibleParams = [pubkey, pubkey, pubkey];
 
       let rows: ReadonlyArray<unknown>;
@@ -608,6 +611,40 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
     return c.json(exit.value);
   });
+
+  // ── POST /boards/:slug/(un)archive — hide from / restore to lists ──────
+  // Owner-only. Archived boards stay reachable by deep link; every list
+  // surface filters them unless ?include_archived=1.
+  const setArchived = (archive: boolean) => async (c: Context<AppHonoEnv>) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const { board } = yield* resolveBoardScope(
+        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") ?? "" },
+        callerPubkey(claims),
+        "owner",
+      );
+      const db = yield* Db;
+      const audit = yield* AuditLog;
+      const now = yield* Clock.currentTimeMillis;
+      const archived_at_ms = archive ? now : null;
+      yield* db.execute(
+        "UPDATE boardCache SET archived_at_ms = ?, updated_at_ms = ? WHERE id = ?",
+        [archived_at_ms, now, board.id],
+      );
+      yield* audit.record({
+        event_type: archive ? "board_archived" : "board_unarchived",
+        actor: claims.login,
+        details: { slug: board.slug },
+      });
+      return { board: { ...board, archived_at_ms, updated_at_ms: now } };
+    });
+
+    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
+    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
+    return c.json(exit.value);
+  };
+  boards.post("/boards/:slug/archive", setArchived(true));
+  boards.post("/boards/:slug/unarchive", setArchived(false));
 
   // ── DELETE /boards/:slug — remove a board (admin) ───────────────────────
   // Deliberately does NOT cascade to issueCache (soft FKs): issues orphan;

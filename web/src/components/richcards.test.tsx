@@ -78,6 +78,15 @@ const mount = (component: () => unknown) => {
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/**
+ * Retry flush until `pred` holds (bounded) — lazy-loaded chunks (the
+ * markdown renderer, the shiki bundle) resolve across a variable number of
+ * macrotasks, so any single-flush assertion on their output is a flake.
+ */
+const waitFor = async (pred: () => boolean, tries = 40) => {
+  for (let i = 0; i < tries && !pred(); i++) await flush();
+};
+
 describe("MarkdownEditor", () => {
   const editable = () => {
     const [value, setValue] = createSignal("hello");
@@ -92,8 +101,14 @@ describe("MarkdownEditor", () => {
     setValue("## Acceptance\n- [x] Done\n\nSee [[EFB-1]]");
     const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     tabs.find((t) => t.textContent === "Preview")!.click();
-    // The renderer chunk lazy-loads on first preview — wait for it.
-    for (let i = 0; i < 40 && container.querySelector("h2") === null; i++) await flush();
+    // The renderer chunk lazy-loads on first preview — wait for the FULL
+    // render (issue-ref anchors hydrate after the base markdown pass), not
+    // just the first heading.
+    await waitFor(
+      () =>
+        container.querySelector("h2") !== null &&
+        container.querySelector("a.issue-ref") !== null,
+    );
 
     expect(container.querySelector(".editor-textarea")).toBeNull();
     const preview = container.querySelector(".editor-preview")!;
@@ -102,7 +117,7 @@ describe("MarkdownEditor", () => {
     expect(preview.querySelector("a.issue-ref")!.getAttribute("href")).toBe("/i/EFB-1");
 
     tabs.find((t) => t.textContent === "Write")!.click();
-    await flush();
+    await waitFor(() => container.querySelector(".editor-textarea") !== null);
     expect(container.querySelector(".editor-textarea")).not.toBeNull();
     cleanup();
   });
@@ -131,7 +146,7 @@ describe("MarkdownEditor", () => {
 describe("CodeBlock", () => {
   it("swaps in highlighted HTML for pack languages", async () => {
     const { container, cleanup } = mount(() => <CodeBlock code="const x = 1;" lang="ts" />);
-    await flush();
+    await waitFor(() => container.querySelector(".shiki-host") !== null);
     expect(container.querySelector(".shiki-host")!.textContent).toBe("HL:const x = 1;");
     cleanup();
   });

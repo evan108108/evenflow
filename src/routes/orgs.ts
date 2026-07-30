@@ -366,13 +366,16 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /orgs/:slug/boards — org board list, visibility-filtered ────────
   orgs.get("/orgs/:slug/boards", async (c) => {
+    const includeArchived = c.req.query("include_archived") === "1";
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
       const resolved = yield* resolveOrgBySlug(c.req.param("slug"));
       if (resolved === null) return yield* new NotFoundError({ reason: "org" });
       const db = yield* Db;
       const rows = yield* db.queryAll<Record<string, unknown>>(
-        "SELECT * FROM boardCache WHERE org_id = ? ORDER BY updated_at_ms DESC, id DESC",
+        includeArchived
+          ? "SELECT * FROM boardCache WHERE org_id = ? ORDER BY updated_at_ms DESC, id DESC"
+          : "SELECT * FROM boardCache WHERE org_id = ? AND archived_at_ms IS NULL ORDER BY updated_at_ms DESC, id DESC",
         [resolved.org.id],
       );
       const visible: Array<Record<string, unknown>> = [];
