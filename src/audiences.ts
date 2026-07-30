@@ -34,7 +34,11 @@ import {
 } from "./lib/audience/audience-events";
 import { blake3ContentTag } from "./lib/audience/blake3-tag";
 import { openScalarFromServer, type ServerAudienceKeys } from "./lib/audience-store";
+import { realPubkeyOfMember } from "./nostr";
 import type { BoardEvent } from "./durable-objects/BoardDO";
+
+const bytesToHexLocal = (bytes: Uint8Array): string =>
+  Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** Encrypted event kinds (PLAN.md: plain 30550-30554, encrypted +5). */
 const KIND_ENCRYPTED_BOARD = 30555;
@@ -162,14 +166,25 @@ export const issueGrantsForMember = (board: BoardShape, memberPubkey: string, ke
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
     const sessions = yield* liveSessionPubkeys(memberPubkey);
+    // 16.7: a Nostr member's REAL pubkey is always a recipient — level-4
+    // from the moment of invite, before (and regardless of) any sign-in.
+    const realPubkey = realPubkeyOfMember(memberPubkey);
+    const recipients = [...new Set([...sessions, ...(realPubkey === null ? [] : [realPubkey])])];
     const issued: string[] = [];
-    for (const sessionPub of sessions) {
+    for (const sessionPub of recipients) {
       const existing = yield* db.queryFirst(
         "SELECT id FROM boardMemberKeyGrant WHERE board_id = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL",
         [board.id, sessionPub, keys.epoch],
       );
       if (existing !== null) continue;
-      const ciphertext = encrypt(keys.epochPriv, keys.audIdPriv, sessionPub);
+      // Wire nuance: real-pubkey recipients get the scalar sealed as a HEX
+      // STRING (NIP-44 plaintext must be valid UTF-8 for standard NIP-07
+      // `nip44.decrypt` to round-trip it); ephemeral session keys keep
+      // 16.5's raw-scalar sealing, decrypted by our own vendored code.
+      const ciphertext =
+        sessionPub === realPubkey
+          ? encryptString(bytesToHexLocal(keys.epochPriv), keys.audIdPriv, sessionPub)
+          : encrypt(keys.epochPriv, keys.audIdPriv, sessionPub);
       yield* db.execute(
         "INSERT INTO boardMemberKeyGrant (id, board_id, member_pubkey, recipient_pubkey, epoch, grant_ciphertext, grant_sender_pubkey, issued_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [crypto.randomUUID(), board.id, memberPubkey, sessionPub, keys.epoch, ciphertext, keys.audIdPub, now, null],

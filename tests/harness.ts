@@ -39,6 +39,7 @@ import { makeIssuesRouter } from "../src/routes/issues";
 import { makeMcpRouter } from "../src/routes/mcp";
 import { makeOrgsRouter } from "../src/routes/orgs";
 import { makeSessionRouter } from "../src/routes/session";
+import { makeSigninRouter } from "../src/routes/signin";
 import { makeSprintsRouter } from "../src/routes/sprints";
 import { makeNotificationsRouter } from "../src/routes/notifications";
 import { makeStorageRouter } from "../src/routes/storage";
@@ -95,6 +96,7 @@ export const makeHarness = () => {
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", optionalAuth(() => layer));
+  app.route("/api/v0", makeSigninRouter(() => layer));
   app.route("/api/v0", makeSessionRouter(() => layer));
   app.route("/api/v0", makeOrgsRouter(() => layer));
   app.route("/api/v0", makeInvitesRouter(() => layer));

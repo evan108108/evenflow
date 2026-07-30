@@ -32,6 +32,7 @@ export interface DbMock {
   readonly audienceKeys: Row[];
   readonly keyGrants: Row[];
   readonly sessionKeys: Row[];
+  readonly sessions: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -57,6 +58,7 @@ export const makeDbMock = (): DbMock => {
   const audienceKeys: Row[] = [];
   const keyGrants: Row[] = [];
   const sessionKeys: Row[] = [];
+  const sessions: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
     issues
@@ -443,11 +445,20 @@ export const makeDbMock = (): DbMock => {
           keyGrants.push({ id, board_id, member_pubkey, recipient_pubkey, epoch, grant_ciphertext, grant_sender_pubkey, issued_at_ms, revoked_at_ms });
           return;
         }
+        if (sql.startsWith("INSERT OR REPLACE INTO sessionCache")) {
+          const [jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms] = params;
+          const row = sessions.find((r) => r["jwt_hash"] === jwt_hash);
+          if (row) Object.assign(row, { pubkey, provider, oauth_id, expires_at_ms, last_seen_ms });
+          else sessions.push({ jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms });
+          return;
+        }
         if (sql.startsWith("INSERT OR REPLACE INTO sessionKeyRegistrations")) {
           const [jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms] = params;
+          // 16.7: the source arrives as a SQL literal ('nostr' | 'ephemeral').
+          const session_key_source = sql.includes("'nostr'") ? "nostr" : "ephemeral";
           const row = sessionKeys.find((r) => r["jwt_hash"] === jwt_hash);
-          if (row) Object.assign(row, { member_pubkey, session_pubkey, created_at_ms, expires_at_ms });
-          else sessionKeys.push({ jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms });
+          if (row) Object.assign(row, { member_pubkey, session_pubkey, created_at_ms, expires_at_ms, session_key_source });
+          else sessionKeys.push({ jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms, session_key_source });
           return;
         }
         if (sql.startsWith("UPDATE boardMemberKeyGrant SET revoked_at_ms = ? WHERE board_id = ? AND revoked_at_ms IS NULL")) {
@@ -730,6 +741,12 @@ export const makeDbMock = (): DbMock => {
             (x) => x["board_id"] === params[0] && x["member_pubkey"] === params[1] && x["recipient_pubkey"] === params[2] && x["epoch"] === params[3] && x["revoked_at_ms"] === null,
           );
           return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT session_pubkey, session_key_source FROM sessionKeyRegistrations WHERE jwt_hash = ?")) {
+          const r = sessionKeys.find((x) => x["jwt_hash"] === params[0]);
+          return (r
+            ? { session_pubkey: r["session_pubkey"], session_key_source: r["session_key_source"] ?? "ephemeral" }
+            : null) as R | null;
         }
         if (sql.startsWith("SELECT session_pubkey FROM sessionKeyRegistrations WHERE jwt_hash = ?")) {
           const r = sessionKeys.find((x) => x["jwt_hash"] === params[0]);
@@ -1075,6 +1092,7 @@ export const makeDbMock = (): DbMock => {
     audienceKeys,
     keyGrants,
     sessionKeys,
+    sessions,
     layer: Layer.succeed(Db, service),
   };
 };
