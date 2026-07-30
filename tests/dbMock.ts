@@ -651,6 +651,12 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { status: "active", started_at_ms: params[0] });
           return;
         }
+        // Phase 21d: standalone points_committed_start backfill on read.
+        if (sql.startsWith("UPDATE sprintCache SET points_committed_start = ? WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[1]);
+          if (row) row["points_committed_start"] = params[0];
+          return;
+        }
         // Phase 21b: start snapshots points_committed_start.
         if (sql.startsWith("UPDATE sprintCache SET status = 'active', started_at_ms = ?, points_committed_start = ? WHERE id = ?")) {
           const row = sprints.find((r) => r["id"] === params[2]);

@@ -155,7 +155,36 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         "SELECT * FROM sprintCache WHERE board_id = ? ORDER BY created_at_ms ASC, id ASC",
         [board.id],
       );
-      return { sprints: rows.map(parseSprintRow) };
+      const sprints = rows.map(parseSprintRow);
+      // Backfill for sprints started under phase 21a (before the start
+      // handler snapshotted points_committed_start): if the field is null on
+      // an active sprint, derive it from current members and persist it so
+      // the next read is a cheap SELECT again. Completed sprints without the
+      // snapshot get the derivation as read-only (their real committed set
+      // is gone).
+      const patched: SprintShape[] = [];
+      for (const s of sprints) {
+        if (s.points_committed_start !== null) {
+          patched.push(s);
+          continue;
+        }
+        const members = yield* db.queryAll(
+          "SELECT estimate FROM issueCache WHERE sprint_id = ?",
+          [s.id],
+        );
+        const derived = members.reduce(
+          (sum: number, r) => sum + ((r as { estimate: number | null }).estimate ?? 0),
+          0,
+        );
+        if (s.status === "active") {
+          yield* db.execute(
+            "UPDATE sprintCache SET points_committed_start = ? WHERE id = ?",
+            [derived, s.id],
+          );
+        }
+        patched.push({ ...s, points_committed_start: derived });
+      }
+      return { sprints: patched };
     });
     return runJson(c, program);
   });
