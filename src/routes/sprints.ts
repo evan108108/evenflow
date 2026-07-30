@@ -633,6 +633,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           now,
           issue.id,
         ]);
+        let promotedContainer: "active" | null = null;
         if (verb === "add-issue") {
           yield* db.execute(
             "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
@@ -643,6 +644,21 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
               "UPDATE sprintCache SET adds_mid_sprint = adds_mid_sprint + 1 WHERE id = ?",
               [current.id],
             );
+            // Symmetric with start-sprint sweep: an issue added mid-sprint to
+            // the ACTIVE sprint auto-promotes to container=active so it lands
+            // on the Kanban immediately. Iced issues stay iced — icing was an
+            // explicit "not now"; scooping them here would surprise the user.
+            if (issue.container === "backlog") {
+              yield* db.execute(
+                "UPDATE issueCache SET container = ? WHERE id = ?",
+                ["active", issue.id],
+              );
+              yield* db.execute(
+                "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [crypto.randomUUID(), issue.id, board.id, callerPubkey(claims), null, null, "backlog", "active", null, now],
+              );
+              promotedContainer = "active";
+            }
           }
         } else {
           // Stamp only the still-open row for this (sprint, issue). A no-op
@@ -660,13 +676,21 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           actor: claims.login,
           details: { board: board.slug, sprint: current.id, issue: issue.id },
         });
-        const updated = { ...issue, sprint_id, updated_at_ms: now };
+        const updated = {
+          ...issue,
+          sprint_id,
+          container: promotedContainer ?? issue.container,
+          updated_at_ms: now,
+        };
         yield* emitSecureBoardEvent(board.id, {
-          kind: "issue.updated",
+          kind: promotedContainer !== null ? "issue.container_changed" : "issue.updated",
           board_id: board.id,
           issue_id: issue.id,
           at_ms: now,
-          payload: { issue: updated },
+          payload:
+            promotedContainer !== null
+              ? { issue: updated, from_container: "backlog", to_container: "active" }
+              : { issue: updated },
         });
         return { issue: updated };
       });

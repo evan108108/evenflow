@@ -318,12 +318,43 @@ export const IssueSheet = (props: {
 
         <div class="sheet-row">
           <span class="key">Assignee</span>
-          <span>
-            {props.issue.assignee_pubkey === null ? (
-              "—"
-            ) : (
-              <Author pubkey={props.issue.assignee_pubkey} />
-            )}
+          <span style={{ display: "flex", "align-items": "center", gap: "0.6rem" }}>
+            <Show
+              when={props.issue.assignee_pubkey !== null}
+              fallback={<span class="muted">—</span>}
+            >
+              <Author pubkey={props.issue.assignee_pubkey!} />
+            </Show>
+            <Show when={!readOnly()}>
+              <span style={{ display: "flex", gap: "0.35rem" }}>
+                <Show
+                  when={props.callerPubkey !== null && props.issue.assignee_pubkey !== props.callerPubkey}
+                >
+                  <button
+                    class="btn btn-small btn-quiet"
+                    onClick={() =>
+                      void props.store.patchIssue(props.issue.id, {
+                        assignee_pubkey: props.callerPubkey!,
+                      })
+                    }
+                  >
+                    Assign me
+                  </button>
+                </Show>
+                <Show when={props.issue.assignee_pubkey !== null}>
+                  <button
+                    class="btn btn-small btn-quiet"
+                    onClick={() =>
+                      void props.store.patchIssue(props.issue.id, {
+                        assignee_pubkey: null,
+                      })
+                    }
+                  >
+                    Unassign
+                  </button>
+                </Show>
+              </span>
+            </Show>
           </span>
         </div>
 

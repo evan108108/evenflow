@@ -856,7 +856,11 @@ select {
 }
 
 .issue-card .title {
-  padding-right: 3.4rem;
+  /* Absolutely-positioned .card-ref-row (top-right) holds the type badge
+     plus the short-id chip. Both grew; the title needs enough right-side
+     padding on every wrapped line to clear them (icon ~1.2rem + gap +
+     chip ~4rem). */
+  padding-right: 5.6rem;
 }
 
 .copied-toast {
