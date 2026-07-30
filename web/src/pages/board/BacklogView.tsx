@@ -6,6 +6,7 @@
 
 import { For, Show, createSignal } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
+import { StreamSentinel } from "../../components/StreamSentinel";
 import { moveZone, sprintZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
@@ -245,6 +246,8 @@ export const BacklogView = (props: {
             {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
           </For>
         </Show>
+        {/* Phase 22: the backlog is its own recency-paged stream. */}
+        <StreamSentinel stream={props.store.streamFor("backlog")} />
       </section>
 
       <div

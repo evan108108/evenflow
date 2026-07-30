@@ -93,18 +93,32 @@ const issue = (over: Partial<Issue> = {}): Issue => ({
   ...over,
 });
 
+// Phase 22: load() no longer does one flat fetch — it primes one paged
+// stream per enabled column plus the two side-lists. The issue lives in c1
+// so the other streams answer empty.
+const emptyPage = { issues: [], has_more: false, next_after: null };
+const page = (issues: unknown[]) => ({ issues, has_more: false, next_after: null });
+
 const LOAD_ROUTES = {
   "GET /api/v0/boards/kb": { board },
-  "GET /api/v0/boards/kb/issues?limit=100": { issues: [issue()] },
   "GET /api/v0/boards/kb/sprints": { sprints: [] },
+  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c1": page([issue()]),
+  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c2": emptyPage,
+  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c3": emptyPage,
+  "GET /api/v0/boards/kb/issues?container=backlog&limit=50": emptyPage,
+  "GET /api/v0/boards/kb/issues?container=icebox&limit=50": emptyPage,
 };
 
 const loadedStore = async (extraRoutes: Record<string, unknown> = {}) => {
-  const { calls, run } = makeTestRun({ ...LOAD_ROUTES, ...extraRoutes });
+  // `routes` is returned so a test can model the SERVER CHANGING mid-test:
+  // after a transition the source column no longer contains the card and
+  // the target does, which a static route map cannot express.
+  const routes: Record<string, unknown> = { ...LOAD_ROUTES, ...extraRoutes };
+  const { calls, run } = makeTestRun(routes);
   const store = createBoardStore("kb", run);
   await store.load();
   calls.length = 0;
-  return { store, calls };
+  return { store, calls, routes };
 };
 
 describe("createBoardStore", () => {
@@ -115,24 +129,40 @@ describe("createBoardStore", () => {
     expect(store.board()?.slug).toBe("kb");
     expect(store.issues()).toHaveLength(1);
     expect(store.loading()).toBe(false);
-    // Promise.all starts all three requests; completion order is not guaranteed.
+    // Board + sprints in parallel, then one primed page per stream.
     expect(calls.map((c) => c.path).sort()).toEqual([
       "/api/v0/boards/kb",
-      "/api/v0/boards/kb/issues?limit=100",
+      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c1",
+      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c2",
+      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c3",
+      "/api/v0/boards/kb/issues?container=backlog&limit=50",
+      "/api/v0/boards/kb/issues?container=icebox&limit=50",
       "/api/v0/boards/kb/sprints",
     ]);
   });
 
   it("transition posts the target column_id and applies the server issue", async () => {
-    const { store, calls } = await loadedStore({
-      "POST /api/v0/issues/i1/transition": {
-        issue: issue({ status: "Done", column_id: "c3", updated_at_ms: 9 }),
-      },
+    const moved = issue({ status: "Done", column_id: "c3", updated_at_ms: 9 });
+    const { store, calls, routes } = await loadedStore({
+      "POST /api/v0/issues/i1/transition": { issue: moved },
     });
+    // The card has left c1 and joined c3 as far as the server is concerned.
+    routes["GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c1"] = page([]);
+    routes["GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c3"] = page([moved]);
     await store.transition(store.issues()[0]!, COLUMNS[2]!);
-    expect(calls).toEqual([
-      { method: "POST", path: "/api/v0/issues/i1/transition", body: { column_id: "c3" } },
+    // The POST, then a re-primed first page for BOTH sides of the move —
+    // the source stream lost a row before its cursor and the target gained
+    // one, so leaving either stale would skip a card on the next page.
+    expect(calls.map((c) => c.path)).toEqual([
+      "/api/v0/issues/i1/transition",
+      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c1",
+      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c3",
     ]);
+    expect(calls[0]).toEqual({
+      method: "POST",
+      path: "/api/v0/issues/i1/transition",
+      body: { column_id: "c3" },
+    });
     expect(store.issues()[0]!.status).toBe("Done");
     expect(store.issues()[0]!.column_id).toBe("c3");
   });
@@ -140,7 +170,9 @@ describe("createBoardStore", () => {
   it("rolls the optimistic update back when the API fails", async () => {
     const { store, calls } = await loadedStore({ "POST /api/v0/issues/i1/transition": FAIL });
     await store.transition(store.issues()[0]!, COLUMNS[2]!);
-    expect(calls).toHaveLength(1);
+    // Failed POST + the two stream re-primes, which run regardless so the
+    // rolled-back view still matches the server.
+    expect(calls[0]!.path).toBe("/api/v0/issues/i1/transition");
     expect(store.issues()[0]!.status).toBe("Backlog");
     expect(store.issues()[0]!.column_id).toBe("c1");
     expect(store.lastError()).toContain("500");
@@ -157,7 +189,8 @@ describe("createBoardStore", () => {
     await store.moveContainer(store.issues()[0]!, "send_to_icebox");
     await store.moveContainer(store.issues()[0]!, "promote_to_backlog");
     await store.moveContainer(store.issues()[0]!, "promote_to_active");
-    expect(calls.map((c) => c.path)).toEqual([
+    // Stream re-primes are interleaved; assert the verbs in order.
+    expect(calls.map((c) => c.path).filter((p) => p.startsWith("/api/v0/issues/"))).toEqual([
       "/api/v0/issues/i1/send_to_icebox",
       "/api/v0/issues/i1/promote_to_backlog",
       "/api/v0/issues/i1/promote_to_active",

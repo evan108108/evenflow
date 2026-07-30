@@ -124,7 +124,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     expect(body.has_more).toBe(false);
   });
 
-  it("filters by status, container, and label — one at a time", async () => {
+  it("filters by status, container, and label — and composes them (phase 22)", async () => {
     const h = makeHarness();
     await createBoard(h);
     await createIssue(h, { title: "todo-active", status: "Todo", container: "active" });
@@ -147,13 +147,26 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     ).json()) as { issues: IssueShape[] };
     expect(byLabel.issues.map((i) => i.title)).toEqual(["labeled"]);
 
+    // Phase 22: filters COMPOSE. The old one-filter-at-a-time guard made
+    // paged kanban columns impossible — a column stream is inherently
+    // container=active AND column_id=X.
     const combined = await h.app.request(
       "/api/v0/boards/kb/issues?status=Todo&container=active",
       { headers: bearer },
       {},
     );
-    expect(combined.status).toBe(400);
-    expect(await combined.json()).toEqual({ error: "invalid-body", reason: "one-filter-at-a-time" });
+    expect(combined.status).toBe(200);
+    const both = (await combined.json()) as { issues: IssueShape[] };
+    expect(both.issues.map((i) => i.title)).toEqual(["todo-active"]);
+
+    // ...and compose conjunctively, not as a union: a status that does not
+    // co-occur with the container yields nothing.
+    const disjoint = await h.app.request(
+      "/api/v0/boards/kb/issues?status=In%20Review&container=active",
+      { headers: bearer },
+      {},
+    );
+    expect(((await disjoint.json()) as { issues: IssueShape[] }).issues).toEqual([]);
   });
 });
 

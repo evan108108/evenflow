@@ -86,6 +86,17 @@ const storeStub = {
   patchIssue: async () => null,
   postComment: async () => ({}),
   deleteComment: async () => ({ deleted: true }),
+  // Phase 22: views ask the store for their paged stream. An exhausted
+  // stub keeps the sentinel unmounted so these tests stay about layout.
+  streamFor: () => ({
+    key: "stub",
+    loadNext: async () => undefined,
+    hasMore: () => false,
+    loading: () => false,
+    started: () => true,
+    reset: () => undefined,
+  }),
+  refreshStreams: async () => undefined,
 } as unknown as BoardStore;
 
 const mount = (component: () => unknown) => {
@@ -222,6 +233,8 @@ describe("NewBoardModal", () => {
       slug: "evan-s-flow",
       title: "Evan's Flow",
       issue_prefix: "EF",
+      // Boards are born private since the unify-visibility phase.
+      visibility: "private",
     });
     expect(onDone).toHaveBeenCalledWith({ slug: "evan-s-flow", issue_prefix: "EF" });
     cleanup();

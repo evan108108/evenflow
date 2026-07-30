@@ -2515,3 +2515,23 @@ input.sprint-name:focus {
     overflow-x: auto;
   }
 }
+
+/* ── infinite-scroll sentinel (phase 22) ───────────────────────────────
+   A near-invisible marker at the bottom of each paged list. It carries a
+   little height so an IntersectionObserver has something to observe, and
+   shows a quiet ellipsis only while a page is actually in flight. When the
+   stream is exhausted the element unmounts entirely — the natural end of a
+   list should look like the end, not like a spinner that never resolves. */
+.stream-sentinel {
+  min-height: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stream-sentinel-dots {
+  font-size: 0.9rem;
+  letter-spacing: 0.15em;
+  color: var(--color-ink-soft);
+  opacity: 0.7;
+}

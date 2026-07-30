@@ -12,6 +12,7 @@
 
 import { For, Show, createSignal } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
+import { StreamSentinel } from "../../components/StreamSentinel";
 import { cardZone, moveZone, parseZone, transitionZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
@@ -121,6 +122,8 @@ const StatusStack = (props: {
                       />
                     )}
                   </For>
+                  {/* Phase 22: each column is its own paged stream. */}
+                  <StreamSentinel stream={props.store.streamFor("active", column.id)} />
                 </div>
               </div>
             );

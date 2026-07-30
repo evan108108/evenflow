@@ -47,6 +47,14 @@ import {
   type IssueType,
 } from "../columns";
 import { BODY_FORMATS, isImageContentType, type BodyFormat } from "../attachments";
+import {
+  cursorOf,
+  cursorPredicate,
+  decodeCursor,
+  encodeCursor,
+  orderByFor,
+  type StreamKind,
+} from "../issue-cursor";
 import { asShortId, derivePrefix, uniquePrefix } from "../slug";
 
 const DEFAULT_LIMIT = 20;
@@ -481,6 +489,11 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       container: c.req.query("container"),
       assignee: c.req.query("assignee"),
       label: c.req.query("label"),
+      // Phase 22: column_id selects one Kanban column's paged stream;
+      // sprint_id and q are wired through for a later filter-chip UI.
+      column_id: c.req.query("column_id"),
+      sprint_id: c.req.query("sprint_id"),
+      q: c.req.query("q"),
     };
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
@@ -492,9 +505,6 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         "viewer",
       );
 
-      const active = Object.entries(q).filter(([, v]) => v !== undefined);
-      if (active.length > 1) return yield* new ValidationError({ reason: "one-filter-at-a-time" });
-
       let limit = DEFAULT_LIMIT;
       if (limitRaw !== undefined) {
         const n = Number(limitRaw);
@@ -502,40 +512,90 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         limit = Math.min(n, MAX_LIMIT);
       }
 
-      // Single optional filter, expressed as a SQL fragment + params.
-      let filterSql = "";
+      // Filters COMPOSE since phase 22. The old one-filter-at-a-time guard
+      // made the feature impossible: a paged kanban column is inherently
+      // container=active AND column_id=X, which that rule rejected.
+      const filterParts: string[] = [];
       const filterParams: unknown[] = [];
       if (q.status !== undefined) {
-        filterSql = " AND status = ?";
+        filterParts.push(" AND status = ?");
         filterParams.push(q.status);
-      } else if (q.container !== undefined) {
+      }
+      if (q.container !== undefined) {
         yield* validateContainer(q.container);
-        filterSql = " AND container = ?";
+        filterParts.push(" AND container = ?");
         filterParams.push(q.container);
-      } else if (q.assignee !== undefined) {
-        filterSql = " AND assignee_pubkey = ?";
+      }
+      if (q.assignee !== undefined) {
+        filterParts.push(" AND assignee_pubkey = ?");
         filterParams.push(q.assignee);
-      } else if (q.label !== undefined) {
-        filterSql = " AND EXISTS (SELECT 1 FROM json_each(issueCache.labels) WHERE json_each.value = ?)";
+      }
+      if (q.label !== undefined) {
+        filterParts.push(
+          " AND EXISTS (SELECT 1 FROM json_each(issueCache.labels) WHERE json_each.value = ?)",
+        );
         filterParams.push(q.label);
       }
+      if (q.sprint_id !== undefined) {
+        filterParts.push(" AND sprint_id = ?");
+        filterParams.push(q.sprint_id);
+      }
+      if (q.q !== undefined && q.q.trim() !== "") {
+        // Substring over title/body. Deliberately LIKE, not FTS: there is
+        // no FTS table on issueCache, and adding one is its own phase.
+        filterParts.push(" AND (title LIKE ? ESCAPE '\\' OR COALESCE(body, '') LIKE ? ESCAPE '\\')");
+        const needle = `%${q.q.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+        filterParams.push(needle, needle);
+      }
+      if (q.column_id !== undefined) {
+        // Legacy rows awaiting the 0005 backfill carry column_id IS NULL and
+        // are addressed by their status-name mirror, so a column's stream
+        // must claim them too or they vanish from the board entirely.
+        const col = columnById(board.columns, q.column_id);
+        if (col === undefined) return yield* new ValidationError({ reason: "column_id" });
+        filterParts.push(" AND (column_id = ? OR (column_id IS NULL AND status = ?))");
+        filterParams.push(q.column_id, col.name);
+      }
+      const filterSql = filterParts.join("");
+
+      // A column stream is ordered by fractional position; the side-lists
+      // page by recency. See src/issue-cursor.ts for why the position key
+      // is a tuple and why the cursor is encoded rather than an issue id.
+      const streamKind: StreamKind = q.column_id !== undefined ? "position" : "recency";
 
       const db = yield* Db;
       let cursorSql = "";
-      const cursorParams: unknown[] = [];
+      let cursorParams: unknown[] = [];
       if (after !== undefined) {
-        const anchor = yield* db.queryFirst<Record<string, unknown>>(
-          "SELECT * FROM issueCache WHERE board_id = ? AND id = ?",
-          [board.id, after],
-        );
-        if (anchor === null) return yield* new ValidationError({ reason: "after" });
-        cursorSql = " AND (updated_at_ms < ? OR (updated_at_ms = ? AND id < ?))";
-        cursorParams.push(anchor["updated_at_ms"], anchor["updated_at_ms"], after);
+        const decoded = decodeCursor(after);
+        if (decoded !== null) {
+          if (decoded.kind !== streamKind) {
+            return yield* new ValidationError({ reason: "after-stream-mismatch" });
+          }
+          const pred = cursorPredicate(decoded);
+          cursorSql = pred.sql;
+          cursorParams = pred.params;
+        } else {
+          // Back-compat: pre-22 clients passed a bare issue id on the
+          // recency stream. Keep honouring it; a moved/deleted anchor is
+          // exactly why the encoded form exists, so it is not offered for
+          // the position stream.
+          if (streamKind !== "recency") {
+            return yield* new ValidationError({ reason: "after" });
+          }
+          const anchor = yield* db.queryFirst<Record<string, unknown>>(
+            "SELECT * FROM issueCache WHERE board_id = ? AND id = ?",
+            [board.id, after],
+          );
+          if (anchor === null) return yield* new ValidationError({ reason: "after" });
+          cursorSql = " AND (updated_at_ms < ? OR (updated_at_ms = ? AND id < ?))";
+          cursorParams = [anchor["updated_at_ms"], anchor["updated_at_ms"], after];
+        }
       }
 
       // limit+1 probe answers has_more without a second count query.
       const rows = yield* db.queryAll(
-        `SELECT * FROM issueCache WHERE board_id = ?${filterSql}${cursorSql} ORDER BY updated_at_ms DESC, id DESC LIMIT ?`,
+        `SELECT * FROM issueCache WHERE board_id = ?${filterSql}${cursorSql} ${orderByFor(streamKind)} LIMIT ?`,
         [board.id, ...filterParams, ...cursorParams, limit + 1],
       );
       const count = yield* db.queryFirst<{ n: number }>(
@@ -559,10 +619,15 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         }
       }
 
+      // next_after freezes the sort key of the last row WE RETURN (not the
+      // limit+1 probe row), so the following page resumes exactly here.
+      const hasMore = rows.length > limit;
+      const last = issues.at(-1);
       return {
         issues: issues.map((i) => ({ ...i, cover_url: covers.get(i.id) ?? null })),
         total: count?.n ?? 0,
-        has_more: rows.length > limit,
+        has_more: hasMore,
+        next_after: hasMore && last !== undefined ? encodeCursor(cursorOf(streamKind, last)) : null,
       };
     });
     return runJson(c, program);
