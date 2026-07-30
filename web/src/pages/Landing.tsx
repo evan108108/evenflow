@@ -45,36 +45,23 @@ export const Landing = () => {
         Evenflow
       </h1>
       {/*
-        Landing seal — butterfly at rest inside a two-arc wordmark ring.
-        Split-arc typography: top arc reads left-to-right along the top,
-        bottom arc is drawn right-to-left so its text reads right-side up
-        from below (classic Residence Era-style seal). A single full-loop
-        path leaves the bottom half upside down; two arcs fix that.
+        Landing seal — butterfly at rest in the center of a slow-turning
+        wordmark ring. Replaces the earlier butterfly+"Evenflow" wordmark
+        hero: the tagline itself becomes the identity, circling once every
+        minute (respects prefers-reduced-motion by holding still).
       */}
       <div class="landing-seal" role="img" aria-label="Evenflow — the even flow of work">
         <svg class="landing-seal-ring" viewBox="0 0 600 600" aria-hidden="true">
           <defs>
-            {/* Top arc: 9 o'clock → 12 → 3 o'clock, sweep=1 (goes UP over top). */}
+            {/* Circle path text runs along — starts at 12 o'clock, sweeps clockwise. */}
             <path
-              id="landing-seal-arc-top"
-              d="M 90,300 A 210,210 0 0 1 510,300"
-            />
-            {/* Bottom arc: 3 o'clock → 6 → 9 o'clock, sweep=0 (goes DOWN under bottom).
-                Path direction reversed vs top so textPath letters flip to read
-                right-side up from below. */}
-            <path
-              id="landing-seal-arc-bottom"
-              d="M 510,300 A 210,210 0 0 0 90,300"
+              id="landing-seal-arc"
+              d="M 300,300 m 0,-240 a 240,240 0 1,1 0,480 a 240,240 0 1,1 0,-480"
             />
           </defs>
-          <text class="landing-seal-text landing-seal-text-top">
-            <textPath href="#landing-seal-arc-top" startOffset="50%" text-anchor="middle">
-              THE EVEN FLOW
-            </textPath>
-          </text>
-          <text class="landing-seal-text landing-seal-text-bottom">
-            <textPath href="#landing-seal-arc-bottom" startOffset="50%" text-anchor="middle">
-              OF WORK
+          <text class="landing-seal-text">
+            <textPath href="#landing-seal-arc" startOffset="0">
+              THE EVEN FLOW OF WORK · THE EVEN FLOW OF WORK ·
             </textPath>
           </text>
         </svg>
