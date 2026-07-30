@@ -153,7 +153,7 @@ export const StorageSection = (props: { handle: string }) => {
   );
 
   return (
-    <section class="settings-section">
+    <section id="storage" class="settings-section">
       <h2>Storage</h2>
       <Show when={!saved.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
         <form class="profile-form" onSubmit={save}>

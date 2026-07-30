@@ -115,8 +115,11 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<AttachmentsFai
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
+// The org's storage section lives inside the single /@handle/settings page,
+// not at a /storage sub-path (that route doesn't exist). #storage scrolls
+// to it — see StorageSection wraps a matching id.
 const STORAGE_SETTINGS_HINT = (orgSlug: string | null) =>
-  orgSlug === null ? "/boards" : `/@${orgSlug}/settings/storage`;
+  orgSlug === null ? "/boards" : `/@${orgSlug}/settings#storage`;
 
 /** Decode standard or url-safe base64 into bytes; null on malformed input. */
 const decodeB64 = (s: string): Uint8Array | null => {
