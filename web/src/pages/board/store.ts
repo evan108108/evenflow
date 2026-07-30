@@ -529,6 +529,11 @@ export const createBoardStore = (
   };
 
   const patchIssue = async (id: string, patch: IssuePatch): Promise<Issue | null> => {
+    // Mark as a local mutation so the SSE echo of our own PATCH doesn't
+    // trigger BoardPage's refetchIssues() (which wipes every stream and
+    // re-primes — visible flash). isLocalMutation() gates that path in
+    // BoardPage. Same pattern optimistic() uses for the drag paths.
+    noteLocalMutation(id);
     try {
       const res = await api((c) => c.patch<{ issue: Issue }>(`/api/v0/issues/${id}`, patch));
       replaceIssue(res.issue);
