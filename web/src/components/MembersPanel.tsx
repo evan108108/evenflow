@@ -5,6 +5,7 @@
 
 import { For, Show } from "solid-js";
 import { Author } from "./Author";
+import { AssigneeAvatar } from "./AssigneeAvatar";
 
 export interface MemberRow {
   pubkey: string;
@@ -28,7 +29,10 @@ export const MembersPanel = (props: {
       <For each={props.members}>
         {(member) => (
           <li class="member-row">
-            <Author pubkey={member.pubkey} />
+            <span style={{ display: "inline-flex", "align-items": "center", gap: "0.5rem" }}>
+              <AssigneeAvatar pubkey={member.pubkey} size={24} />
+              <Author pubkey={member.pubkey} />
+            </span>
             <Show when={props.grantLabel?.(member.pubkey) ?? null}>
               {(label) => (
                 <span class="muted" style={{ "font-size": "0.78rem", "margin-left": "0.6rem" }}>

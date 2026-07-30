@@ -16,6 +16,9 @@ import type { BoardStore } from "../pages/board/store";
 import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
 import { PendingAttachments } from "./PendingAttachments";
 import { Author } from "./Author";
+import { AssigneeAvatar } from "./AssigneeAvatar";
+import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
+import { createRenderEffect } from "solid-js";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -318,44 +321,76 @@ export const IssueSheet = (props: {
 
         <div class="sheet-row">
           <span class="key">Assignee</span>
-          <span style={{ display: "flex", "align-items": "center", gap: "0.6rem" }}>
-            <Show
-              when={props.issue.assignee_pubkey !== null}
-              fallback={<span class="muted">—</span>}
-            >
-              <Author pubkey={props.issue.assignee_pubkey!} />
-            </Show>
-            <Show when={!readOnly()}>
-              <span style={{ display: "flex", gap: "0.35rem" }}>
-                <Show
-                  when={props.callerPubkey !== null && props.issue.assignee_pubkey !== props.callerPubkey}
-                >
-                  <button
-                    class="btn btn-small btn-quiet"
-                    onClick={() =>
+          <Show when={!readOnly()} fallback={
+            <span style={{ display: "flex", "align-items": "center", gap: "0.5rem" }}>
+              <Show when={props.issue.assignee_pubkey !== null} fallback={<span class="muted">—</span>}>
+                <AssigneeAvatar pubkey={props.issue.assignee_pubkey!} />
+                <Author pubkey={props.issue.assignee_pubkey!} />
+              </Show>
+            </span>
+          }>
+            {(() => {
+              // Members from the store: caller first (so "Assign me" is one
+              // click), then everyone else by role weight then name. Each
+              // option's display name resolves via profileStore — request the
+              // profile so the select label is a real name, not truncated hex.
+              const members = () => props.store.members?.() ?? [];
+              createRenderEffect(() => {
+                for (const m of members()) requestProfile(m.pubkey);
+              });
+              const orderedMembers = () => {
+                const list = [...members()];
+                if (props.callerPubkey !== null) {
+                  const meIdx = list.findIndex((m) => m.pubkey === props.callerPubkey);
+                  if (meIdx >= 0) {
+                    const [me] = list.splice(meIdx, 1);
+                    list.unshift(me!);
+                  }
+                }
+                return list;
+              };
+              const labelFor = (pubkey: string): string =>
+                authorLabel(profileFor(pubkey), pubkey, null);
+              return (
+                <span style={{ display: "flex", "align-items": "center", gap: "0.5rem" }}>
+                  <Show when={props.issue.assignee_pubkey !== null}>
+                    <AssigneeAvatar pubkey={props.issue.assignee_pubkey!} />
+                  </Show>
+                  <select
+                    value={props.issue.assignee_pubkey ?? ""}
+                    onChange={(e) =>
                       void props.store.patchIssue(props.issue.id, {
-                        assignee_pubkey: props.callerPubkey!,
+                        assignee_pubkey: e.currentTarget.value === "" ? null : e.currentTarget.value,
                       })
                     }
                   >
-                    Assign me
-                  </button>
-                </Show>
-                <Show when={props.issue.assignee_pubkey !== null}>
-                  <button
-                    class="btn btn-small btn-quiet"
-                    onClick={() =>
-                      void props.store.patchIssue(props.issue.id, {
-                        assignee_pubkey: null,
-                      })
-                    }
-                  >
-                    Unassign
-                  </button>
-                </Show>
-              </span>
-            </Show>
-          </span>
+                    <option value="">Unassigned</option>
+                    <For each={orderedMembers()}>
+                      {(m) => (
+                        <option value={m.pubkey}>
+                          {labelFor(m.pubkey)}
+                          {m.pubkey === props.callerPubkey ? " (me)" : ""}
+                        </option>
+                      )}
+                    </For>
+                    {/* Fallback: current assignee isn't in the member list
+                        (kicked, or the caller can't see members). Keep them
+                        visible so the value round-trips. */}
+                    <Show
+                      when={
+                        props.issue.assignee_pubkey !== null &&
+                        !orderedMembers().some((m) => m.pubkey === props.issue.assignee_pubkey)
+                      }
+                    >
+                      <option value={props.issue.assignee_pubkey!}>
+                        {labelFor(props.issue.assignee_pubkey!)}
+                      </option>
+                    </Show>
+                  </select>
+                </span>
+              );
+            })()}
+          </Show>
         </div>
 
         <div class="sheet-row">

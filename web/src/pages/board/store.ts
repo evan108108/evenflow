@@ -89,6 +89,7 @@ export const createBoardStore = (
   const [board, setBoard] = createSignal<Board | null>(null);
   const [issues, setIssues] = createSignal<Issue[]>([]);
   const [sprints, setSprints] = createSignal<Sprint[]>([]);
+  const [members, setMembers] = createSignal<Array<{ pubkey: string; role: string }>>([]);
   const [loading, setLoading] = createSignal(true);
   const [lastError, setLastError] = createSignal<string | null>(null);
   const [statusFeed, setStatusFeed] = createSignal<FeedItem[]>([]);
@@ -283,6 +284,12 @@ export const createBoardStore = (
       ]);
       setBoard(b.board);
       setSprints(sp.sprints);
+      // Members feed the assignee picker in IssueSheet. Best-effort — the
+      // /members endpoint requires contributor scope, so viewers just get
+      // an empty list and see the current assignee (if any) as a chip.
+      api((c) => c.get<{ members: Array<{ pubkey: string; role: string }> }>(`${apiBase}/members`))
+        .then((r) => setMembers(r.members))
+        .catch(() => setMembers([]));
       // Prime the first page of every stream the board can show. The
       // sentinels take over from here, but priming means first paint has
       // cards even in columns that start off-screen horizontally — a
@@ -615,6 +622,7 @@ export const createBoardStore = (
     apiBase,
     board,
     issues,
+    members,
     streamFor,
     refreshStreams,
     sprints,

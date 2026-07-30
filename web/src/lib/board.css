@@ -26,6 +26,25 @@ select {
   box-sizing: border-box;
 }
 
+/* Own the select's dropdown affordance instead of inheriting whichever
+   arrow the browser draws that day. Same padding as inputs, plus room
+   on the right for our inline SVG chevron so the value never runs
+   under it. Uses currentColor via mask so it inherits color context. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2rem;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='none' stroke='%2317233b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l5 5 5-5'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 12px 8px;
+  cursor: pointer;
+}
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 /* ── board shell ── */
 .board-page {
   max-width: 1440px;

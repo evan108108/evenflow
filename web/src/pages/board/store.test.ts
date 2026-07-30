@@ -129,7 +129,8 @@ describe("createBoardStore", () => {
     expect(store.board()?.slug).toBe("kb");
     expect(store.issues()).toHaveLength(1);
     expect(store.loading()).toBe(false);
-    // Board + sprints in parallel, then one primed page per stream.
+    // Board + sprints in parallel + members (best-effort, feeds the
+    // assignee dropdown), then one primed page per stream.
     expect(calls.map((c) => c.path).sort()).toEqual([
       "/api/v0/boards/kb",
       "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c1",
@@ -137,6 +138,7 @@ describe("createBoardStore", () => {
       "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c3",
       "/api/v0/boards/kb/issues?container=backlog&limit=50",
       "/api/v0/boards/kb/issues?container=icebox&limit=50",
+      "/api/v0/boards/kb/members",
       "/api/v0/boards/kb/sprints",
     ]);
   });
