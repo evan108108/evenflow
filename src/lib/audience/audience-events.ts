@@ -19,6 +19,8 @@ export const FA_CONTEXT_V0 = "https://4a4.ai/ns/v0";
 export const KIND_AUDIENCE = 30520;
 export const KIND_KEYGRANT = 30521;
 export const KIND_CLAIM = 30522;
+/** Public sprint-tide snapshot (EFB-22). Encrypted variant is 30565, in audiences.ts. */
+export const KIND_SPRINT_TIDE = 30560;
 
 export interface EventTemplate {
   kind: number;
@@ -244,6 +246,60 @@ export function parseClaimProfile(content: string | undefined | null): ClaimProf
     if (t.length > 0) out.bio = t.slice(0, 500);
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * One day's tide reading for a sprint, or for a whole board when the team
+ * runs kanban-only (no sprint — `sprintId` omitted, `doneWindowDays` acting
+ * as the virtual sprint).
+ *
+ * Parameterized-replaceable on (subject, day): recomputing a day republishes
+ * over the previous reading rather than appending, so a late estimate change
+ * corrects history instead of duplicating it. That is why `day` is in the
+ * `d` tag and not only in `fa:day` — drop it and every snapshot for a sprint
+ * collapses onto one event.
+ */
+export interface BuildSprintTideInput {
+  /** Absent for the kanban-only variant; then `boardId` is the subject. */
+  sprintId?: string;
+  boardId: string;
+  /** UTC calendar day this reading closes, `YYYY-MM-DD`. */
+  day: string;
+  committedPts: number;
+  donePts: number;
+  remainingPts: number;
+  addsToday: number;
+  dropsToday: number;
+  createdAt?: number;
+}
+
+export function buildSprintTide(input: BuildSprintTideInput): EventTemplate {
+  const subject = input.sprintId ?? input.boardId;
+  const scope = input.sprintId === undefined ? "board" : "sprint";
+  const tags: string[][] = [
+    ["d", `${subject}:${input.day}`],
+    ["fa:context", FA_CONTEXT_V0],
+    ["alt", `Tide ${input.day}: ${input.remainingPts} of ${input.committedPts} pts remaining`],
+    ["fa:board", input.boardId],
+    ["fa:day", input.day],
+    ["fa:scope", scope],
+  ];
+  if (input.sprintId !== undefined) tags.push(["fa:sprint", input.sprintId]);
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanTideSnapshot",
+    committed_pts: input.committedPts,
+    done_pts: input.donePts,
+    remaining_pts: input.remainingPts,
+    adds_today: input.addsToday,
+    drops_today: input.dropsToday,
+  });
+  return {
+    kind: KIND_SPRINT_TIDE,
+    created_at: input.createdAt ?? nowSec(),
+    tags,
+    content,
+  };
 }
 
 export function audienceAddress(audIdPub: string, slug: string): string {

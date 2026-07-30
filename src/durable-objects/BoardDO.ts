@@ -18,13 +18,28 @@ export type BoardEventKind =
   | "issue.container_changed"
   | "issue.deleted"
   | "comment.created"
-  | "comment.deleted";
+  | "comment.deleted"
+  | "sprint.tide.updated";
 
 export interface BoardEvent {
   readonly kind: BoardEventKind;
   readonly board_id: string;
   readonly issue_id?: string;
   readonly comment_id?: string;
+  /**
+   * Set on sprint-scoped events so a client can tell whether the update
+   * concerns the sprint it is displaying. Lives at the top level rather than
+   * inside `payload` because a private board's payload arrives encrypted —
+   * the envelope is all an un-granted client can read.
+   */
+  readonly sprint_id?: string;
+  /**
+   * Overrides the substrate `d`-tag entity for this event. Only set it when
+   * the natural entity is not an issue or comment: the tide events key on
+   * (subject, day), so they pass `<sprint_id>:<day>` here. Absent, the
+   * encrypted path falls back to issue_id → comment_id → board_id.
+   */
+  readonly entity_id?: string;
   readonly at_ms: number;
   readonly payload: unknown;
 }

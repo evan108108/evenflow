@@ -31,6 +31,7 @@ import { __signEvent, wrap, type NostrEvent } from "./lib/audience/nip17";
 import {
   buildAudienceDeclaration,
   buildKeyGrant,
+  FA_CONTEXT_V0,
   type EventTemplate,
 } from "./lib/audience/audience-events";
 import { blake3ContentTag } from "./lib/audience/blake3-tag";
@@ -45,8 +46,8 @@ const bytesToHexLocal = (bytes: Uint8Array): string =>
 const KIND_ENCRYPTED_BOARD = 30555;
 const KIND_ENCRYPTED_ISSUE = 30556;
 const KIND_ENCRYPTED_COMMENT = 30557;
-
-const FA_CONTEXT_V0 = "https://4a4.ai/ns/v0";
+/** Encrypted variant of KIND_SPRINT_TIDE (30560), same +5 convention (EFB-22). */
+export const KIND_ENCRYPTED_TIDE = 30565;
 
 /** Substrate name kept generic on purpose: no board-title leak on the 30520. */
 const DECLARATION_NAME = "evenflow-private-board";
@@ -420,9 +421,16 @@ export const rotateBoardAudience = (board: BoardShape, removedPubkey: string | n
 
 // ── encrypted event fan-out ───────────────────────────────────────────────
 
+/**
+ * Prefix switch with a silent default: anything unrecognized publishes as a
+ * board event. Add a branch here for every new event family, or its wraps go
+ * out under 30555 — a valid wrap of the wrong kind, which no consumer will
+ * flag.
+ */
 const encryptedKindOf = (event: BoardEvent): number => {
   if (event.kind.startsWith("issue.")) return KIND_ENCRYPTED_ISSUE;
   if (event.kind.startsWith("comment.")) return KIND_ENCRYPTED_COMMENT;
+  if (event.kind.startsWith("sprint.tide.")) return KIND_ENCRYPTED_TIDE;
   return KIND_ENCRYPTED_BOARD;
 };
 
@@ -446,7 +454,7 @@ export const encryptBoardEvent = (board: BoardShape, event: BoardEvent) =>
 
     const recipients = yield* grantRecipients(board.id, keys.epoch);
     const now = yield* Clock.currentTimeMillis;
-    const entityId = event.issue_id ?? event.comment_id ?? board.id;
+    const entityId = event.entity_id ?? event.issue_id ?? event.comment_id ?? board.id;
     const rumor = __signEvent(
       {
         kind: encryptedKindOf(event),
@@ -466,7 +474,15 @@ export const encryptBoardEvent = (board: BoardShape, event: BoardEvent) =>
       keys.audIdPriv,
     );
     const wraps = recipients.map((r) => wrap(rumor, keys.audIdPriv, r));
-    return { sseEvent, wraps, audienceAddress: `30520:${keys.audIdPub}:${board.id}`, signerPriv: keys.audIdPriv };
+    // Each recipient's wrap has its own id; the rumor's is the one that
+    // identifies the event itself, so that's what a cache row points at.
+    return {
+      sseEvent,
+      wraps,
+      audienceAddress: `30520:${keys.audIdPub}:${board.id}`,
+      signerPriv: keys.audIdPriv,
+      rumorId: rumor.id,
+    };
   });
 
 /**
@@ -475,10 +491,21 @@ export const encryptBoardEvent = (board: BoardShape, event: BoardEvent) =>
  * a payload-stripped event when key material is unavailable — a private
  * board must never fan out plaintext.
  */
+export interface SecuredBoardEvent {
+  /** SSE-safe event: payload replaced with the encrypted envelope. */
+  readonly event: BoardEvent;
+  /**
+   * Rumor id when the wraps actually reached the substrate, else null. A
+   * cache row stamps this on success and leaves NULL on an outage — see
+   * migration 0021's sprintTideSnapshot.substrate_event_id.
+   */
+  readonly substrate_event_id: string | null;
+}
+
 export const secureBoardEvent = (
   board: BoardShape,
   event: BoardEvent,
-): Effect.Effect<BoardEvent, never, Db | Audience> =>
+): Effect.Effect<SecuredBoardEvent, never, Db | Audience> =>
   Effect.gen(function* () {
     const audience = yield* Audience;
     const result = yield* encryptBoardEvent(board, event).pipe(
@@ -493,10 +520,14 @@ export const secureBoardEvent = (
     );
     if (result === null) {
       // No key material → emit the envelope only; members refetch via REST.
-      return { ...event, payload: { enc: true as const, epoch: board.audience_epoch, ciphertext: null } };
+      return {
+        event: { ...event, payload: { enc: true as const, epoch: board.audience_epoch, ciphertext: null } },
+        substrate_event_id: null,
+      };
     }
+    let published = false;
     if (result.wraps.length > 0) {
-      yield* bestEffortAudience(
+      const posted = yield* bestEffortAudience(
         `wraps:${board.id}:${event.kind}`,
         audience.rawPost(
           "/v0/audience/raw/publish-wraps",
@@ -504,8 +535,12 @@ export const secureBoardEvent = (
           result.signerPriv,
         ),
       );
+      published = posted !== null;
     }
-    return result.sseEvent;
+    return {
+      event: result.sseEvent,
+      substrate_event_id: published ? result.rumorId : null,
+    };
   });
 
 /** Re-parse a board row by id — the emit path's freshness read. Null on
@@ -526,16 +561,23 @@ export const loadBoardById = (boardId: string) =>
  * Drop-in replacement for emitBoardEvent at every post-commit fan-out
  * site: public boards emit exactly as before; private boards encrypt the
  * payload and mirror gift-wraps to the substrate first. Never fails.
+ *
+ * Returns the substrate event id when a private board's wraps landed, else
+ * null — callers caching a substrate row (tide snapshots) stamp it; every
+ * other call site ignores it, exactly as before.
  */
 export const emitSecureBoardEvent = (
   board_id: string,
   event: BoardEvent,
-): Effect.Effect<void, never, Db | Audience | BoardEmitter> =>
+): Effect.Effect<string | null, never, Db | Audience | BoardEmitter> =>
   Effect.gen(function* () {
     const board = yield* loadBoardById(board_id).pipe(
       Effect.catchAll(() => Effect.succeed(null)),
     );
-    const safe =
-      board !== null && board.encryption_active ? yield* secureBoardEvent(board, event) : event;
-    yield* emitBoardEvent(board_id, safe);
+    const secured =
+      board !== null && board.encryption_active
+        ? yield* secureBoardEvent(board, event)
+        : { event, substrate_event_id: null };
+    yield* emitBoardEvent(board_id, secured.event);
+    return secured.substrate_event_id;
   });
