@@ -195,16 +195,14 @@ button:not([class]):disabled {
   inset: 0;
   width: 100%;
   height: 100%;
-  animation: landing-seal-turn 60s linear infinite;
-  transform-origin: center;
 }
 
 .landing-seal-text {
   fill: var(--color-ink);
   font-family: var(--font-serif);
-  font-size: 34px;
+  font-size: 38px;
   font-weight: 500;
-  letter-spacing: 0.42em;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
 }
 
@@ -218,15 +216,4 @@ button:not([class]):disabled {
 .landing-seal-butterfly svg {
   width: clamp(140px, 32vw, 260px);
   height: auto;
-}
-
-@keyframes landing-seal-turn {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .landing-seal-ring {
-    animation: none;
-  }
 }
