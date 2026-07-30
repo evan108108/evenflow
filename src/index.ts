@@ -18,6 +18,7 @@ import { makeMcpRouter } from "./routes/mcp";
 import { makeOrgsRouter } from "./routes/orgs";
 import { makeProfileRouter } from "./routes/profile";
 import { makeSessionRouter } from "./routes/session";
+import { makeSigninRouter } from "./routes/signin";
 import { makeSprintsRouter } from "./routes/sprints";
 import { makeStorageRouter } from "./routes/storage";
 import { makeWellKnownRouter } from "./routes/wellknown";
@@ -57,6 +58,7 @@ app.get("/api/v0/me", (c) => {
   return c.json(claims);
 });
 
+app.route("/api/v0", makeSigninRouter());
 app.route("/api/v0", makeSessionRouter());
 // Orgs before the org-scoped board mounts: /orgs/:slug/boards (org listing)
 // and /orgs/:org_slug/boards/:slug/members must match the orgs/invites

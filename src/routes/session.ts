@@ -84,11 +84,22 @@ export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
       const db = yield* Db;
       const now = yield* Clock.currentTimeMillis;
       const jwtHash = yield* hashToken(token);
+      // Nostr sessions (16.7) register their REAL key at sign-in with
+      // source='nostr' — an ephemeral registration must never replace it,
+      // or the session's grants silently drop from level-4 to session-key
+      // trust. Registering is idempotent from the client's view either way.
+      const existing = yield* db.queryFirst<{ session_pubkey: string; session_key_source: string }>(
+        "SELECT session_pubkey, session_key_source FROM sessionKeyRegistrations WHERE jwt_hash = ?",
+        [jwtHash],
+      );
+      if (existing !== null && existing.session_key_source === "nostr") {
+        return { registered: true, session_pubkey: existing.session_pubkey, source: "nostr" };
+      }
       yield* db.execute(
-        "INSERT OR REPLACE INTO sessionKeyRegistrations (jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO sessionKeyRegistrations (jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms, session_key_source) VALUES (?, ?, ?, ?, ?, 'ephemeral')",
         [jwtHash, pubkey, sessionPub.toLowerCase(), now, claims.exp * 1000],
       );
-      return { registered: true, session_pubkey: sessionPub.toLowerCase() };
+      return { registered: true, session_pubkey: sessionPub.toLowerCase(), source: "ephemeral" };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
