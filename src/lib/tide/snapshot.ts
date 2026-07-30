@@ -124,6 +124,15 @@ export interface RolledForwardDay {
  *
  * Today is deliberately never written: it is still moving, and publishing a
  * replaceable event per read would put a 4a write on the read path.
+ *
+ * The check-then-write is NOT atomic, and the read path is where it runs — so
+ * two page loads either side of UTC midnight can both find no row and both
+ * insert. The partial unique indexes correctly reject the loser, and that
+ * rejection is caught here rather than surfacing: a 500 on `GET /tide`
+ * because someone else closed the same day first would be an absurd way to
+ * fail. The winner publishes; the loser reports nothing to do. The reading
+ * returned to both callers is identical either way, since readings never come
+ * out of this table.
  */
 export const rollForwardClosedDay = (
   subject: TideSubject,
@@ -137,8 +146,23 @@ export const rollForwardClosedDay = (
     const reading = readings.find((d) => d.day_start_ms === yesterday);
     if (reading === undefined) return null;
     if ((yield* existingSnapshotId(subject, yesterday)) !== null) return null;
-    const id = yield* writeSnapshot(subject, reading, nowMs);
-    return { snapshot_id: id, reading };
+    const id = yield* writeSnapshot(subject, reading, nowMs).pipe(
+      Effect.catchAll((e) =>
+        Effect.sync(() => {
+          console.log(
+            JSON.stringify({
+              warn: "tide-snapshot-write-lost-race",
+              board_id: subject.board_id,
+              sprint_id: subject.sprint_id,
+              day: reading.day,
+              reason: e.reason,
+            }),
+          );
+          return null;
+        }),
+      ),
+    );
+    return id === null ? null : { snapshot_id: id, reading };
   });
 
 /** `rollForwardClosedDay` against the wall clock. */

@@ -6,9 +6,12 @@
 // read of a new day.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Effect, Layer } from "effect";
+import { Db, DbError, type DbService } from "../src/effects";
 import type { IssueShape, SprintShape } from "../src/shapes";
 import { bearer, createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
 import { DAY_MS, type TideDay, type TideDirection } from "../src/lib/tide/compute";
+import { rollForwardClosedDay } from "../src/lib/tide/snapshot";
 
 // Anchor the fake clock to a UTC midnight so "today" and "yesterday" are
 // unambiguous — a fixture near a boundary would be read-order dependent.
@@ -206,6 +209,72 @@ describe("tide roll-forward", () => {
     // A second read the same day must not write a duplicate.
     await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
     expect(h.db.tideSnapshots).toHaveLength(1);
+  });
+
+  // Deterministic version of the race below: the existence check finds
+  // nothing, then the INSERT loses to a writer that got there first. Driven
+  // by a stub Db because real concurrency here is scheduler-dependent and
+  // would make the assertion vacuous on a fast run.
+  it("degrades to 'nothing to do' when the insert loses the unique index", async () => {
+    const reading = {
+      day: "2026-07-20",
+      day_start_ms: DAY0,
+      committed_pts: 5,
+      done_pts: 0,
+      remaining_pts: 5,
+      adds_today: 5,
+      drops_today: 0,
+    };
+    let inserts = 0;
+    const raced = Layer.succeed(Db, {
+      // No row exists as far as the check can see …
+      queryFirst: () => Effect.succeed(null),
+      queryAll: () => Effect.succeed([]),
+      // … but the write loses to whoever got there first.
+      execute: () => {
+        inserts += 1;
+        return Effect.fail(
+          new DbError({
+            reason: "query-failed",
+            cause: new Error("UNIQUE constraint failed: sprintTideSnapshot.sprint_id"),
+          }),
+        );
+      },
+    } as unknown as DbService);
+
+    const result = await Effect.runPromise(
+      Effect.provide(
+        rollForwardClosedDay({ board_id: "b1", sprint_id: "s1" }, [reading], at(1, 6), DAY0),
+        raced,
+      ),
+    );
+
+    expect(inserts).toBe(1); // it really did attempt the write
+    expect(result).toBeNull(); // and reported nothing to do rather than throwing
+  });
+
+  it("serves both of two near-simultaneous reads without duplicating the row", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const a = await createIssue(h, { title: "A" });
+    await addIssue(h, sprint.id, a.id);
+
+    vi.setSystemTime(at(1));
+    // Both requests see no row, both try to insert. The partial unique index
+    // rejects the loser — which must not become a 500 on a GET.
+    const path = `/api/v0/boards/kb/sprints/${sprint.id}/tide`;
+    const [first, second] = await Promise.all([
+      h.app.request(path, { headers: bearer }, {}),
+      h.app.request(path, { headers: bearer }, {}),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(h.db.tideSnapshots).toHaveLength(1);
+    // Both callers still get the same, correct reading.
+    const bodies = (await Promise.all([first.json(), second.json()])) as TideBody[];
+    expect(bodies[0]?.today).toEqual(bodies[1]?.today);
   });
 
   it("keeps sprint and kanban snapshots on separate rows for the same day", async () => {
