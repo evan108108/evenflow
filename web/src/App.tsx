@@ -20,6 +20,7 @@ import { Landing } from "./pages/Landing";
 import { LegacyBoardRedirect } from "./pages/LegacyBoardRedirect";
 import { NewOrg } from "./pages/NewOrg";
 import { OrgMembers } from "./pages/OrgMembers";
+import { Orgs } from "./pages/Orgs";
 import { NotificationsSettings } from "./pages/NotificationsSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { Profile } from "./pages/Profile";
@@ -52,6 +53,7 @@ export const App = () => (
     <Route path="/boards/:slug/icebox" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/issues/:issueRef" component={LegacyBoardRedirect} />
     <Route path="/o/new" component={NewOrg} />
+    <Route path="/orgs" component={Orgs} />
     <Route path="/i/:code" component={InvitePreview} matchFilters={INVITE_FILTER} />
     <Route path="/:handle" component={HandlePage} matchFilters={HANDLE_FILTER} />
     <Route path="/:handle/settings" component={OrgSettings} matchFilters={HANDLE_FILTER} />
