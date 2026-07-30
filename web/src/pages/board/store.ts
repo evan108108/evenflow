@@ -450,13 +450,23 @@ export const createBoardStore = (
     void refetchIssues();
   };
 
-  const completeSprint = async (id: string) => {
+  /** Complete a sprint. carryOver defaults to "next_planning" (server picks
+   *  the oldest planning sprint if nextSprintId is omitted). SSE refetch
+   *  reconciles the issues that were carried or dropped. */
+  const completeSprint = async (
+    id: string,
+    opts?: { carryOver?: "next_planning" | "drop"; nextSprintId?: string },
+  ) => {
     try {
+      const body: Record<string, unknown> = {};
+      if (opts?.carryOver !== undefined) body["carryOver"] = opts.carryOver;
+      if (opts?.nextSprintId !== undefined) body["nextSprintId"] = opts.nextSprintId;
       const res = await api((c) =>
-        c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/complete`, {}),
+        c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/complete`, body),
       );
       replaceSprint(res.sprint);
       setLastError(null);
+      void refetchIssues();
     } catch (e) {
       setLastError(errorText(e));
     }

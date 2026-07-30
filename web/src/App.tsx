@@ -25,6 +25,8 @@ import { NotificationsSettings } from "./pages/NotificationsSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { Profile } from "./pages/Profile";
 import { SignIn } from "./pages/SignIn";
+import { SprintArchive } from "./pages/SprintArchive";
+import { SprintsList } from "./pages/SprintsList";
 
 const HANDLE_FILTER = { handle: /^@[a-z0-9][a-z0-9-]*$/ };
 const INVITE_FILTER = { code: /^inv-[a-z0-9]+$/ };
@@ -67,6 +69,16 @@ export const App = () => (
     <Route
       path="/:handle/:board_slug/settings"
       component={BoardSettings}
+      matchFilters={HANDLE_FILTER}
+    />
+    <Route
+      path="/:handle/:board_slug/sprints"
+      component={SprintsList}
+      matchFilters={HANDLE_FILTER}
+    />
+    <Route
+      path="/:handle/:board_slug/sprints/:sprintId"
+      component={SprintArchive}
       matchFilters={HANDLE_FILTER}
     />
     <Route path="*" component={Drifting} />

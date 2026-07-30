@@ -121,6 +121,35 @@ export interface Sprint {
   readonly started_at_ms: number | null;
   readonly completed_at_ms: number | null;
   readonly created_at_ms: number;
+  // Phase 21b — snapshotted metrics; optional on cached payloads.
+  readonly points_committed_start?: number | null;
+  readonly points_completed?: number | null;
+  readonly points_carried?: number | null;
+  readonly adds_mid_sprint?: number;
+}
+
+/** Phase 21b: one issue's participation in one sprint (audit trail row). */
+export interface SprintMembership {
+  readonly membership_id: string;
+  readonly issue_id: string;
+  readonly added_at_ms: number;
+  readonly removed_at_ms: number | null;
+  readonly was_completed_in_sprint: boolean;
+  readonly carried_to_sprint_id: string | null;
+  readonly title: string | null;
+  readonly short_id: string | null;
+  readonly status: string | null;
+  readonly estimate: number | null;
+  readonly assignee_pubkey: string | null;
+  readonly priority: number | null;
+}
+
+export interface SprintArchivePayload {
+  readonly sprint: Sprint;
+  readonly completed_in_sprint: ReadonlyArray<SprintMembership>;
+  readonly carried_over: ReadonlyArray<SprintMembership>;
+  readonly dropped: ReadonlyArray<SprintMembership>;
+  readonly open: ReadonlyArray<SprintMembership>;
 }
 
 /** The three container-move verbs, as REST path suffixes. */

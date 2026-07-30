@@ -28,7 +28,8 @@ import {
   resolveBoardScope,
   type BoardOwnershipError,
 } from "../authz";
-import { parseIssueRow, parseSprintRow, type SprintShape } from "../shapes";
+import { parseBoardRow, parseIssueRow, parseSprintRow, type BoardShape, type SprintShape } from "../shapes";
+import { isDoneStatus } from "../columns";
 
 const MAX_NAME_LENGTH = 80;
 const MAX_GOAL_LENGTH = 200;
@@ -285,22 +286,57 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         });
       }
 
-      yield* db.execute("UPDATE sprintCache SET status = 'active', started_at_ms = ? WHERE id = ?", [
-        now,
-        current.id,
-      ]);
+      // Snapshot the committed points at start. All CURRENT members
+      // (whichever container they sit in) count — a rare case where a
+      // sprint already holds container=active issues (say, carried from
+      // the previous sprint) still commits their points to this sprint.
+      const allMembers = yield* db.queryAll(
+        "SELECT estimate FROM issueCache WHERE sprint_id = ?",
+        [current.id],
+      );
+      const pointsCommitted = allMembers.reduce(
+        (sum: number, r) => sum + ((r as { estimate: number | null }).estimate ?? 0),
+        0,
+      );
+      yield* db.execute(
+        "UPDATE sprintCache SET status = 'active', started_at_ms = ?, points_committed_start = ? WHERE id = ?",
+        [now, pointsCommitted, current.id],
+      );
       yield* audit.record({
         event_type: "sprint_started",
         actor: claims.login,
-        details: { board: board.slug, sprint: current.id, issues_moved: rows.length },
+        details: {
+          board: board.slug,
+          sprint: current.id,
+          issues_moved: rows.length,
+          points_committed_start: pointsCommitted,
+        },
       });
-      return { sprint: { ...current, status: "active", started_at_ms: now }, issues_moved: rows.length };
+      return {
+        sprint: {
+          ...current,
+          status: "active" as const,
+          started_at_ms: now,
+          points_committed_start: pointsCommitted,
+        },
+        issues_moved: rows.length,
+      };
     });
     return runJson(c, program);
   });
 
   // ── POST /boards/:slug/sprints/:id/complete ─────────────────────────────
-  // Stamps the sprint only. Unfinished issues stay active on purpose.
+  // Body: { carryOver?: "next_planning" | "drop", nextSprintId?: string }.
+  //   - "next_planning" (default): move non-Done members' sprint_id to
+  //     nextSprintId. If nextSprintId is omitted, auto-pick the oldest
+  //     planning sprint on the same board; if none exists, fall through
+  //     to "drop" (records that in the audit trail).
+  //   - "drop": clear sprint_id on non-Done members. They go back to the
+  //     Backlog view's Unassigned pile.
+  // Done members keep their sprint_id — that's how their audit row records
+  // "was_completed_in_sprint = true" — so the sprint archive can list them
+  // forever. Points_completed / points_carried get snapshotted on the
+  // sprint row here so the archive endpoint is a cheap read.
   sprints.post("/boards/:slug/sprints/:id/complete", async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
@@ -309,20 +345,180 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       if (current.status !== "active") {
         return yield* new ConflictError({ reason: `sprint-${current.status}` });
       }
+      const body = yield* readJsonBody(c).pipe(
+        Effect.catchTag("ValidationError", (e) =>
+          e.reason === "expected-json" ? Effect.succeed({} as Record<string, unknown>) : Effect.fail(e),
+        ),
+      );
+      const carryOver: "next_planning" | "drop" =
+        body["carryOver"] === "drop" ? "drop" : "next_planning";
+      const requestedNext =
+        typeof body["nextSprintId"] === "string" ? (body["nextSprintId"] as string) : null;
 
       const db = yield* Db;
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
+
+      // Resolve the destination sprint for carry-over. If the caller named
+      // one, it MUST be a planning sprint on this board; if they didn't,
+      // we pick the oldest planning sprint (created_at_ms ASC) — closest
+      // to "the next one" a user would expect.
+      let nextSprintId: string | null = null;
+      if (carryOver === "next_planning") {
+        if (requestedNext !== null) {
+          const next = yield* fetchSprint(board.id, requestedNext);
+          if (next.status !== "planning") {
+            return yield* new ValidationError({ reason: "next-sprint-not-planning" });
+          }
+          if (next.id === current.id) {
+            return yield* new ValidationError({ reason: "next-sprint-is-self" });
+          }
+          nextSprintId = next.id;
+        } else {
+          const auto = yield* db.queryFirst(
+            "SELECT id FROM sprintCache WHERE board_id = ? AND status = 'planning' AND id != ? ORDER BY created_at_ms ASC LIMIT 1",
+            [board.id, current.id],
+          );
+          nextSprintId = auto === null ? null : (auto as { id: string }).id;
+        }
+      }
+
+      // Board columns are needed to classify each member's column category.
+      const boardRow = yield* db.queryFirst("SELECT * FROM boardCache WHERE id = ?", [board.id]);
+      if (boardRow === null) return yield* new NotFoundError({ reason: "board" });
+      const boardShape: BoardShape = parseBoardRow(boardRow);
+
+      const memberRows = yield* db.queryAll(
+        "SELECT * FROM issueCache WHERE sprint_id = ?",
+        [current.id],
+      );
+
+      let pointsCompleted = 0;
+      let pointsCarried = 0;
+      for (const row of memberRows) {
+        const issue = parseIssueRow(row);
+        const isDone = isDoneStatus(boardShape.columns, issue.status);
+        const pts = issue.estimate ?? 0;
+        if (isDone) {
+          pointsCompleted += pts;
+          // Mark the open membership row as completed-in-sprint. Leave
+          // sprint_id alone so the archive can enumerate the row later.
+          yield* db.execute(
+            "UPDATE sprintMembership SET removed_at_ms = ?, was_completed_in_sprint = 1 WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL",
+            [now, current.id, issue.id],
+          );
+          continue;
+        }
+        pointsCarried += pts;
+        // Non-Done: either carry to next planning sprint (if we resolved one)
+        // or drop. carriedTo captures BOTH the branch and the destination.
+        const carriedTo = nextSprintId; // null when dropping (or nothing to carry into)
+        yield* db.execute(
+          "UPDATE sprintMembership SET removed_at_ms = ?, carried_to_sprint_id = ? WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL",
+          [now, carriedTo, current.id, issue.id],
+        );
+        yield* db.execute(
+          "UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?",
+          [carriedTo, now, issue.id],
+        );
+        if (carriedTo !== null) {
+          yield* db.execute(
+            "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
+            [crypto.randomUUID(), carriedTo, issue.id, now],
+          );
+        }
+        yield* emitSecureBoardEvent(board.id, {
+          kind: "issue.updated",
+          board_id: board.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: { ...issue, sprint_id: carriedTo, updated_at_ms: now } },
+        });
+      }
+
       yield* db.execute(
-        "UPDATE sprintCache SET status = 'completed', completed_at_ms = ? WHERE id = ?",
-        [now, current.id],
+        "UPDATE sprintCache SET status = 'completed', completed_at_ms = ?, points_completed = ?, points_carried = ? WHERE id = ?",
+        [now, pointsCompleted, pointsCarried, current.id],
       );
       yield* audit.record({
         event_type: "sprint_completed",
         actor: claims.login,
-        details: { board: board.slug, sprint: current.id },
+        details: {
+          board: board.slug,
+          sprint: current.id,
+          points_completed: pointsCompleted,
+          points_carried: pointsCarried,
+          carry_over: carryOver,
+          carry_to_sprint: nextSprintId,
+        },
       });
-      return { sprint: { ...current, status: "completed", completed_at_ms: now } };
+      return {
+        sprint: {
+          ...current,
+          status: "completed" as const,
+          completed_at_ms: now,
+          points_completed: pointsCompleted,
+          points_carried: pointsCarried,
+        },
+        carried_to_sprint_id: nextSprintId,
+        dropped_count: carryOver === "next_planning" && nextSprintId === null
+          ? memberRows.filter((r) => !isDoneStatus(boardShape.columns, parseIssueRow(r).status)).length
+          : 0,
+      };
+    });
+    return runJson(c, program);
+  });
+
+  // ── GET /boards/:slug/sprints/:id/archive ────────────────────────────────
+  // Snapshot of every issue that was ever in this sprint (from the audit
+  // trail), grouped by outcome. Works for any sprint status; a
+  // planning/active sprint shows its members with removed_at_ms=null all
+  // in the "open" bucket, since they haven't been completed or carried yet.
+  sprints.get("/boards/:slug/sprints/:id/archive", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = c.get("claims");
+      const pubkey = callerPubkeyOrNull(claims);
+      const { board } = yield* boardScope(c, pubkey, "viewer");
+      const current = yield* fetchSprint(board.id, c.req.param("id"));
+
+      const db = yield* Db;
+      // JOIN membership to issue so we can pass through the display fields
+      // in one round-trip.
+      const rows = yield* db.queryAll(
+        "SELECT m.*, i.title, i.short_id, i.status, i.column_id, i.estimate, i.assignee_pubkey, i.priority FROM sprintMembership m LEFT JOIN issueCache i ON i.id = m.issue_id WHERE m.sprint_id = ? ORDER BY m.added_at_ms ASC",
+        [current.id],
+      );
+      const completed: unknown[] = [];
+      const carried: unknown[] = [];
+      const dropped: unknown[] = [];
+      const open: unknown[] = [];
+      for (const r of rows as Array<Record<string, unknown>>) {
+        const entry = {
+          membership_id: r["id"],
+          issue_id: r["issue_id"],
+          added_at_ms: r["added_at_ms"],
+          removed_at_ms: r["removed_at_ms"],
+          was_completed_in_sprint: r["was_completed_in_sprint"] === 1,
+          carried_to_sprint_id: r["carried_to_sprint_id"],
+          title: r["title"],
+          short_id: r["short_id"],
+          status: r["status"],
+          estimate: r["estimate"],
+          assignee_pubkey: r["assignee_pubkey"],
+          priority: r["priority"],
+        };
+        if (r["was_completed_in_sprint"] === 1) completed.push(entry);
+        else if (r["removed_at_ms"] === null) open.push(entry);
+        else if (r["carried_to_sprint_id"] !== null) carried.push(entry);
+        else dropped.push(entry);
+      }
+      return {
+        sprint: current,
+        completed_in_sprint: completed,
+        carried_over: carried,
+        dropped: dropped,
+        open: open,
+      };
     });
     return runJson(c, program);
   });

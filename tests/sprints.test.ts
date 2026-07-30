@@ -218,8 +218,11 @@ describe("sprint lifecycle", () => {
     );
     expect(complete.status).toBe(200);
     expect(h.db.sprints[0]).toMatchObject({ status: "completed", completed_at_ms: 9_000 });
-    // The Linear model: unfinished issues stay active, sprint_id intact.
-    expect(h.db.issues[0]).toMatchObject({ container: "active", sprint_id: sprint.id });
+    // Phase 21b: non-Done members without a next planning sprint DROP —
+    // container stays where it was, but sprint_id clears. (Container
+    // survives because the point of completion is bookkeeping, not moving
+    // work off the Kanban.)
+    expect(h.db.issues[0]).toMatchObject({ container: "active", sprint_id: null });
 
     const addLate = await h.app.request(
       `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
@@ -369,6 +372,151 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(h.db.sprintMemberships).toHaveLength(0);
     expect(h.db.issues.find((r) => r["id"] === a.id)!["sprint_id"]).toBeNull();
     expect(h.db.issues.find((r) => r["id"] === b.id)!["sprint_id"]).toBeNull();
+  });
+
+  it("complete: Done members stay in sprint with was_completed_in_sprint=1; non-Done carry to auto-picked next planning sprint", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const s1 = await createSprint(h);
+    const s2 = await createSprint(h, { name: "Sprint 2" });
+    const done = await createIssue(h, { title: "shipped", estimate: 3 });
+    const undone = await createIssue(h, { title: "wip", estimate: 5 });
+    await addIssue(h, s1.id, done.id);
+    await addIssue(h, s1.id, undone.id);
+    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    // Mark "done" issue as actually done (column category=done) via transition.
+    const doneColumn = h.db.boards[0]!["columns"] as unknown as string;
+    const cols = JSON.parse(doneColumn) as Array<{ id: string; name: string; category: string }>;
+    const doneCol = cols.find((c) => c.category === "done")!;
+    await h.app.request(
+      `/api/v0/issues/${done.id}/transition`,
+      jsonReq("POST", { column_id: doneCol.id }),
+      {},
+    );
+
+    vi.setSystemTime(9_000);
+    const complete = await h.app.request(
+      `/api/v0/boards/kb/sprints/${s1.id}/complete`,
+      jsonReq("POST", {}),
+      {},
+    );
+    expect(complete.status).toBe(200);
+    const body = (await complete.json()) as {
+      sprint: { points_completed: number; points_carried: number };
+      carried_to_sprint_id: string | null;
+    };
+    expect(body.sprint.points_completed).toBe(3);
+    expect(body.sprint.points_carried).toBe(5);
+    expect(body.carried_to_sprint_id).toBe(s2.id);
+
+    // Done issue: still in sprint 1, membership marked completed.
+    expect(h.db.issues.find((r) => r["id"] === done.id)!["sprint_id"]).toBe(s1.id);
+    const doneMembership = h.db.sprintMemberships.find(
+      (m) => m["sprint_id"] === s1.id && m["issue_id"] === done.id,
+    );
+    expect(doneMembership).toMatchObject({
+      was_completed_in_sprint: 1,
+      removed_at_ms: 9_000,
+      carried_to_sprint_id: null,
+    });
+
+    // Undone issue: sprint_id now s2, old membership closed with
+    // carried_to_sprint_id, fresh open membership on s2.
+    expect(h.db.issues.find((r) => r["id"] === undone.id)!["sprint_id"]).toBe(s2.id);
+    const oldUndoneM = h.db.sprintMemberships.find(
+      (m) => m["sprint_id"] === s1.id && m["issue_id"] === undone.id,
+    )!;
+    expect(oldUndoneM).toMatchObject({
+      was_completed_in_sprint: 0,
+      removed_at_ms: 9_000,
+      carried_to_sprint_id: s2.id,
+    });
+    const newUndoneM = h.db.sprintMemberships.find(
+      (m) => m["sprint_id"] === s2.id && m["issue_id"] === undone.id && m["removed_at_ms"] === null,
+    );
+    expect(newUndoneM).toBeDefined();
+  });
+
+  it("complete: carryOver='drop' clears sprint_id on non-Done members", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const s1 = await createSprint(h);
+    const s2 = await createSprint(h, { name: "Sprint 2" });
+    const issue = await createIssue(h, { estimate: 2 });
+    await addIssue(h, s1.id, issue.id);
+    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    const complete = await h.app.request(
+      `/api/v0/boards/kb/sprints/${s1.id}/complete`,
+      jsonReq("POST", { carryOver: "drop" }),
+      {},
+    );
+    expect(complete.status).toBe(200);
+    expect(h.db.issues[0]!["sprint_id"]).toBeNull();
+    // s2 stays empty — drop is explicit.
+    expect(h.db.sprintMemberships.some((m) => m["sprint_id"] === s2.id)).toBe(false);
+  });
+
+  it("start snapshots points_committed_start", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const a = await createIssue(h, { estimate: 3 });
+    const b = await createIssue(h, { estimate: 5 });
+    const c = await createIssue(h, { estimate: null });
+    await addIssue(h, sprint.id, a.id);
+    await addIssue(h, sprint.id, b.id);
+    await addIssue(h, sprint.id, c.id);
+    const start = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      jsonReq("POST", {}),
+      {},
+    );
+    expect(start.status).toBe(200);
+    expect(h.db.sprints[0]!["points_committed_start"]).toBe(8);
+  });
+
+  it("GET /sprints/:id/archive groups memberships by outcome", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const s1 = await createSprint(h);
+    const s2 = await createSprint(h, { name: "Sprint 2" });
+    const done = await createIssue(h, { title: "shipped", estimate: 2 });
+    const carried = await createIssue(h, { title: "wip", estimate: 3 });
+    await addIssue(h, s1.id, done.id);
+    await addIssue(h, s1.id, carried.id);
+    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    const cols = JSON.parse(h.db.boards[0]!["columns"] as unknown as string) as Array<{
+      id: string;
+      category: string;
+    }>;
+    const doneCol = cols.find((c) => c.category === "done")!;
+    await h.app.request(
+      `/api/v0/issues/${done.id}/transition`,
+      jsonReq("POST", { column_id: doneCol.id }),
+      {},
+    );
+    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/complete`, jsonReq("POST", {}), {});
+
+    const arch = await h.app.request(
+      `/api/v0/boards/kb/sprints/${s1.id}/archive`,
+      { headers: { ...bearer } },
+      {},
+    );
+    expect(arch.status).toBe(200);
+    const body = (await arch.json()) as {
+      completed_in_sprint: Array<{ issue_id: string }>;
+      carried_over: Array<{ issue_id: string; carried_to_sprint_id: string }>;
+      dropped: unknown[];
+      open: unknown[];
+    };
+    expect(body.completed_in_sprint.map((m) => m.issue_id)).toEqual([done.id]);
+    expect(body.carried_over).toHaveLength(1);
+    expect(body.carried_over[0]).toMatchObject({
+      issue_id: carried.id,
+      carried_to_sprint_id: s2.id,
+    });
+    expect(body.dropped).toHaveLength(0);
+    expect(body.open).toHaveLength(0);
   });
 
   it("DELETE /sprints/:id refuses non-planning sprints with 409", async () => {

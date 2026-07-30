@@ -645,9 +645,30 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { status: "active", started_at_ms: params[0] });
           return;
         }
+        // Phase 21b: start snapshots points_committed_start.
+        if (sql.startsWith("UPDATE sprintCache SET status = 'active', started_at_ms = ?, points_committed_start = ? WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[2]);
+          if (row) Object.assign(row, {
+            status: "active",
+            started_at_ms: params[0],
+            points_committed_start: params[1],
+          });
+          return;
+        }
         if (sql.startsWith("UPDATE sprintCache SET status = 'completed', completed_at_ms = ? WHERE id = ?")) {
           const row = sprints.find((r) => r["id"] === params[1]);
           if (row) Object.assign(row, { status: "completed", completed_at_ms: params[0] });
+          return;
+        }
+        // Phase 21b: complete snapshots points_completed / points_carried.
+        if (sql.startsWith("UPDATE sprintCache SET status = 'completed', completed_at_ms = ?, points_completed = ?, points_carried = ? WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[3]);
+          if (row) Object.assign(row, {
+            status: "completed",
+            completed_at_ms: params[0],
+            points_completed: params[1],
+            points_carried: params[2],
+          });
           return;
         }
         // ── phase 21a: sprint membership audit + adds counter + delete ──
@@ -676,6 +697,31 @@ export const makeDbMock = (): DbMock => {
               m["removed_at_ms"] = removed_at_ms;
             }
           }
+          return;
+        }
+        // Phase 21b: complete-endpoint variants that mark done/carried.
+        if (sql.startsWith("UPDATE sprintMembership SET removed_at_ms = ?, was_completed_in_sprint = 1 WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL")) {
+          const [removed_at_ms, sprint_id, issue_id] = params;
+          for (const m of sprintMemberships) {
+            if (m["sprint_id"] === sprint_id && m["issue_id"] === issue_id && m["removed_at_ms"] === null) {
+              Object.assign(m, { removed_at_ms, was_completed_in_sprint: 1 });
+            }
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintMembership SET removed_at_ms = ?, carried_to_sprint_id = ? WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL")) {
+          const [removed_at_ms, carried_to_sprint_id, sprint_id, issue_id] = params;
+          for (const m of sprintMemberships) {
+            if (m["sprint_id"] === sprint_id && m["issue_id"] === issue_id && m["removed_at_ms"] === null) {
+              Object.assign(m, { removed_at_ms, carried_to_sprint_id });
+            }
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [sprint_id, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { sprint_id, updated_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE issueCache SET sprint_id = NULL, updated_at_ms = ? WHERE sprint_id = ?")) {
@@ -988,6 +1034,14 @@ export const makeDbMock = (): DbMock => {
           const r = sprints.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
           return (r ? { ...r } : null) as R | null;
         }
+        // Phase 21b: auto-pick oldest OTHER planning sprint for carry-over.
+        if (sql.startsWith("SELECT id FROM sprintCache WHERE board_id = ? AND status = 'planning' AND id != ? ORDER BY created_at_ms ASC LIMIT 1")) {
+          const [board_id, exclude_id] = params;
+          const candidate = sprints
+            .filter((x) => x["board_id"] === board_id && x["status"] === "planning" && x["id"] !== exclude_id)
+            .sort((a, b) => (a["created_at_ms"] as number) - (b["created_at_ms"] as number))[0];
+          return (candidate ? { id: candidate["id"] } : null) as R | null;
+        }
         if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND short_id = ?")) {
           const r = issues.find(
             (x) => x["board_id"] === params[0] && x["short_id"] === params[1],
@@ -1040,6 +1094,32 @@ export const makeDbMock = (): DbMock => {
           return issues
             .filter((r) => (r["sprint_id"] ?? null) === params[0])
             .map((r) => ({ ...r })) as R[];
+        }
+        // Phase 21b: complete-sprint estimates snapshot + archive JOIN +
+        // next-planning-sprint pick.
+        if (sql === "SELECT estimate FROM issueCache WHERE sprint_id = ?") {
+          return issues
+            .filter((r) => (r["sprint_id"] ?? null) === params[0])
+            .map((r) => ({ estimate: r["estimate"] ?? null })) as R[];
+        }
+        if (sql.startsWith("SELECT m.*, i.title, i.short_id, i.status, i.column_id, i.estimate, i.assignee_pubkey, i.priority FROM sprintMembership m LEFT JOIN issueCache i")) {
+          const [sprint_id] = params;
+          return sprintMemberships
+            .filter((m) => m["sprint_id"] === sprint_id)
+            .sort((a, b) => (a["added_at_ms"] as number) - (b["added_at_ms"] as number))
+            .map((m) => {
+              const iss = issues.find((r) => r["id"] === m["issue_id"]);
+              return {
+                ...m,
+                title: iss?.["title"] ?? null,
+                short_id: iss?.["short_id"] ?? null,
+                status: iss?.["status"] ?? null,
+                column_id: iss?.["column_id"] ?? null,
+                estimate: iss?.["estimate"] ?? null,
+                assignee_pubkey: iss?.["assignee_pubkey"] ?? null,
+                priority: iss?.["priority"] ?? null,
+              };
+            }) as R[];
         }
         if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND sprint_id = ? AND container = 'backlog'")) {
           return issues

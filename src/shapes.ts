@@ -167,6 +167,14 @@ export interface SprintShape {
   readonly started_at_ms: number | null;
   readonly completed_at_ms: number | null;
   readonly created_at_ms: number;
+  // Phase 21b — snapshotted on the sprint row at complete time so the
+  // archive page is a cheap read. Rebuildable from sprintMembership rows if
+  // drift ever appears. Nullable on rows that predate the migration or on
+  // sprints that never completed.
+  readonly points_committed_start: number | null;
+  readonly points_completed: number | null;
+  readonly points_carried: number | null;
+  readonly adds_mid_sprint: number;
 }
 
 /** Mirrors commentCache (soft-FK projection of kind:30552 fa:KanbanComment). */
@@ -481,6 +489,10 @@ export const parseSprintRow = (row: unknown): SprintShape => {
     started_at_ms: h.numberOrNull(r["started_at_ms"] ?? null, "started_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"] ?? null, "completed_at_ms"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
+    points_committed_start: h.numberOrNull(r["points_committed_start"] ?? null, "points_committed_start"),
+    points_completed: h.numberOrNull(r["points_completed"] ?? null, "points_completed"),
+    points_carried: h.numberOrNull(r["points_carried"] ?? null, "points_carried"),
+    adds_mid_sprint: h.number(r["adds_mid_sprint"] ?? 0, "adds_mid_sprint"),
   };
 };
 

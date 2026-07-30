@@ -339,6 +339,9 @@ export const BoardPage = () => {
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
                 </Show>
                 <div class="spacer" />
+                <a class="btn" href={`${base()}/sprints`} title="Sprint history">
+                  Sprints
+                </a>
                 <Show when={orgHandle()}>
                   <a class="btn" href={`${base()}/settings`} title="Board settings">
                     Settings
@@ -383,6 +386,21 @@ export const BoardPage = () => {
                       </button>
                     );
                   }}
+                </Show>
+                <Show when={activeSprint()}>
+                  {(sprint) => (
+                    <button
+                      class="btn btn-small btn-quiet"
+                      title="Complete sprint — unfinished issues carry to the next planning sprint (or drop if none)"
+                      onClick={() => {
+                        if (window.confirm(`Complete "${sprint().name}"? Unfinished issues carry to the next planning sprint (or return to Backlog if none exists).`)) {
+                          void store.completeSprint(sprint().id);
+                        }
+                      }}
+                    >
+                      Complete sprint
+                    </button>
+                  )}
                 </Show>
                 <div class="spacer" />
                 <Show when={view() === "kanban"}>
