@@ -131,6 +131,17 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       if (bindToEmail && invitedEmail === undefined) {
         return yield* new ValidationError({ reason: "bind_to_email-needs-invited_email" });
       }
+      // Bind to a specific Nostr pubkey (64-hex lowercase). Only the caller
+      // whose JWT pubkey equals this may accept — pre-issued invites for
+      // AI-agent identities can't be raced by a human who trips on the URL.
+      const bindToPubkeyRaw = body["bind_to_pubkey"];
+      let bindToPubkey: string | null = null;
+      if (bindToPubkeyRaw !== undefined && bindToPubkeyRaw !== null) {
+        if (typeof bindToPubkeyRaw !== "string" || !/^[0-9a-f]{64}$/.test(bindToPubkeyRaw)) {
+          return yield* new ValidationError({ reason: "bind_to_pubkey" });
+        }
+        bindToPubkey = bindToPubkeyRaw;
+      }
       let expiresHours = INVITE_DEFAULT_EXPIRES_HOURS;
       if (body["expires_hours"] !== undefined) {
         const n = body["expires_hours"];
@@ -171,7 +182,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       const id = crypto.randomUUID();
       const code = generateInviteCode();
       yield* db.execute(
-        "INSERT INTO inviteCache (id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, expires_at_ms, single_use, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO inviteCache (id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, bind_to_pubkey, expires_at_ms, single_use, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           id,
           code,
@@ -181,6 +192,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
           pubkey,
           invitedEmail ?? null,
           bindToEmail ? 1 : 0,
+          bindToPubkey,
           now + expiresHours * 60 * 60 * 1000,
           singleUse ? 1 : 0,
           now,
@@ -287,6 +299,13 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
           claims.login.toLowerCase() !== invite.invited_email.toLowerCase())
       ) {
         return yield* new ForbiddenError({ reason: "invite-bound-to-other-email" });
+      }
+      // Pubkey binding: only the exact identity the invite was pre-issued
+      // for can accept. The JWT's pubkey claim is authoritative; anonymous
+      // callers never get past requireCaller above, so pubkey is always set
+      // by the time we reach here.
+      if (invite.bind_to_pubkey !== null && pubkey !== invite.bind_to_pubkey) {
+        return yield* new ForbiddenError({ reason: "invite-bound-to-other-pubkey" });
       }
 
       // Single-use race: exactly one accept claims the row. RETURNING makes

@@ -236,6 +236,31 @@ describe("POST /api/v0/invites/:code/accept", () => {
     expect(anon.status).toBe(401);
   });
 
+  it("bind_to_pubkey only admits the exact pubkey the invite was pre-issued for", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const targetPub = pubkeyFor("sona");
+    // Match the validator's 64-hex requirement.
+    const pubHex = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+    const { body } = await createInvite(h, { bind_to_pubkey: pubHex });
+    expect(body.invite.bind_to_pubkey).toBe(pubHex);
+    // A random other identity (test harness maps token→pubkey) can't claim.
+    const wrong = await h.app.request(
+      `/api/v0/invites/${body.invite.code}/accept`,
+      jsonReq("POST", {}, tokenFor("guest")),
+      {},
+    );
+    expect(wrong.status).toBe(403);
+    // Rejects malformed bind_to_pubkey at creation time.
+    expect(targetPub).not.toBe(pubHex);
+    const bad = await h.app.request(
+      "/api/v0/invites",
+      jsonReq("POST", { org_slug: "evan", board_slug: "kb", role: "contributor", bind_to_pubkey: "not-hex" }),
+      {},
+    );
+    expect(bad.status).toBe(400);
+  });
+
   it("bind_to_email only admits the invited mailbox", async () => {
     const h = makeHarness();
     await createBoard(h);

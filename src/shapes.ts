@@ -97,6 +97,11 @@ export interface InviteShape {
   readonly invited_by: string;
   readonly invited_email: string | null;
   readonly bind_to_email: boolean;
+  // Phase 0020: optional Nostr pubkey the invite is bound to. Only a caller
+  // whose JWT pubkey equals this value can accept. Perfect for pre-issuing
+  // invites to AI agents by identity, so no URL leak lets a human race the
+  // seat.
+  readonly bind_to_pubkey: string | null;
   readonly expires_at_ms: number;
   readonly single_use: boolean;
   readonly used_by: string | null;
@@ -597,6 +602,7 @@ export const parseInviteRow = (row: unknown): InviteShape => {
     invited_by: h.string(r["invited_by"], "invited_by"),
     invited_email: h.stringOrNull(r["invited_email"], "invited_email"),
     bind_to_email: h.number(r["bind_to_email"], "bind_to_email") !== 0,
+    bind_to_pubkey: h.stringOrNull(r["bind_to_pubkey"] ?? null, "bind_to_pubkey"),
     expires_at_ms: h.number(r["expires_at_ms"], "expires_at_ms"),
     single_use: h.number(r["single_use"], "single_use") !== 0,
     used_by: h.stringOrNull(r["used_by"], "used_by"),

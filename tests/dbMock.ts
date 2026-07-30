@@ -314,9 +314,14 @@ export const makeDbMock = (): DbMock => {
           else orgAliases.push({ old_slug, org_id, created_at_ms });
           return;
         }
+        if (sql.startsWith("INSERT INTO inviteCache (id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, bind_to_pubkey, expires_at_ms, single_use, created_at_ms)")) {
+          const [id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, bind_to_pubkey, expires_at_ms, single_use, created_at_ms] = params;
+          invites.push({ id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, bind_to_pubkey, expires_at_ms, single_use, used_by: null, used_at_ms: null, revoked_at_ms: null, declined_at_ms: null, created_at_ms });
+          return;
+        }
         if (sql.startsWith("INSERT INTO inviteCache")) {
           const [id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, expires_at_ms, single_use, created_at_ms] = params;
-          invites.push({ id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, expires_at_ms, single_use, used_by: null, used_at_ms: null, revoked_at_ms: null, declined_at_ms: null, created_at_ms });
+          invites.push({ id, code, org_id, board_id, role, invited_by, invited_email, bind_to_email, bind_to_pubkey: null, expires_at_ms, single_use, used_by: null, used_at_ms: null, revoked_at_ms: null, declined_at_ms: null, created_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE orgCache SET substrate_event_id = ?")) {
