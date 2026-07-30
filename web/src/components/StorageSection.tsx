@@ -238,7 +238,7 @@ export const StorageSection = (props: { handle: string }) => {
             </span>
           </Show>
 
-          <div class="actions" style={{ "margin-top": "1rem", gap: "0.6rem" }}>
+          <div class="actions" style={{ "margin-top": "1rem", display: "flex", "flex-wrap": "wrap", "align-items": "center", gap: "0.6rem" }}>
             <button class="btn btn-solid" type="submit" disabled={busy()}>
               {busy() ? "Saving…" : "Save"}
             </button>
