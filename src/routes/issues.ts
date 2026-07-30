@@ -724,6 +724,30 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         status === current.status
           ? current.completed_at_ms
           : nextCompletedAt(current, inDone(board, current), toDone, now);
+      // Estimate changes are audited (EFB-22): issueCache.estimate holds only
+      // the current value, so without this row a re-estimate would silently
+      // redraw every earlier day of the sprint tide at the new number.
+      //
+      // Ordered BEFORE the UPDATE on purpose. There's no transaction here, so
+      // one of the two can land alone, and the two failure modes are not
+      // equally bad:
+      //
+      //   update-then-insert, insert fails → estimate moved with no audit row,
+      //     so every earlier day replays at the NEW number. That is precisely
+      //     the corruption this table exists to prevent.
+      //   insert-then-update, update fails → an audit row for a change that
+      //     didn't happen. Harmless to the replay: estimateAt() reads
+      //     prev_estimate before the row's instant and the unchanged current
+      //     value after it, and both still equal the truth.
+      //
+      // Not hypothetical — it happened in prod when this code deployed ahead
+      // of migration 0021 and every estimate PATCH half-wrote.
+      if (estimate !== current.estimate) {
+        yield* db.execute(
+          "INSERT INTO issueEstimateHistory (id, issue_id, occurred_at_ms, prev_estimate, next_estimate, actor_pubkey) VALUES (?, ?, ?, ?, ?, ?)",
+          [crypto.randomUUID(), current.id, now, current.estimate, estimate, pubkey],
+        );
+      }
       yield* db.execute(
         "UPDATE issueCache SET title = ?, body = ?, body_format = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
         [title, issueBody, body_format, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
@@ -740,15 +764,6 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           container_at_completion: toDone ? current.container : null,
           occurred_at_ms: now,
         });
-      }
-      // Estimate changes are audited (EFB-22): issueCache.estimate holds only
-      // the current value, so without this row a re-estimate would silently
-      // redraw every earlier day of the sprint tide at the new number.
-      if (estimate !== current.estimate) {
-        yield* db.execute(
-          "INSERT INTO issueEstimateHistory (id, issue_id, occurred_at_ms, prev_estimate, next_estimate, actor_pubkey) VALUES (?, ?, ?, ?, ?, ?)",
-          [crypto.randomUUID(), current.id, now, current.estimate, estimate, pubkey],
-        );
       }
       yield* audit.record({
         event_type: "issue_updated",
