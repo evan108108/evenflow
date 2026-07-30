@@ -24,7 +24,13 @@ export const KanbanView = (props: {
   layout?: "columns" | "vertical";
 }) => {
   const active = () => props.store.issues().filter((i) => i.container === "active");
-  const columns = () => enabledColumns(props.store.board()?.columns ?? []);
+  // Vertical stack reads top-to-bottom, so we flip the column order — Done
+  // on top, walk backwards to Todo at the bottom. Reads like "here's what's
+  // freshest first" instead of columns' left-to-right progression.
+  const columns = () => {
+    const enabled = enabledColumns(props.store.board()?.columns ?? []);
+    return props.layout === "vertical" ? [...enabled].reverse() : enabled;
+  };
   const inColumn = (column: Column) => issuesInColumn(active(), column);
   const pointsIn = (issues: readonly Issue[]) =>
     issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0);
