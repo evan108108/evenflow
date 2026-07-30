@@ -1,7 +1,10 @@
-// Invite modal — two tabs over the same POST /api/v0/invites record:
-//   Link  — generates a shareable /i/inv-… URL (role, expiration, single-use)
-//   Email — same invite, plus POST /invites/:id/email fires the notification
-//           (bind-to-email optionally locks acceptance to that address)
+// Invite modal — three tabs over the same POST /api/v0/invites record:
+//   Link   — generates a shareable /i/inv-… URL (role, expiration, single-use)
+//   Email  — same invite, plus POST /invites/:id/email fires the notification
+//            (bind-to-email optionally locks acceptance to that address)
+//   Nostr  — pre-issue the invite bound to a specific pubkey. Only the exact
+//            Nostr identity can accept — no URL-leak race between an AI agent
+//            and a human tripping on the link (migration 0020).
 
 import { Show, createSignal } from "solid-js";
 import { Effect } from "effect";
@@ -41,23 +44,30 @@ export const InviteModal = (props: {
   onClose: () => void;
   onCreated?: () => void;
 }) => {
-  const [tab, setTab] = createSignal<"link" | "email">("link");
+  const [tab, setTab] = createSignal<"link" | "email" | "nostr">("link");
   const [role, setRole] = createSignal(props.scope.roles[0] ?? "member");
   const [days, setDays] = createSignal(DEFAULT_EXPIRY_DAYS);
   const [singleUse, setSingleUse] = createSignal(true);
   const [email, setEmail] = createSignal("");
   const [bindToEmail, setBindToEmail] = createSignal(false);
+  const [pubkey, setPubkey] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [resultUrl, setResultUrl] = createSignal<string | null>(null);
   const [emailSent, setEmailSent] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal(false);
 
+  const validPubkey = (v: string): boolean => /^[0-9a-f]{64}$/.test(v.trim().toLowerCase());
+
   const submit = async (e: Event) => {
     e.preventDefault();
     if (busy()) return;
     if (tab() === "email" && !email().includes("@")) {
       setError("Enter an email address.");
+      return;
+    }
+    if (tab() === "nostr" && !validPubkey(pubkey())) {
+      setError("Enter a 64-character hex Nostr pubkey.");
       return;
     }
     setBusy(true);
@@ -72,12 +82,15 @@ export const InviteModal = (props: {
         ...(tab() === "email"
           ? { invited_email: email().trim(), bind_to_email: bindToEmail() }
           : {}),
+        ...(tab() === "nostr" ? { bind_to_pubkey: pubkey().trim().toLowerCase() } : {}),
       };
       const created = await createInvite(body);
       if (tab() === "email") {
         await emailInvite(created.invite.id);
         setEmailSent(email().trim());
       } else {
+        // Both Link and Nostr surface the URL — Nostr's URL is just
+        // additionally gated to the pubkey it was bound to.
         setResultUrl(created.url);
       }
       props.onCreated?.();
@@ -116,6 +129,13 @@ export const InviteModal = (props: {
             onClick={() => setTab("email")}
           >
             Email
+          </button>
+          <button
+            type="button"
+            classList={{ active: tab() === "nostr" }}
+            onClick={() => setTab("nostr")}
+          >
+            Nostr
           </button>
         </div>
 
@@ -185,6 +205,22 @@ export const InviteModal = (props: {
               </label>
             </Show>
 
+            <Show when={tab() === "nostr"}>
+              <label for="inv-pubkey">Nostr pubkey (hex)</label>
+              <input
+                id="inv-pubkey"
+                type="text"
+                placeholder="64 characters, lowercase hex"
+                value={pubkey()}
+                onInput={(e) => setPubkey(e.currentTarget.value)}
+                style={{ "font-family": "monospace", "font-size": "0.85rem" }}
+              />
+              <p class="muted" style={{ "font-size": "0.8rem", "margin-top": "0.4rem" }}>
+                The invite URL will only accept from this exact identity — safe to
+                share, no human racer can claim it.
+              </p>
+            </Show>
+
             <label style={{ display: "flex", gap: "0.5rem", "align-items": "center" }}>
               <input
                 type="checkbox"
@@ -202,7 +238,13 @@ export const InviteModal = (props: {
 
             <div class="actions">
               <button type="submit" class="btn btn-solid" disabled={busy()}>
-                {busy() ? "Working…" : tab() === "email" ? "Send invite" : "Generate link"}
+                {busy()
+                  ? "Working…"
+                  : tab() === "email"
+                    ? "Send invite"
+                    : tab() === "nostr"
+                      ? "Generate bound link"
+                      : "Generate link"}
               </button>
               <button type="button" class="btn" onClick={props.onClose}>
                 Cancel
