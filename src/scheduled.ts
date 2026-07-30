@@ -46,6 +46,7 @@ const rollSubject = (
   input: Parameters<typeof computeTide>[0],
   subjectStartedAtMs: number,
   nowMs: number,
+  serviceJwt: string | undefined,
 ) =>
   Effect.gen(function* () {
     const closed = yield* rollForwardClosedDay(
@@ -60,6 +61,7 @@ const rollSubject = (
       snapshot_id: closed.snapshot_id,
       reading: closed.reading,
       at_ms: nowMs,
+      service_jwt: serviceJwt,
     });
     return true;
   });
@@ -71,7 +73,7 @@ const rollSubject = (
  * One subject's failure must not strand the rest, so each is isolated: a
  * board with a corrupt row costs that board's snapshot, not the whole night.
  */
-export const rollForwardAllTides = (nowMs: number) =>
+export const rollForwardAllTides = (nowMs: number, serviceJwt?: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const days = dayRange(utcDayStart(nowMs) - DAY_MS, ROLL_FORWARD_DAYS);
@@ -105,6 +107,7 @@ export const rollForwardAllTides = (nowMs: number) =>
             input,
             row.sprint_created_at_ms,
             nowMs,
+            serviceJwt,
           );
         }),
       );
@@ -137,6 +140,7 @@ export const rollForwardAllTides = (nowMs: number) =>
             input,
             shape.created_at_ms,
             nowMs,
+            serviceJwt,
           );
         }),
       );
@@ -170,7 +174,10 @@ export const scheduled = (
 ): void => {
   ctx.waitUntil(
     Effect.runPromise(
-      Effect.provide(rollForwardAllTides(event.scheduledTime), bootstrap(env)).pipe(
+      Effect.provide(
+        rollForwardAllTides(event.scheduledTime, env.EVENFLOW_TIDE_SERVICE_JWT),
+        bootstrap(env),
+      ).pipe(
         Effect.catchAllDefect((defect) =>
           Effect.sync(() => {
             console.log(

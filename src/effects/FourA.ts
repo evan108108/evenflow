@@ -84,6 +84,36 @@ export interface FourAService {
     token: string,
     grantEventId: string,
   ) => Effect.Effect<{ event_id: string }, FourAError>;
+  /**
+   * Publish a public sprint-tide snapshot, kind 30560 (EFB-22).
+   *
+   * `token` is NOT a caller's JWT here — it's EVENFLOW_TIDE_SERVICE_JWT, the
+   * service credential, because tide has no caller: the cron has no request
+   * and a public board's `GET /tide` is anonymous. The gateway pins that
+   * credential to this one endpoint.
+   *
+   * Evenflow sends the numbers and the gateway builds and signs the event, so
+   * the 30560 wire shape has exactly one definition (4a's
+   * gateway/src/kanban-tide-builder.ts) and nothing here to drift from.
+   */
+  readonly publishKanbanTide: (
+    token: string,
+    tide: KanbanTideFields,
+  ) => Effect.Effect<{ event_id: string }, FourAError>;
+}
+
+/** Mirrors KanbanTideBody in 4a's gateway/src/kanban-tide-builder.ts. */
+export interface KanbanTideFields {
+  readonly boardId: string;
+  /** Omitted for the kanban-only variant, where the board is the subject. */
+  readonly sprintId?: string;
+  /** UTC calendar day this reading closes, `YYYY-MM-DD`. */
+  readonly day: string;
+  readonly committedPts: number;
+  readonly donePts: number;
+  readonly remainingPts: number;
+  readonly addsToday: number;
+  readonly dropsToday: number;
 }
 
 export interface OrgPublishFields {
@@ -210,6 +240,19 @@ const makeLive = (): FourAService => ({
       ),
     ),
 
+  publishKanbanTide: (token, tide) =>
+    request("/v0/publish/kanban_tide", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(tide),
+    }).pipe(
+      Effect.flatMap(({ body }) =>
+        typeof body["eventId"] === "string"
+          ? Effect.succeed({ event_id: body["eventId"] })
+          : Effect.fail(new FourAError({ reason: "bad-response", detail: "missing eventId" })),
+      ),
+    ),
+
   publishGrantRevoke: (token, grantEventId) =>
     request("/v0/publish/grant_revoke", {
       method: "POST",
@@ -300,6 +343,13 @@ export const makeFourATest = (): FourATestHandle => {
           return Effect.fail(new FourAError({ reason: "network", detail: "test-outage" }));
         }
         return Effect.succeed({ event_id: `grant-evt-${calls.length}` });
+      },
+      publishKanbanTide: (_token, tide) => {
+        calls.push({ method: "publishKanbanTide", arg: JSON.stringify(tide) });
+        if (handle.failPublishes) {
+          return Effect.fail(new FourAError({ reason: "network", detail: "test-outage" }));
+        }
+        return Effect.succeed({ event_id: `tide-evt-${calls.length}` });
       },
       publishGrantRevoke: (_token, grantEventId) => {
         calls.push({ method: "publishGrantRevoke", arg: grantEventId });

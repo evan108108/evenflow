@@ -35,9 +35,9 @@ const runCron = (h: Harness, nowMs: number) =>
   Effect.runPromise(
     Effect.provide(
       rollForwardAllTides(nowMs),
-      // Same three services the request path provides: the cron publishes
-      // through exactly the emit path a read does.
-      Layer.mergeAll(h.db.layer, h.audience.layer, h.emitter.layer),
+      // Same services the request path provides: the cron publishes through
+      // exactly the emit path a read does, FourA included for public 30560.
+      Layer.mergeAll(h.db.layer, h.audience.layer, h.emitter.layer, h.fourA.layer),
     ),
   );
 

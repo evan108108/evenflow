@@ -142,18 +142,127 @@ describe("private board — encrypted 30565", () => {
   });
 });
 
-describe("public board — 30560 pending the gateway", () => {
-  it("writes the snapshot with a NULL substrate_event_id and emits SSE", async () => {
+describe("private board — never leaks to the public substrate", () => {
+  it("does NOT publish cleartext 30560 when the encrypted wraps fail", async () => {
+    // A null substrate id from emitSecureBoardEvent means EITHER "public
+    // board" OR "private board whose wraps didn't land". Treating it as the
+    // former would push a private board's points to 4a in the clear the first
+    // time the audience gateway hiccupped.
+    const h = makeHarness();
+    const session = generateEpochKeypair();
+    await registerKey(h, session.pub);
+    await createBoard(h);
+    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {});
+    const sprint = await createSprint(h);
+
+    vi.setSystemTime(at(1));
+    h.audience.flags.failPosts = true; // encrypted publish is down
+
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/tide`,
+      { headers: bearer },
+      { EVENFLOW_TIDE_SERVICE_JWT: "test-service-jwt" }, // credential IS available
+    );
+
+    expect(res.status).toBe(200);
+    expect(h.fourA.calls.filter((c) => c.method === "publishKanbanTide")).toHaveLength(0);
+    // Cached, unpublished, awaiting the retry sweep — not leaked.
+    expect(h.db.tideSnapshots).toHaveLength(1);
+    expect(h.db.tideSnapshots[0]!["substrate_event_id"]).toBeNull();
+  });
+});
+
+describe("public board — 30560 via the gateway", () => {
+  const SERVICE_JWT = { EVENFLOW_TIDE_SERVICE_JWT: "test-service-jwt" };
+
+  it("publishes through FourA with the service credential and stamps the event id", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "Open work" });
+    await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      jsonReq("POST", { issue_id: issue.id }),
+      {},
+    );
+    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { estimate: 5 }), {});
+
+    vi.setSystemTime(at(1));
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/tide`,
+      { headers: bearer },
+      SERVICE_JWT,
+    );
+    expect(res.status).toBe(200);
+
+    const published = h.fourA.calls.filter((c) => c.method === "publishKanbanTide");
+    expect(published).toHaveLength(1);
+    // The gateway builds and signs from exactly these fields.
+    expect(JSON.parse(published[0]!.arg)).toEqual({
+      boardId: h.db.boards[0]!["id"],
+      sprintId: sprint.id,
+      day: "2026-07-20",
+      committedPts: 5,
+      donePts: 0,
+      remainingPts: 5,
+      addsToday: 5,
+      dropsToday: 0,
+    });
+    expect(h.db.tideSnapshots[0]!["substrate_event_id"]).toMatch(/^tide-evt-/);
+  });
+
+  it("omits sprintId for the kanban-only variant", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+
+    vi.setSystemTime(at(1));
+    const res = await h.app.request("/api/v0/boards/kb/tide", { headers: bearer }, SERVICE_JWT);
+    expect(res.status).toBe(200);
+
+    const published = h.fourA.calls.filter((c) => c.method === "publishKanbanTide");
+    expect(published).toHaveLength(1);
+    expect(JSON.parse(published[0]!.arg).sprintId).toBeUndefined();
+  });
+
+  it("caches with a NULL substrate_event_id when no service credential is set", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+
+    vi.setSystemTime(at(1));
+    await readTide(h, sprint.id); // no EVENFLOW_TIDE_SERVICE_JWT in env
+
+    expect(h.fourA.calls.filter((c) => c.method === "publishKanbanTide")).toHaveLength(0);
+    expect(h.db.tideSnapshots).toHaveLength(1);
+    // The unpublished index (migration 0021) is shaped to sweep exactly this.
+    expect(h.db.tideSnapshots[0]!["substrate_event_id"]).toBeNull();
+  });
+
+  it("keeps the reading and the D1 row when the gateway publish fails", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    h.fourA.failPublishes = true;
+
+    vi.setSystemTime(at(1));
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/tide`,
+      { headers: bearer },
+      SERVICE_JWT,
+    );
+
+    expect(res.status).toBe(200); // an outage must never fail the read
+    expect(h.db.tideSnapshots).toHaveLength(1);
+    expect(h.db.tideSnapshots[0]!["substrate_event_id"]).toBeNull();
+  });
+
+  it("emits the SSE envelope regardless of the substrate", async () => {
     const h = makeHarness();
     await createBoard(h);
     const sprint = await createSprint(h);
 
     vi.setSystemTime(at(1));
     await readTide(h, sprint.id);
-
-    expect(h.db.tideSnapshots).toHaveLength(1);
-    // The unpublished index (migration 0021) is shaped to sweep exactly this.
-    expect(h.db.tideSnapshots[0]!["substrate_event_id"]).toBeNull();
 
     const emitted = h.emitter.events.filter((e) => e.event.kind === "sprint.tide.updated");
     expect(emitted).toHaveLength(1);

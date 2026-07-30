@@ -20,8 +20,8 @@
 
 import { Effect } from "effect";
 import { Audience } from "../../effects/Audience";
-import { BoardEmitter, Db, type DbError } from "../../effects";
-import { emitSecureBoardEvent } from "../../audiences";
+import { BoardEmitter, Db, FourA, type DbError } from "../../effects";
+import { emitSecureBoardEvent, loadBoardById } from "../../audiences";
 import { stampSubstrateEventId, type TideSubject } from "./snapshot";
 import type { TideDay } from "./compute";
 
@@ -37,24 +37,19 @@ export const TIDE_EVENT_KIND = "sprint.tide.updated" as const;
 export const tideEntityId = (subject: TideSubject, day: string): string =>
   subject.sprint_id === null ? day : `${subject.sprint_id}:${day}`;
 
-/**
- * Why public 30560 isn't published yet, in one place so the reason travels
- * with the code rather than living in a DM.
- *
- * Every existing `FourA` publish rides the CALLER's JWT (`membership.ts`,
- * `routes/orgs.ts`, `routes/profile.ts` all pull it off the Authorization
- * header). Tide has no caller to borrow from in either of the paths that
- * matter: `GET /tide` is anonymous on a public board, and the daily cron has
- * no request at all. So option A needs a service credential the gateway will
- * accept from evenflow itself — an open design question, not a TODO.
- */
-export const publicTidePublishBlocked = "gateway-endpoint-and-service-auth-pending" as const;
-
 export interface PublishTideInput {
   readonly subject: TideSubject;
   readonly snapshot_id: string;
   readonly reading: TideDay;
   readonly at_ms: number;
+  /**
+   * EVENFLOW_TIDE_SERVICE_JWT, passed in rather than read from AppEnv:
+   * `bootstrap` consumes AppEnv to build the service layer, so it isn't
+   * available to yield* downstream. Callers already hold the Worker env —
+   * routes as `c.env`, the cron as its own `env` argument. Undefined means
+   * public boards cache without publishing.
+   */
+  readonly service_jwt: string | undefined;
 }
 
 /**
@@ -64,7 +59,7 @@ export interface PublishTideInput {
  */
 export const publishTide = (
   input: PublishTideInput,
-): Effect.Effect<string | null, DbError, Db | Audience | BoardEmitter> =>
+): Effect.Effect<string | null, DbError, Db | Audience | BoardEmitter | FourA> =>
   Effect.gen(function* () {
     const { subject, reading } = input;
     const eventId = yield* emitSecureBoardEvent(subject.board_id, {
@@ -82,7 +77,90 @@ export const publishTide = (
         drops_today: reading.drops_today,
       },
     });
-    if (eventId === null) return null;
-    yield* stampSubstrateEventId(input.snapshot_id, eventId);
-    return eventId;
+    // A private board is done here: emitSecureBoardEvent already gift-wrapped
+    // and published the 30565, and gave us its rumor id.
+    if (eventId !== null) {
+      yield* stampSubstrateEventId(input.snapshot_id, eventId);
+      return eventId;
+    }
+
+    // A null id does NOT mean "public" — it also means "private board whose
+    // wraps didn't land". Publishing 30560 on that inference would push a
+    // private board's committed/done/remaining points to the substrate in
+    // CLEARTEXT the first time the audience gateway hiccupped. So re-read the
+    // board and fork on what it actually is, failing closed: if the row can't
+    // be loaded at all, publish nothing.
+    const board = yield* loadBoardById(subject.board_id).pipe(
+      Effect.catchAll(() => Effect.succeed(null)),
+    );
+    if (board === null || board.encryption_active) {
+      if (board !== null) {
+        console.log(
+          JSON.stringify({
+            warn: "tide-publish-deferred",
+            reason: "private-wraps-failed",
+            board_id: subject.board_id,
+            day: reading.day,
+          }),
+        );
+      }
+      return null;
+    }
+
+    // Genuinely public. 30560 goes through the gateway, which signs as the
+    // evenflow service identity — there is no caller here to sign as.
+    const publicId = yield* publishPublicTide(subject, reading, input.service_jwt);
+    if (publicId === null) return null;
+    yield* stampSubstrateEventId(input.snapshot_id, publicId);
+    return publicId;
+  });
+
+/**
+ * Publish the public 30560 through the gateway. Best-effort in every failure
+ * mode — no credential configured, gateway down, malformed response — because
+ * the snapshot is already in D1 and the reading is recomputed from audit rows
+ * regardless. A failure costs a substrate event and leaves
+ * `substrate_event_id` NULL for the sweep that index was built for.
+ */
+const publishPublicTide = (
+  subject: TideSubject,
+  reading: TideDay,
+  token: string | undefined,
+): Effect.Effect<string | null, never, FourA> =>
+  Effect.gen(function* () {
+    if (token === undefined || token === "") {
+      console.log(
+        JSON.stringify({ warn: "tide-publish-skipped", reason: "no-service-jwt", day: reading.day }),
+      );
+      return null;
+    }
+    const fourA = yield* FourA;
+    return yield* fourA
+      .publishKanbanTide(token, {
+        boardId: subject.board_id,
+        ...(subject.sprint_id === null ? {} : { sprintId: subject.sprint_id }),
+        day: reading.day,
+        committedPts: reading.committed_pts,
+        donePts: reading.done_pts,
+        remainingPts: reading.remaining_pts,
+        addsToday: reading.adds_today,
+        dropsToday: reading.drops_today,
+      })
+      .pipe(
+        Effect.map((r) => r.event_id),
+        Effect.catchAll((e) =>
+          Effect.sync(() => {
+            console.log(
+              JSON.stringify({
+                warn: "tide-publish-deferred",
+                board_id: subject.board_id,
+                day: reading.day,
+                reason: e.reason,
+                status: e.status ?? null,
+              }),
+            );
+            return null;
+          }),
+        ),
+      );
   });

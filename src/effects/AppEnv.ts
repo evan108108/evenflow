@@ -56,6 +56,19 @@ export interface WorkerEnv {
    * verification needs the shared secret back on every delivery.
    */
   readonly EVENFLOW_WEBHOOK_SECRET?: string;
+  /**
+   * Long-lived JWT identifying Evenflow itself to the 4a gateway, so public
+   * sprint-tide snapshots (kind 30560) can be published with no caller to
+   * borrow (EFB-22). Not key material — a bearer credential the gateway
+   * verifies with ITS signing key, and it is scoped gateway-side to
+   * /v0/publish/kanban_tide alone.
+   *
+   * Minted by 4a's scripts/mint-service-jwt.mjs; expires, so it needs
+   * re-minting. Absence is not an error: public boards then cache the
+   * snapshot in D1 with a NULL substrate_event_id, exactly as during an
+   * outage, and the reading itself is unaffected.
+   */
+  readonly EVENFLOW_TIDE_SERVICE_JWT?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}
