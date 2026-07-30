@@ -322,10 +322,40 @@ export const createBoardStore = (
   const primeStreams = (b: Board | null) => refreshStreams(allStreamKeys(b));
 
   const refetchIssues = async () => {
+    // Non-destructive refresh: fetch every stream's first page in parallel
+    // FIRST, then swap issues[] to the union in a single setIssues() call.
+    // Previously we wiped issues[] + cleared streams and awaited the reprime
+    // — every stream was empty for the fetch window, which reads as a full-
+    // board flash on any SSE-driven refresh. Now the old data stays on
+    // screen until the new page lands, so a transition looks like a card
+    // jumping columns instead of a whole-board blink.
     try {
-      setIssues([]);
-      streams.clear();
-      await primeStreams(board());
+      const keys = allStreamKeys(board());
+      const pages = await Promise.all(
+        keys.map(([container, columnId]) => fetchPage(container, columnId, null)),
+      );
+      const collected: Issue[] = [];
+      const seen = new Set<string>();
+      keys.forEach(([container, columnId], idx) => {
+        const page = pages[idx]!;
+        const stateKey = streamKey(container, columnId);
+        const s = stateFor(stateKey);
+        s.hasMore = page.has_more;
+        s.nextAfter = page.next_after;
+        s.started = true;
+        s.loading = false;
+        s.inflight = null;
+        for (const i of page.issues) {
+          if (!seen.has(i.id)) {
+            seen.add(i.id);
+            collected.push(i);
+          }
+        }
+      });
+      // Single reactive write — a transitioned card visibly jumps to its
+      // new column in one frame, no empty intermediate state.
+      setIssues(collected);
+      setStreamTick((n) => n + 1);
     } catch {
       // Quiet refresh — a failed background refetch keeps the current view.
     }
