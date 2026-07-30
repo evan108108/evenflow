@@ -41,9 +41,24 @@ const StatusStack = (props: {
   dnd: DndHandle;
   onOpen: (id: string) => void;
   highlightSprintId?: string | null | undefined;
+  /** Phase 21c: when non-null, Kanban shows ONLY issues with sprint_id
+   *  matching this value. Non-sprint cards hide entirely (Linear-style
+   *  cycle filter). When null, every container=active issue shows. */
+  filterSprintId?: string | null | undefined;
+  /** Phase 21c: when set AND no sprint filter is on, the Done column
+   *  hides items completed longer ago than this many ms. Prevents the
+   *  Done column from growing indefinitely for kanban-only teams. */
+  doneWindowMs?: number | null | undefined;
   layout?: "columns" | "vertical" | undefined;
 }) => {
-  const active = () => props.store.issues().filter((i) => i.container === "active");
+  const active = () => {
+    let rows = props.store.issues().filter((i) => i.container === "active");
+    if (props.filterSprintId != null) {
+      const sid = props.filterSprintId;
+      rows = rows.filter((i) => i.sprint_id === sid);
+    }
+    return rows;
+  };
   // Vertical stack reads top-to-bottom, so we flip the column order — Done
   // on top, walk backwards to Todo at the bottom. Reads like "here's what's
   // freshest first" instead of columns' left-to-right progression.
@@ -51,7 +66,23 @@ const StatusStack = (props: {
     const enabled = enabledColumns(props.store.board()?.columns ?? []);
     return props.layout === "vertical" ? [...enabled].reverse() : enabled;
   };
-  const inColumn = (column: Column) => issuesInColumn(active(), column);
+  const inColumn = (column: Column): Issue[] => {
+    const rows = issuesInColumn(active(), column);
+    // Done-window filter: only on the done column, only when there is no
+    // sprint filter active (a sprint filter already narrows the deck),
+    // and only when the board configured a window. Uses issue.completed_at_ms
+    // which the server maintains on transition into/out of done.
+    if (
+      column.category === "done" &&
+      props.filterSprintId == null &&
+      props.doneWindowMs != null &&
+      props.doneWindowMs > 0
+    ) {
+      const cutoff = Date.now() - props.doneWindowMs;
+      return rows.filter((i) => (i.completed_at_ms ?? 0) >= cutoff);
+    }
+    return rows;
+  };
 
   // The card zone under the pointer, when there is one.
   const overCard = () => {
@@ -238,6 +269,12 @@ export const KanbanView = (props: {
   onOpen: (id: string) => void;
   /** Sprint id to spotlight (phase 20's badge toggle); null = no spotlight. */
   highlightSprintId?: string | null;
+  /** Phase 21c: sprint id to FILTER by. Only cards with sprint_id === this
+   *  render on the board. Null = show all container=active. */
+  filterSprintId?: string | null;
+  /** Phase 21c: Done-column window in ms; only applied when there's no
+   *  sprint filter. Null/undefined = show every done card. */
+  doneWindowMs?: number | null;
   /** Horizontal columns (default) or the Linear-style vertical stack. The
    *  status-stack DOM is identical either way — zones, indicators, and
    *  drops are layout-agnostic; only the CSS class changes. */
@@ -254,6 +291,8 @@ export const KanbanView = (props: {
         dnd={props.dnd}
         onOpen={props.onOpen}
         highlightSprintId={props.highlightSprintId}
+        filterSprintId={props.filterSprintId}
+        doneWindowMs={props.doneWindowMs}
         layout={props.layout}
       />
     }
@@ -264,6 +303,8 @@ export const KanbanView = (props: {
         dnd={props.dnd}
         onOpen={props.onOpen}
         highlightSprintId={props.highlightSprintId}
+        filterSprintId={props.filterSprintId}
+        doneWindowMs={props.doneWindowMs}
         layout="vertical"
       />
       <KanbanRail store={props.store} dnd={props.dnd} onOpen={props.onOpen} />

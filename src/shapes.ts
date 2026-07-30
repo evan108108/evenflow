@@ -61,6 +61,10 @@ export interface BoardShape {
   // Sprint length (days) used when a sprint has no planned_days override.
   // Rows predating migration 0011 read as the historical 14.
   readonly default_sprint_days: number;
+  // Phase 21c (migration 0018): Done-column window in days for kanban-only
+  // teams (Kanban view hides done-column items older than this when no
+  // sprint filter is active). Pre-0018 rows read as the historical 14.
+  readonly done_window_days: number;
   // Archive (migration 0013): NULL = live. Archived boards hide from list
   // surfaces (unless include_archived) but stay reachable by deep link.
   readonly archived_at_ms: number | null;
@@ -385,6 +389,7 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     org_id: h.stringOrNull(r["org_id"] ?? null, "org_id"),
     visibility: visibility as "private" | "public",
     default_sprint_days: h.number(r["default_sprint_days"] ?? 14, "default_sprint_days"),
+    done_window_days: h.number(r["done_window_days"] ?? 14, "done_window_days"),
     archived_at_ms: r["archived_at_ms"] == null ? null : h.number(r["archived_at_ms"], "archived_at_ms"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),

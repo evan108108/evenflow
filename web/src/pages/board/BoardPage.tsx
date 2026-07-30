@@ -101,6 +101,10 @@ export const BoardPage = () => {
   const [callerPubkey, setCallerPubkey] = createSignal<string | null>(null);
   const [showNewIssue, setShowNewIssue] = createSignal(false);
   const [highlightSprintId, setHighlightSprintId] = createSignal<string | null>(null);
+  // Phase 21c — sprint chip is now a filter, not a spotlight. Default ON
+  // when an active sprint exists (Linear posture: "here's the current
+  // sprint's board"). Users toggle off with the chip to see everything.
+  const [sprintFilterOff, setSprintFilterOff] = createSignal(false);
 
   // Kanban layout: explicit preference from localStorage, else the
   // viewport decides (narrow = vertical). Below the force breakpoint the
@@ -367,17 +371,20 @@ export const BoardPage = () => {
                 <Show when={activeSprint()}>
                   {(sprint) => {
                     const countdown = () => countdownFor(sprint());
+                    const filterOn = () => !sprintFilterOff();
                     return (
                       <button
                         class="sprint-badge"
                         classList={{
-                          on: highlightSprintId() === sprint().id,
+                          on: filterOn(),
                           overdue: countdown()?.overdue === true,
                         }}
-                        title="Click to spotlight this sprint's cards"
-                        onClick={() =>
-                          setHighlightSprintId((id) => (id === sprint().id ? null : sprint().id))
+                        title={
+                          filterOn()
+                            ? "Showing only this sprint's cards. Click to show all."
+                            : "Showing all active cards. Click to filter to this sprint."
                         }
+                        onClick={() => setSprintFilterOff((v) => !v)}
                       >
                         {sprint().name}
                         <Show when={countdown()}>
@@ -460,6 +467,12 @@ export const BoardPage = () => {
                   dnd={dnd}
                   onOpen={(id) => navigate(`${base()}/issues/${id}`)}
                   highlightSprintId={highlightSprintId()}
+                  filterSprintId={
+                    activeSprint() !== undefined && !sprintFilterOff() ? activeSprint()!.id : null
+                  }
+                  doneWindowMs={
+                    ((store.board()?.done_window_days ?? 14) * 86_400_000)
+                  }
                   layout={kanbanLayout()}
                   wideRail={wideRail()}
                 />

@@ -36,6 +36,9 @@ export interface Board {
   // Sprint length fallback (migration 0011). Optional so cached pre-0011
   // payloads still parse; absent reads as the historical 14.
   readonly default_sprint_days?: number;
+  // Phase 21c: Done column window in days for kanban-only boards. Optional
+  // for pre-0018 payloads; absent reads as the historical 14.
+  readonly done_window_days?: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
 }

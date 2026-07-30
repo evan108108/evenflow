@@ -273,6 +273,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         org_id: org.id,
         visibility: createVisibility,
         default_sprint_days: DEFAULT_SPRINT_DAYS,
+        done_window_days: 14,
         archived_at_ms: null,
         created_at_ms: now,
         updated_at_ms: now,
@@ -481,6 +482,11 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["default_sprint_days"] === undefined
           ? current.default_sprint_days
           : yield* validateSprintDays(body["default_sprint_days"]);
+      // Phase 21c: Done column window. Same 1..90 bounds as sprint days.
+      const done_window_days =
+        body["done_window_days"] === undefined
+          ? current.done_window_days
+          : yield* validateSprintDays(body["done_window_days"]);
 
       // Privacy is ONE setting since migration 0015: `visibility`. Asking for
       // 'private' on a board whose audience hasn't been minted yet IS the
@@ -557,7 +563,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       yield* db.execute(
-        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, default_sprint_days = ?, updated_at_ms = ? WHERE id = ?",
+        "UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, default_sprint_days = ?, done_window_days = ?, updated_at_ms = ? WHERE id = ?",
         [
           title,
           description === null ? null : JSON.stringify(description),
@@ -567,6 +573,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           issue_prefix,
           visibility,
           default_sprint_days,
+          done_window_days,
           now,
           current.id,
         ],
@@ -607,6 +614,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         issue_prefix,
         visibility,
         default_sprint_days,
+        done_window_days,
         encryption_active: visibility === "private" && audienceState.audience_pubkey !== null,
         is_encrypted: visibility === "private" && audienceState.audience_pubkey !== null,
         audience_epoch: audienceState.audience_epoch,

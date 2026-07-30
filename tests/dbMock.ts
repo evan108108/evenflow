@@ -552,7 +552,13 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { github_rule_preset: "custom", updated_at_ms });
           return;
         }
-        if (sql.startsWith("UPDATE boardCache SET")) {
+        if (sql.startsWith("UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, default_sprint_days = ?, done_window_days = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, done_window_days, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, done_window_days, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE boardCache SET title = ?, description = ?, columns = ?, labels = ?, member_policy = ?, issue_prefix = ?, visibility = ?, default_sprint_days = ?, updated_at_ms = ? WHERE id = ?")) {
           const [title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, updated_at_ms, id] = params;
           const row = boards.find((r) => r["id"] === id);
           if (row) Object.assign(row, { title, description, columns, labels, member_policy, issue_prefix, visibility, default_sprint_days, updated_at_ms });
