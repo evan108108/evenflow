@@ -112,16 +112,21 @@ export const NewOrg = () => {
           evenflow.work/@{effectiveSlug() || "…"}
         </span>
 
-        <label for="org-bio">Bio</label>
+        {/* EFB-11: org-appropriate labels. "Bio" and "Avatar URL" were the
+            profile-edit wording carried over from the /profile form — reads
+            wrong for a shared org. Server param names (`bio`, `avatar_url`)
+            stay unchanged; only the surface copy shifts. */}
+        <label for="org-bio">Description</label>
         <textarea
           id="org-bio"
           rows={3}
           maxlength="4000"
+          placeholder="What is this org for?"
           value={bio()}
           onInput={(e) => setBio(e.currentTarget.value)}
         />
 
-        <label for="org-avatar">Avatar URL</label>
+        <label for="org-avatar">Org logo URL</label>
         <input
           id="org-avatar"
           type="text"
