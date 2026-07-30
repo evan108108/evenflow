@@ -66,6 +66,46 @@ const DIRECTION_WORD: Record<TideDirection, string> = {
   flat: "slack — remaining is holding steady",
 };
 
+/** How the number is derived, per mode. The badge shows a figure and an
+ *  arrow; without this line you have to read the source to learn what it
+ *  counts, which is the whole of EFB-25. */
+const SPRINT_DERIVATION = "Points committed to the sprint, minus what's already done.";
+const KANBAN_DERIVATION = "Open work, plus anything finished inside the board's Done window.";
+
+/**
+ * The hover explainer, as a pure function so it can be tested without
+ * standing up the app runtime the badge's fetch needs.
+ *
+ * Stays inside the native `title=` attribute deliberately: Evenflow has no
+ * Tooltip component, and a hover explainer is not worth inventing one for.
+ * Newlines render as line breaks in the native tooltip, so the derivation,
+ * the numbers, and the direction each get a line instead of one run-on
+ * sentence.
+ */
+export const tideTitle = (
+  reading: TideReading | null,
+  sprintId: string | null,
+  sprintName?: string | null,
+): string => {
+  const today = reading?.today ?? null;
+  const windowDays = reading?.days ?? [];
+  const scope = sprintId === null ? "the board's Done window" : (sprintName ?? "this sprint");
+  const lines = [
+    sprintId === null ? KANBAN_DERIVATION : SPRINT_DERIVATION,
+    `${today?.remaining_pts ?? 0} remaining in ${scope} · ${today?.committed_pts ?? 0} committed · ${today?.done_pts ?? 0} done.`,
+    `Today: ${today?.adds_today ?? 0} added, ${today?.drops_today ?? 0} dropped.`,
+    `Tide is ${DIRECTION_WORD[reading?.direction ?? "flat"]}.`,
+  ];
+  // Same caveat the empty state carries — a short window is missing history,
+  // not a stalled sprint.
+  if (windowDays.length < TIDE_WINDOW_DAYS) {
+    lines.push(
+      `Showing ${windowDays.length} of ${TIDE_WINDOW_DAYS} days — earlier days have no reading yet.`,
+    );
+  }
+  return lines.join("\n");
+};
+
 /**
  * Remaining points over the window. Scaled to the window's own max so a
  * 3-point sprint reads as legibly as a 300-point one; a window that never
@@ -135,16 +175,7 @@ export const TideBadge = (props: TideBadgeProps) => {
   const direction = (): TideDirection => reading()?.direction ?? "flat";
   const committed = () => reading()?.today?.committed_pts ?? 0;
 
-  const title = () => {
-    const scope =
-      props.sprintId === null
-        ? "the board's Done window"
-        : (props.sprintName ?? "this sprint");
-    const base = `Points remaining in ${scope}: ${remaining()} of ${committed()} committed. Tide is ${DIRECTION_WORD[direction()]}.`;
-    return days().length < TIDE_WINDOW_DAYS
-      ? `${base} Showing ${days().length} of ${TIDE_WINDOW_DAYS} days — earlier days have no reading yet.`
-      : base;
-  };
+  const title = () => tideTitle(reading() ?? null, props.sprintId, props.sprintName);
 
   return (
     <div class="current tide" title={title()}>

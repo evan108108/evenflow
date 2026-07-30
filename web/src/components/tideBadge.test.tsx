@@ -7,7 +7,14 @@
 // backwards often enough to be worth a test.
 
 import { describe, expect, it } from "vitest";
-import { DIRECTION_GLYPH, sparklinePoints, type TideDay } from "./TideBadge";
+import {
+  DIRECTION_GLYPH,
+  TIDE_WINDOW_DAYS,
+  sparklinePoints,
+  tideTitle,
+  type TideDay,
+  type TideReading,
+} from "./TideBadge";
 
 const day = (remaining: number, i: number): TideDay => ({
   day: `2026-07-${String(20 + i).padStart(2, "0")}`,
@@ -64,5 +71,64 @@ describe("DIRECTION_GLYPH", () => {
     expect(DIRECTION_GLYPH.out).toBe("↘");
     expect(DIRECTION_GLYPH.in).toBe("↗");
     expect(DIRECTION_GLYPH.flat).toBe("—");
+  });
+});
+
+describe("tideTitle (EFB-25)", () => {
+  const today: TideDay = {
+    day: "2026-07-30",
+    day_start_ms: Date.UTC(2026, 6, 30),
+    committed_pts: 20,
+    done_pts: 8,
+    remaining_pts: 12,
+    adds_today: 3,
+    drops_today: 1,
+  };
+  const full = (over: Partial<TideReading> = {}): TideReading => ({
+    days: Array.from({ length: TIDE_WINDOW_DAYS }, (_, i) => day(12, i)),
+    today,
+    direction: "out",
+    ...over,
+  });
+
+  it("leads with HOW the number is derived — the point of the ticket", () => {
+    expect(tideTitle(full(), "sprint-1", "Sprint 1").split("\n")[0]).toBe(
+      "Points committed to the sprint, minus what's already done.",
+    );
+    expect(tideTitle(full(), null).split("\n")[0]).toBe(
+      "Open work, plus anything finished inside the board's Done window.",
+    );
+  });
+
+  it("shows every number the ticket asks for: remaining, committed, done, adds, drops", () => {
+    const text = tideTitle(full(), "sprint-1", "Sprint 1");
+    expect(text).toContain("12 remaining in Sprint 1");
+    expect(text).toContain("20 committed");
+    expect(text).toContain("8 done");
+    expect(text).toContain("3 added");
+    expect(text).toContain("1 dropped");
+  });
+
+  it("names the direction in words, never the bare arrow", () => {
+    expect(tideTitle(full(), null)).toContain("going out — remaining is falling");
+    expect(tideTitle(full({ direction: "in" }), null)).toContain("coming in — scope is rising");
+    expect(tideTitle(full({ direction: "flat" }), null)).toContain("holding steady");
+  });
+
+  it("falls back to 'this sprint' when the sprint has no name", () => {
+    expect(tideTitle(full(), "sprint-1")).toContain("remaining in this sprint");
+  });
+
+  it("adds the short-window caveat only when the window is short", () => {
+    const short = tideTitle(full({ days: [day(12, 0), day(12, 1)] }), null);
+    expect(short).toContain(`Showing 2 of ${TIDE_WINDOW_DAYS} days`);
+    expect(tideTitle(full(), null)).not.toContain("Showing");
+  });
+
+  it("degrades to zeros rather than NaN/undefined before the fetch lands", () => {
+    const text = tideTitle(null, null);
+    expect(text).toContain("0 remaining");
+    expect(text).toContain("Today: 0 added, 0 dropped.");
+    expect(text).not.toMatch(/NaN|undefined/);
   });
 });
