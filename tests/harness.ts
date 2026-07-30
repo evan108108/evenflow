@@ -43,6 +43,7 @@ import { makeSigninRouter } from "../src/routes/signin";
 import { makeSprintsRouter } from "../src/routes/sprints";
 import { makeNotificationsRouter } from "../src/routes/notifications";
 import { makeStorageRouter } from "../src/routes/storage";
+import { makeGithubRouter } from "../src/routes/github";
 import { makeWellKnownRouter } from "../src/routes/wellknown";
 import type { IssueShape } from "../src/shapes";
 import { makeDbMock } from "./dbMock";
@@ -103,6 +104,7 @@ export const makeHarness = () => {
   app.route("/api/v0", makeKeysRouter(() => layer));
   app.route("/api/v0", makeStorageRouter(() => layer));
   app.route("/api/v0", makeNotificationsRouter(() => layer));
+  app.route("/api/v0", makeGithubRouter(() => layer));
   app.route("/api/v0", makeBoardsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeSprintsRouter(() => layer));

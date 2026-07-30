@@ -33,6 +33,9 @@ export interface DbMock {
   readonly keyGrants: Row[];
   readonly sessionKeys: Row[];
   readonly sessions: Row[];
+  readonly githubRules: Row[];
+  readonly githubAudit: Row[];
+  readonly githubDedup: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -59,6 +62,9 @@ export const makeDbMock = (): DbMock => {
   const keyGrants: Row[] = [];
   const sessionKeys: Row[] = [];
   const sessions: Row[] = [];
+  const githubRules: Row[] = [];
+  const githubAudit: Row[] = [];
+  const githubDedup: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
     issues
@@ -330,6 +336,63 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         // Transition: status name mirror + column_id identity move together.
+        // Phase 21 webhook transitions. These MUST precede the generic
+        // status+column handler below: its prefix also matches them, and
+        // the completed_at_ms = NULL variant carries one FEWER param, so
+        // falling through would bind `id` to undefined and silently no-op.
+        if (
+          sql.startsWith(
+            "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = COALESCE(completed_at_ms, ?)",
+          )
+        ) {
+          const [status, column_id, updated_at_ms, completedFallback, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, {
+              status,
+              column_id,
+              updated_at_ms,
+              completed_at_ms: row["completed_at_ms"] ?? completedFallback,
+            });
+          }
+          return;
+        }
+        if (
+          sql.startsWith(
+            "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = NULL",
+          )
+        ) {
+          const [status, column_id, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { status, column_id, updated_at_ms, completed_at_ms: null });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET external_state = ?")) {
+          const [external_state, external_state_updated_at_ms, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, { external_state, external_state_updated_at_ms, updated_at_ms });
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET assignee_pubkey = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [assignee_pubkey, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { assignee_pubkey, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET labels = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [labels, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { labels, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET github_links = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [github_links, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { github_links, updated_at_ms });
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?")) {
           const [status, column_id, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
@@ -404,6 +467,47 @@ export const makeDbMock = (): DbMock => {
           const [archived_at_ms, updated_at_ms, id] = params;
           const row = boards.find((r) => r["id"] === id);
           if (row) Object.assign(row, { archived_at_ms, updated_at_ms });
+          return;
+        }
+        // Phase 21 GitHub columns — like the audience/prefix/archive
+        // handlers above, these MUST precede the generic "UPDATE
+        // boardCache SET" fallback, which shares their prefix and would
+        // otherwise bind their params to the wrong columns.
+        if (sql.startsWith("UPDATE boardCache SET github_repo = NULL")) {
+          const [updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, {
+              github_repo: null,
+              github_webhook_secret_ciphertext: null,
+              updated_at_ms,
+            });
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE boardCache SET github_repo = ?")) {
+          const [github_repo, github_rule_preset, external_state_config, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, {
+              github_repo,
+              github_rule_preset,
+              external_state_config,
+              updated_at_ms,
+            });
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE boardCache SET github_webhook_secret_ciphertext = ?")) {
+          const [github_webhook_secret_ciphertext, updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { github_webhook_secret_ciphertext, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE boardCache SET github_rule_preset = 'custom'")) {
+          const [updated_at_ms, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { github_rule_preset: "custom", updated_at_ms });
           return;
         }
         if (sql.startsWith("UPDATE boardCache SET")) {
@@ -523,6 +627,40 @@ export const makeDbMock = (): DbMock => {
           const [sprint_id, updated_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
           if (row) Object.assign(row, { sprint_id, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("DELETE FROM githubWebhookRules WHERE board_id = ?")) {
+          for (let i = githubRules.length - 1; i >= 0; i--) {
+            if (githubRules[i]?.["board_id"] === params[0]) githubRules.splice(i, 1);
+          }
+          return;
+        }
+        if (sql.startsWith("INSERT INTO githubWebhookRules")) {
+          const [id, board_id, bucket, priority, when_json, do_json, enabled, created_at_ms, updated_at_ms] = params;
+          githubRules.push({ id, board_id, bucket, priority, when_json, do_json, enabled, created_at_ms, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO githubWebhookAudit")) {
+          const [id, board_id, delivery_id, event_type, action, matched_issue_ids_json, matched_rule_ids_json, actions_taken_json, error, received_at_ms] = params;
+          githubAudit.push({ id, board_id, delivery_id, event_type, action, matched_issue_ids_json, matched_rule_ids_json, actions_taken_json, error, received_at_ms });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO githubWebhookDedup")) {
+          const [board_id, delivery_id, received_at_ms] = params;
+          if (
+            githubDedup.some(
+              (r) => r["board_id"] === board_id && r["delivery_id"] === delivery_id,
+            )
+          ) {
+            throw new Error("DbMock: UNIQUE violation on githubWebhookDedup PK");
+          }
+          githubDedup.push({ board_id, delivery_id, received_at_ms });
+          return;
+        }
+        if (sql.startsWith("DELETE FROM githubWebhookDedup WHERE received_at_ms < ?")) {
+          for (let i = githubDedup.length - 1; i >= 0; i--) {
+            if (num(githubDedup[i]?.["received_at_ms"]) < num(params[0])) githubDedup.splice(i, 1);
+          }
           return;
         }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
@@ -759,6 +897,24 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT * FROM sprintCache WHERE id = ? AND board_id = ?")) {
           const r = sprints.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
           return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND short_id = ?")) {
+          const r = issues.find(
+            (x) => x["board_id"] === params[0] && x["short_id"] === params[1],
+          );
+          return (r ? { ...r } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT delivery_id FROM githubWebhookDedup")) {
+          const r = githubDedup.find(
+            (x) => x["board_id"] === params[0] && x["delivery_id"] === params[1],
+          );
+          return (r ? { delivery_id: r["delivery_id"] } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT pubkey FROM boardMemberCache WHERE board_id = ? AND pubkey = ?")) {
+          const r = boardMembers.find(
+            (x) => x["board_id"] === params[0] && x["pubkey"] === params[1],
+          );
+          return (r ? { pubkey: r["pubkey"] } : null) as R | null;
         }
         throw new Error(`DbMock: unexpected queryFirst: ${sql}`);
       }),
@@ -1078,6 +1234,39 @@ export const makeDbMock = (): DbMock => {
             )
             .map((r) => ({ ...r })) as R[];
         }
+        if (sql.startsWith("SELECT * FROM githubWebhookRules WHERE board_id = ?")) {
+          return githubRules
+            .filter((r) => r["board_id"] === params[0])
+            .sort(
+              (a, b) =>
+                str(a["bucket"]).localeCompare(str(b["bucket"])) ||
+                num(a["priority"]) - num(b["priority"]),
+            )
+            .map((r) => ({ ...r })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM githubWebhookAudit WHERE board_id = ?")) {
+          // Mirrors the router's dynamic WHERE: board, then the optional
+          // event_type / errors_only / since filters, then LIMIT last.
+          const rest = [...params];
+          const boardId = rest.shift();
+          const limit = num(rest.pop());
+          let rows = githubAudit.filter((r) => r["board_id"] === boardId);
+          if (sql.includes("event_type = ?")) {
+            const ev = rest.shift();
+            rows = rows.filter((r) => r["event_type"] === ev);
+          }
+          if (sql.includes("error IS NOT NULL")) {
+            rows = rows.filter((r) => r["error"] !== null && r["error"] !== undefined);
+          }
+          if (sql.includes("received_at_ms >= ?")) {
+            const since = num(rest.shift());
+            rows = rows.filter((r) => num(r["received_at_ms"]) >= since);
+          }
+          return rows
+            .sort((a, b) => num(b["received_at_ms"]) - num(a["received_at_ms"]))
+            .slice(0, limit)
+            .map((r) => ({ ...r })) as R[];
+        }
         throw new Error(`DbMock: unexpected queryAll: ${sql}`);
       }),
   };
@@ -1102,6 +1291,9 @@ export const makeDbMock = (): DbMock => {
     keyGrants,
     sessionKeys,
     sessions,
+    githubRules,
+    githubAudit,
+    githubDedup,
     layer: Layer.succeed(Db, service),
   };
 };

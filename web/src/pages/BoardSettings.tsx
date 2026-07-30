@@ -30,7 +30,7 @@ import { UserNav } from "../components/UserNav";
 import "../lib/board.css";
 
 const BOARD_ROLES = ["admin", "contributor", "viewer"] as const;
-const TABS = ["General", "Members", "Columns", "Danger zone"] as const;
+const TABS = ["General", "Members", "Columns", "GitHub", "Danger zone"] as const;
 type Tab = (typeof TABS)[number];
 
 interface BoardDetail {
@@ -68,6 +68,8 @@ interface PendingInvite {
   invited_email: string | null;
   expires_at_ms: number;
 }
+
+import { GithubSection } from "../components/GithubSection";
 
 const api = <T,>(
   f: (c: ApiClientService) => Effect.Effect<T, ApiError>,
@@ -607,6 +609,10 @@ export const BoardSettings = () => {
             </button>
           </div>
         </section>
+      </Show>
+
+      <Show when={tab() === "GitHub"}>
+        <GithubSection apiBase={apiBase()} />
       </Show>
 
       {/* Visibility lives on the General tab — it is an ordinary setting, not

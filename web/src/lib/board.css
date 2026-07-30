@@ -354,6 +354,58 @@
   margin-bottom: 0.45rem;
 }
 
+/* external_state pill (phase 21) — the card's one report from outside the
+   board. Sits above .chips and reads slightly heavier than a chip so it
+   does not get lost among labels, while staying inside the ink-on-cream
+   palette: tone is carried by a tinted wash and a left rule, not by a
+   saturated badge. */
+.card-external-state {
+  margin-bottom: 0.4rem;
+}
+
+.external-state-pill {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 500;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  padding: 0.14rem 0.5rem 0.14rem 0.45rem;
+  border-radius: 2px 8px 8px 2px;
+  border-left: 2px solid var(--color-ink-soft);
+  background: rgba(23, 35, 59, 0.05);
+  color: var(--color-ink-soft);
+  text-decoration: none;
+}
+
+.external-state-pill.is-link:hover {
+  background: rgba(23, 35, 59, 0.1);
+  color: var(--color-ink);
+}
+
+.external-state-pill.tone-info {
+  border-left-color: #3f6ea8;
+  background: rgba(63, 110, 168, 0.09);
+  color: #2f5686;
+}
+
+.external-state-pill.tone-good {
+  border-left-color: #4a7c59;
+  background: rgba(74, 124, 89, 0.09);
+  color: #3c6449;
+}
+
+.external-state-pill.tone-warn {
+  border-left-color: #b07d3a;
+  background: rgba(176, 125, 58, 0.1);
+  color: #8a6129;
+}
+
+.external-state-pill.tone-bad {
+  border-left-color: #a44a3f;
+  background: rgba(164, 74, 63, 0.1);
+  color: #8b3d33;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -2284,5 +2336,131 @@ input.sprint-name:focus {
     flex: none;
     min-width: 0;
     min-height: 0;
+  }
+}
+
+/* ── Board Settings → GitHub (phase 21) ─────────────────────────────────
+   Reuses the settings-section rhythm; everything here is layout and
+   restraint, no new palette. Per house style there are deliberately no
+   focus rings or outlines on any control. */
+
+.field-label {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  margin: 1rem 0 0.35rem;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+}
+
+.callout {
+  border-left: 2px solid var(--color-ink);
+  background: var(--color-paper-raised);
+  padding: 0.8rem 1rem;
+  margin: 0.9rem 0;
+}
+
+/* The one-time secret: monospace, selectable, wrapping — it exists to be
+   copied, and a value that overflows its box silently is a value that
+   gets pasted wrong. */
+.secret-once {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+  user-select: all;
+  padding: 0.5rem 0.6rem;
+  background: rgba(23, 35, 59, 0.06);
+  border-radius: 4px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  text-align: left;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  background: transparent;
+  cursor: pointer;
+}
+
+.preset-card.active {
+  border-color: var(--color-ink);
+  background: var(--color-paper-raised);
+}
+
+.preset-card .preset-label {
+  font-weight: 500;
+}
+
+.rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.rules-table th {
+  text-align: left;
+  font-size: 0.7rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  font-weight: 500;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--color-ink-faint);
+}
+
+.rules-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--color-ink-faint);
+  vertical-align: top;
+}
+
+.rules-table tr.disabled td {
+  opacity: 0.5;
+}
+
+.rules-table tr.has-error td {
+  background: rgba(164, 74, 63, 0.06);
+}
+
+.error-text {
+  color: #8b3d33;
+}
+
+.test-result {
+  border-top: 1px solid var(--color-ink-faint);
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  font-size: 0.9rem;
+}
+
+.test-result ul {
+  margin: 0.4rem 0 0.4rem 1.1rem;
+}
+
+/* Wide content must scroll inside its own box rather than the page. */
+@media (max-width: 640px) {
+  .rules-table {
+    display: block;
+    overflow-x: auto;
   }
 }

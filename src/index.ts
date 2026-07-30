@@ -22,6 +22,7 @@ import { makeSigninRouter } from "./routes/signin";
 import { makeSprintsRouter } from "./routes/sprints";
 import { makeNotificationsRouter } from "./routes/notifications";
 import { makeStorageRouter } from "./routes/storage";
+import { makeGithubRouter } from "./routes/github";
 import { makeWellKnownRouter } from "./routes/wellknown";
 
 const app = new Hono<AppHonoEnv>();
@@ -71,6 +72,11 @@ app.route("/api/v0", makeKeysRouter());
 // the org-scoped board mounts for the same reason the orgs router is.
 app.route("/api/v0", makeStorageRouter());
 app.route("/api/v0", makeNotificationsRouter());
+// GitHub integration (phase 21). Carries BOTH the public inbound webhook
+// (/webhooks/github/:board_id — HMAC-gated, never reads claims) and the
+// admin config surface, so it mounts before the board-family routers for
+// the same precedence reason the orgs router does.
+app.route("/api/v0", makeGithubRouter());
 
 // Board-family routers, mounted twice: legacy compat at /api/v0 and the
 // canonical org-scoped namespace at /api/v0/orgs/:org_slug. Handlers branch
@@ -89,6 +95,7 @@ app.route("/api/v0/orgs/:org_slug", makeFeedRouter());
 app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter());
 app.route("/api/v0", makeAudiencesRouter());
 app.route("/api/v0/orgs/:org_slug", makeAudiencesRouter());
+app.route("/api/v0/orgs/:org_slug", makeGithubRouter());
 app.route("/api/v0", makeProfileRouter());
 
 // /i/FLOW-42 — the paste-anywhere deep link (git commits, chat). Resolves
