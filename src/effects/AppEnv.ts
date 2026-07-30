@@ -48,6 +48,14 @@ export interface WorkerEnv {
    * distinct secret — no key reuse with blossom or storage.
    */
   readonly EVENFLOW_AUDIENCE_SECRET?: string;
+  /**
+   * 32-byte hex AES-GCM key sealing per-board GitHub webhook secrets at
+   * rest in D1 (phase 21). A fourth distinct secret — symmetric this time,
+   * and no key reuse with blossom (schnorr), storage (ECDH), or audience.
+   * Unlike an API key hash, a webhook secret must be recoverable: HMAC
+   * verification needs the shared secret back on every delivery.
+   */
+  readonly EVENFLOW_WEBHOOK_SECRET?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}

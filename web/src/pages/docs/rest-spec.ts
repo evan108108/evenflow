@@ -5,7 +5,7 @@
 // MCP_TOOLS mirrors src/routes/mcp.ts tool names/shapes; keep in lockstep.
 
 export interface RestEndpoint {
-  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
+  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly path: string;
   readonly summary: string;
   readonly params?: ReadonlyArray<{ name: string; note: string }>;
@@ -202,6 +202,76 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
         summary: "Soft-revoke. Requests with the key 401 immediately after.",
         response: "{ revoked: true }",
         curl: `curl -X DELETE ${BASE}/keys/ID -H "Authorization: Bearer YOUR_JWT"`,
+      },
+    ],
+  },
+  {
+    title: "GitHub integration",
+    endpoints: [
+      {
+        method: "GET",
+        path: "/boards/:slug/github",
+        summary: "Repo binding, whether a webhook secret exists, the active preset, and the rule set. Admin only. The secret itself is never returned.",
+        response: "{ config: GithubConfig, rules: Rule[] }",
+        curl: `curl ${BASE}/boards/flow/github -H "Authorization: Bearer ${KEY}"`,
+      },
+      {
+        method: "PUT",
+        path: "/boards/:slug/github",
+        summary: "Connect a repo and/or choose a preset. Switching to a non-custom preset re-seeds the rule set; 'custom' leaves your edits alone.",
+        params: [
+          { name: "repo", note: '"owner/name", or null to clear' },
+          { name: "preset", note: "defaults | status_only | custom | off" },
+          { name: "external_states", note: "string[] to narrow the pill vocabulary, or null for the defaults" },
+        ],
+        response: "{ config, rules, seeded }",
+        curl: `curl -X PUT ${BASE}/boards/flow/github -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"repo":"you/repo","preset":"defaults"}'`,
+      },
+      {
+        method: "POST",
+        path: "/boards/:slug/github/secret",
+        summary: "Mint (or rotate) the webhook secret. Plaintext returns ONCE — paste it into GitHub's Secret field. Rotating invalidates the old one immediately.",
+        response: "{ secret, webhook_url }",
+        curl: `curl -X POST ${BASE}/boards/flow/github/secret -H "Authorization: Bearer ${KEY}"`,
+      },
+      {
+        method: "PUT",
+        path: "/boards/:slug/github/rules",
+        summary: "Replace the whole rule set (priority order included) and flip the board to the 'custom' preset. Rejected atomically if any rule is invalid.",
+        params: [{ name: "rules", note: "Rule[] — each { bucket?, priority?, when, do, enabled? }" }],
+        response: "{ rules: Rule[] }",
+        curl: `curl -X PUT ${BASE}/boards/flow/github/rules -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"rules":[{"when":{"event":"pull_request","action":"opened"},"do":{"type":"set_external_state","value":"pr_review"}}]}'`,
+      },
+      {
+        method: "POST",
+        path: "/boards/:slug/github/test",
+        summary: "Dry-run a payload against the live rules. Runs the same evaluator the webhook does and writes NOTHING — no cards change, no activity recorded.",
+        params: [
+          { name: "event", note: "pull_request | pull_request_review | check_run" },
+          { name: "payload", note: "the webhook body, as JSON" },
+        ],
+        response: "{ facts, refs, matched, unresolved, outcomes }",
+        curl: `curl -X POST ${BASE}/boards/flow/github/test -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"event":"pull_request","payload":{"action":"opened"}}'`,
+      },
+      {
+        method: "GET",
+        path: "/boards/:slug/github/audit",
+        summary: "Every verified delivery, newest first — including ones that matched no ticket or no rule, so a silently-idle rule is visible.",
+        params: [
+          { name: "event_type", note: "filter to one GitHub event" },
+          { name: "errors_only", note: "1 to show only failed deliveries" },
+          { name: "since", note: "epoch ms lower bound" },
+          { name: "limit", note: "default 50, max 200" },
+        ],
+        response: "{ entries: AuditEntry[] }",
+        curl: `curl "${BASE}/boards/flow/github/audit?errors_only=1" -H "Authorization: Bearer ${KEY}"`,
+      },
+      {
+        method: "POST",
+        path: "/webhooks/github/:board_id",
+        summary: "GitHub's delivery endpoint. PUBLIC — auth is the HMAC in x-hub-signature-256 over the raw body. Returns 2xx for anything verified (including no-match) so GitHub stops retrying; 400 only for a bad signature or unreadable body.",
+        response: "{ ok, matched, unresolved, rule_matched, actions }",
+        curl: "# configured in GitHub, not called by hand",
       },
     ],
   },

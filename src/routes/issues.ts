@@ -415,6 +415,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         github_links: [],
         position,
         sprint_id: null,
+        // Phase 21: a new issue has no PR yet, so no pill.
+        external_state: null,
+        external_state_updated_at_ms: null,
         created_at_ms: now,
         updated_at_ms: now,
         completed_at_ms: createdDone ? now : null,

@@ -144,6 +144,11 @@ export interface IssueShape {
   // Owning sprint (sprintCache.id), phase 20. Soft link — null when the
   // issue is not in a sprint (or the row predates migration 0010).
   readonly sprint_id: string | null;
+  // The GitHub-integration pill (phase 21), INDEPENDENT of column position:
+  // a ticket can read "PR in review" while sitting in Todo. Null = no
+  // external state. Vocabulary is per-board (boardCache.external_state_config).
+  readonly external_state: string | null;
+  readonly external_state_updated_at_ms: number | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
@@ -439,6 +444,12 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     github_links: github_links as IssueShape["github_links"],
     position: h.numberOrNull(r["position"] ?? null, "position"),
     sprint_id: h.stringOrNull(r["sprint_id"] ?? null, "sprint_id"),
+    // Pre-0015 rows lack both columns entirely; absent reads as "no pill".
+    external_state: h.stringOrNull(r["external_state"] ?? null, "external_state"),
+    external_state_updated_at_ms: h.numberOrNull(
+      r["external_state_updated_at_ms"] ?? null,
+      "external_state_updated_at_ms",
+    ),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"], "completed_at_ms"),

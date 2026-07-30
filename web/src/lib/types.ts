@@ -67,6 +67,11 @@ export interface Issue {
   // Owning sprint (phase 20). Null when not in a sprint; optional so
   // pre-20 cached payloads still parse.
   readonly sprint_id?: string | null;
+  // GitHub-integration pill (phase 21), INDEPENDENT of column position — a
+  // ticket can read "PR in review" while sitting in Todo. Optional so
+  // pre-21 cached payloads still parse.
+  readonly external_state?: string | null;
+  readonly external_state_updated_at_ms?: number | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;

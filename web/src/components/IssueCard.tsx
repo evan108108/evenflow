@@ -12,6 +12,7 @@ import { For, Show, onCleanup, onMount } from "solid-js";
 import type { Issue } from "../lib/types";
 import type { DndHandle } from "../lib/dnd";
 import { typeLabel } from "../lib/columns";
+import { externalStateLabel, externalStateTone, primaryPrLink, prUrl } from "../lib/externalState";
 import { attachParallax } from "../lib/parallax";
 import { Author } from "./Author";
 import { IssueRef } from "./IssueRef";
@@ -28,6 +29,36 @@ const CardMeta = (props: { issue: Issue }) => (
       </Show>
     </div>
     <div class="title">{props.issue.title}</div>
+    {/* The external_state pill sits ABOVE the chip row and is deliberately
+        not one of them: it reports a fact about the world outside the
+        board, not a board-local attribute like estimate or label. */}
+    <Show when={props.issue.external_state}>
+      {(state) => {
+        const link = () => primaryPrLink(props.issue.github_links);
+        return (
+          <div class="card-external-state">
+            <a
+              class={`external-state-pill tone-${externalStateTone(state())}`}
+              classList={{ "is-link": link() !== null }}
+              href={link() === null ? undefined : prUrl(link()!)}
+              target={link() === null ? undefined : "_blank"}
+              rel="noopener noreferrer"
+              title={
+                link() === null
+                  ? externalStateLabel(state())
+                  : `${externalStateLabel(state())} — ${link()!.repo}#${link()!.pr}`
+              }
+              // The card's pointerdown starts a drag; a pill click must
+              // open the PR instead of dragging the card behind it.
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {externalStateLabel(state())}
+            </a>
+          </div>
+        );
+      }}
+    </Show>
     <div class="chips">
       <Show when={props.issue.estimate !== null}>
         <span class="chip estimate figure">{props.issue.estimate}</span>
