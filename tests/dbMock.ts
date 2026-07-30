@@ -1101,6 +1101,12 @@ export const makeDbMock = (): DbMock => {
         }
         // Sprint-start's backlog sweep — must precede the generic
         // board-list handler, which shares its prefix.
+        // Phase 21+ start-sprint sweep: every active-container issue.
+        if (sql === "SELECT * FROM issueCache WHERE board_id = ? AND container = 'active'") {
+          return issues
+            .filter((r) => r["board_id"] === params[0] && r["container"] === "active")
+            .map((r) => ({ ...r })) as R[];
+        }
         // Phase 21a: delete-planning-sprint enumeration.
         if (sql === "SELECT * FROM issueCache WHERE sprint_id = ?") {
           return issues

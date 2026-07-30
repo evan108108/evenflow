@@ -287,6 +287,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
 
+      // Backlog members promote to active — same behavior as before.
       const rows = yield* db.queryAll(
         "SELECT * FROM issueCache WHERE board_id = ? AND sprint_id = ? AND container = 'backlog'",
         [board.id, current.id],
@@ -315,10 +316,51 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         });
       }
 
-      // Snapshot the committed points at start. All CURRENT members
-      // (whichever container they sit in) count — a rare case where a
-      // sprint already holds container=active issues (say, carried from
-      // the previous sprint) still commits their points to this sprint.
+      // Phase 21 remodel — starting a sprint IS a commitment to what's
+      // in-flight. Any container=active issue not already in a done column
+      // and not already assigned to this sprint auto-joins the sprint (its
+      // sprint_id rewrites, membership audit updates). Anything the user
+      // deliberately wants OUT of this sprint they can drag off after start.
+      const boardRow = yield* db.queryFirst("SELECT * FROM boardCache WHERE id = ?", [board.id]);
+      if (boardRow === null) return yield* new NotFoundError({ reason: "board" });
+      const boardShape = parseBoardRow(boardRow);
+      const activeRows = yield* db.queryAll(
+        "SELECT * FROM issueCache WHERE board_id = ? AND container = 'active'",
+        [board.id],
+      );
+      let sweptIn = 0;
+      for (const row of activeRows) {
+        const issue = parseIssueRow(row);
+        if (issue.sprint_id === current.id) continue;
+        if (isDoneStatus(boardShape.columns, issue.status)) continue;
+        // Close any open membership on the issue's previous sprint (if any).
+        if (issue.sprint_id !== null) {
+          yield* db.execute(
+            "UPDATE sprintMembership SET removed_at_ms = ? WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL",
+            [now, issue.sprint_id, issue.id],
+          );
+        }
+        yield* db.execute(
+          "UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?",
+          [current.id, now, issue.id],
+        );
+        yield* db.execute(
+          "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
+          [crypto.randomUUID(), current.id, issue.id, now],
+        );
+        yield* emitSecureBoardEvent(board.id, {
+          kind: "issue.updated",
+          board_id: board.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: { ...issue, sprint_id: current.id, updated_at_ms: now } },
+        });
+        sweptIn += 1;
+      }
+
+      // Snapshot the committed points at start — sum over all current
+      // members (the backlog ones just promoted, sprint pre-planned ones,
+      // and the just-swept active ones).
       const allMembers = yield* db.queryAll(
         "SELECT estimate FROM issueCache WHERE sprint_id = ?",
         [current.id],
@@ -338,6 +380,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           board: board.slug,
           sprint: current.id,
           issues_moved: rows.length,
+          issues_swept_in: sweptIn,
           points_committed_start: pointsCommitted,
         },
       });
@@ -349,6 +392,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           points_committed_start: pointsCommitted,
         },
         issues_moved: rows.length,
+        issues_swept_in: sweptIn,
       };
     });
     return runJson(c, program);

@@ -456,6 +456,52 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(h.db.sprintMemberships.some((m) => m["sprint_id"] === s2.id)).toBe(false);
   });
 
+  it("start sweeps non-Done active-container issues into the sprint", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    // Pre-existing active card, not previously assigned to any sprint.
+    const orphan = await createIssue(h, { title: "orphan", container: "active", estimate: 4 });
+    // Pre-existing active card that's already DONE (column category=done).
+    const done = await createIssue(h, { title: "done", container: "active", estimate: 8 });
+    const cols = JSON.parse(h.db.boards[0]!["columns"] as unknown as string) as Array<{
+      id: string;
+      category: string;
+    }>;
+    const doneCol = cols.find((c) => c.category === "done")!;
+    await h.app.request(
+      `/api/v0/issues/${done.id}/transition`,
+      jsonReq("POST", { column_id: doneCol.id }),
+      {},
+    );
+    // Backlog card pre-assigned to the sprint (the normal path).
+    const planned = await createIssue(h, { title: "planned", estimate: 3 });
+    await addIssue(h, sprint.id, planned.id);
+
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      jsonReq("POST", {}),
+      {},
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issues_moved: number; issues_swept_in: number };
+    expect(body.issues_moved).toBe(1); // planned (backlog→active)
+    expect(body.issues_swept_in).toBe(1); // orphan (active, non-done, no sprint)
+
+    expect(h.db.issues.find((r) => r["id"] === orphan.id)!["sprint_id"]).toBe(sprint.id);
+    expect(h.db.issues.find((r) => r["id"] === done.id)!["sprint_id"] ?? null).toBeNull();
+    // Committed points include all three: planned(3) + orphan(4). Done issue excluded.
+    // Actually done is not in the sprint, so its 8 isn't counted. planned=3 + orphan=4 = 7.
+    expect(h.db.sprints[0]!["points_committed_start"]).toBe(7);
+
+    // Audit: orphan gets an open membership row.
+    expect(
+      h.db.sprintMemberships.some(
+        (m) => m["sprint_id"] === sprint.id && m["issue_id"] === orphan.id && m["removed_at_ms"] === null,
+      ),
+    ).toBe(true);
+  });
+
   it("start snapshots points_committed_start", async () => {
     const h = makeHarness();
     await createBoard(h);
