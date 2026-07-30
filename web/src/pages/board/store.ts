@@ -13,6 +13,7 @@ import {
   CONTAINER_OF_MOVE,
   type Board,
   type Comment,
+  type Container,
   type ContainerMove,
   type FeedItem,
   type Issue,
@@ -75,6 +76,9 @@ const errorText = (e: unknown): string => {
   return "request failed";
 };
 
+/** Per-stream page size. Server caps at 100; 50 keeps first paint quick. */
+export const PAGE_SIZE = 50;
+
 export const createBoardStore = (
   slug: string,
   run: RunApi = runOnApp,
@@ -91,6 +95,149 @@ export const createBoardStore = (
 
   const api = <A>(f: (client: ApiClientService) => Effect.Effect<A, ApiError>) =>
     run(Effect.flatMap(ApiClient, f));
+
+  // ── paged streams (phase 22) ────────────────────────────────────────────
+  //
+  // Every visible list is its own cursor-paged stream, keyed
+  // `${container}:${columnId ?? ""}`. Boards used to fetch a flat
+  // `?limit=100` and silently drop card 101+; streams remove the ceiling.
+  //
+  // `issues()` deliberately remains the UNION of every loaded page rather
+  // than being replaced by per-stream accessors. Twelve call sites read it
+  // — deep-link resolution, sprint grouping, velocity estimates, the
+  // reorder neighbour lookup — and all of them want "the cards we have",
+  // not "one column's page". Keeping the union means paging is additive:
+  // the streams decide what to FETCH, the existing views keep deciding what
+  // to SHOW. (Deviation from the brief, which had issues() stop returning
+  // everything; same user-visible result, far smaller blast radius.)
+  const [streamTick, setStreamTick] = createSignal(0);
+  interface StreamState {
+    hasMore: boolean;
+    nextAfter: string | null;
+    loading: boolean;
+    started: boolean;
+    /** Guards against a second in-flight page while one is already running. */
+    inflight: Promise<void> | null;
+  }
+  const streams = new Map<string, StreamState>();
+  const streamKey = (container: Container, columnId?: string | null) =>
+    `${container}:${columnId ?? ""}`;
+
+  const mergeIssues = (incoming: Issue[]) =>
+    setIssues((list) => {
+      const byId = new Map(list.map((i) => [i.id, i]));
+      for (const i of incoming) byId.set(i.id, i);
+      return [...byId.values()];
+    });
+
+  const fetchPage = async (
+    container: Container,
+    columnId: string | null,
+    after: string | null,
+  ) => {
+    const params = new URLSearchParams({ container, limit: String(PAGE_SIZE) });
+    if (columnId !== null) params.set("column_id", columnId);
+    if (after !== null) params.set("after", after);
+    return api((c) =>
+      c.get<{ issues: Issue[]; has_more: boolean; next_after: string | null }>(
+        `${apiBase}/issues?${params.toString()}`,
+      ),
+    );
+  };
+
+  const stateFor = (key: string): StreamState => {
+    let s = streams.get(key);
+    if (s === undefined) {
+      s = { hasMore: true, nextAfter: null, loading: false, started: false, inflight: null };
+      streams.set(key, s);
+    }
+    return s;
+  };
+
+  /**
+   * A stream handle for one visible list. Views call `loadNext()` from an
+   * IntersectionObserver sentinel; repeated calls while a page is in flight
+   * return the SAME promise, so a fast scroll cannot fire two requests for
+   * the same cursor (which would double-append and skip a page).
+   */
+  const streamFor = (container: Container, columnId?: string | null) => {
+    const key = streamKey(container, columnId);
+    const loadNext = (): Promise<void> => {
+      const s = stateFor(key);
+      if (s.inflight !== null) return s.inflight;
+      if (s.started && !s.hasMore) return Promise.resolve();
+      s.loading = true;
+      s.started = true;
+      setStreamTick((n) => n + 1);
+      const p = (async () => {
+        try {
+          const page = await fetchPage(container, columnId ?? null, s.nextAfter);
+          mergeIssues(page.issues);
+          s.hasMore = page.has_more;
+          s.nextAfter = page.next_after;
+          // Deliberately does NOT clear lastError on success. Stream
+          // refreshes run right after a mutation, including a FAILED one —
+          // clearing here would wipe the rollback's error message before
+          // the user ever saw it. Errors are cleared by the next
+          // successful user action, not by background paging.
+        } catch (e) {
+          // Stop the stream on error rather than letting the sentinel
+          // retry forever against a failing endpoint.
+          s.hasMore = false;
+          setLastError(errorText(e));
+        } finally {
+          s.loading = false;
+          s.inflight = null;
+          setStreamTick((n) => n + 1);
+        }
+      })();
+      s.inflight = p;
+      return p;
+    };
+    return {
+      key,
+      loadNext,
+      hasMore: () => {
+        streamTick();
+        const s = stateFor(key);
+        return s.hasMore;
+      },
+      loading: () => {
+        streamTick();
+        return stateFor(key).loading;
+      },
+      started: () => {
+        streamTick();
+        return stateFor(key).started;
+      },
+      /** Drop pagination state so the next loadNext refetches page one. */
+      reset: () => {
+        streams.set(key, {
+          hasMore: true,
+          nextAfter: null,
+          loading: false,
+          started: false,
+          inflight: null,
+        });
+        setStreamTick((n) => n + 1);
+      },
+    };
+  };
+
+  /**
+   * Refetch the first page of both sides of a move. Called after
+   * transition/moveContainer so a card that left one stream and joined
+   * another is reflected without reloading the whole board.
+   */
+  const refreshStreams = async (keys: Array<[Container, string | null]>) => {
+    await Promise.all(
+      keys.map(async ([container, columnId]) => {
+        const s = streamFor(container, columnId);
+        s.reset();
+        await s.loadNext();
+      }),
+    );
+  };
 
   const replaceIssue = (updated: Issue) =>
     setIssues((list) => list.map((i) => (i.id === updated.id ? updated : i)));
@@ -111,14 +258,20 @@ export const createBoardStore = (
   const load = async () => {
     setLoading(true);
     try {
-      const [b, list, sp] = await Promise.all([
+      const [b, sp] = await Promise.all([
         api((c) => c.get<{ board: Board }>(apiBase)),
-        api((c) => c.get<{ issues: Issue[] }>(`${apiBase}/issues?limit=100`)),
         api((c) => c.get<{ sprints: Sprint[] }>(`${apiBase}/sprints`)),
       ]);
       setBoard(b.board);
-      setIssues(list.issues);
       setSprints(sp.sprints);
+      // Prime the first page of every stream the board can show. The
+      // sentinels take over from here, but priming means first paint has
+      // cards even in columns that start off-screen horizontally — a
+      // sentinel that is never scrolled into view would otherwise leave
+      // its column looking empty rather than unloaded.
+      setIssues([]);
+      streams.clear();
+      await primeStreams(b.board);
       setLastError(null);
     } catch (e) {
       setLastError(errorText(e));
@@ -127,10 +280,26 @@ export const createBoardStore = (
     }
   };
 
+  /**
+   * Every stream a board can display: one per enabled column, plus the two
+   * side-lists. Used to prime first paint and to re-prime after a refetch.
+   */
+  const allStreamKeys = (b: Board | null): Array<[Container, string | null]> => {
+    const cols = b?.columns ?? [];
+    return [
+      ...cols.filter((col) => col.enabled).map((col): [Container, string | null] => ["active", col.id]),
+      ["backlog", null],
+      ["icebox", null],
+    ];
+  };
+
+  const primeStreams = (b: Board | null) => refreshStreams(allStreamKeys(b));
+
   const refetchIssues = async () => {
     try {
-      const list = await api((c) => c.get<{ issues: Issue[] }>(`${apiBase}/issues?limit=100`));
-      setIssues(list.issues);
+      setIssues([]);
+      streams.clear();
+      await primeStreams(board());
     } catch {
       // Quiet refresh — a failed background refetch keeps the current view.
     }
@@ -169,6 +338,13 @@ export const createBoardStore = (
       );
       return res.issue;
     });
+    // Re-prime BOTH sides of the move. The optimistic patch already moved
+    // the card locally; this reconciles each stream's cursor, because the
+    // source stream now has one fewer row before its cursor and the target
+    // one more — leaving them stale would skip a card on the next page.
+    const from: [Container, string | null] =
+      issue.container === "active" ? ["active", issue.column_id] : [issue.container, null];
+    await refreshStreams([from, ["active", to.id]]);
   };
 
   /**
@@ -284,8 +460,14 @@ export const createBoardStore = (
 
   const moveContainer = (issue: Issue, move: ContainerMove) => {
     if (CONTAINER_OF_MOVE[move] === issue.container) return Promise.resolve();
-    return optimistic(issue.id, { container: CONTAINER_OF_MOVE[move] }, async () => {
+    const target = CONTAINER_OF_MOVE[move];
+    const from: [Container, string | null] =
+      issue.container === "active" ? ["active", issue.column_id] : [issue.container, null];
+    const to: [Container, string | null] =
+      target === "active" ? ["active", issue.column_id] : [target, null];
+    return optimistic(issue.id, { container: target }, async () => {
       const res = await api((c) => c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/${move}`, {}));
+      void refreshStreams([from, to]);
       return res.issue;
     });
   };
@@ -390,6 +572,8 @@ export const createBoardStore = (
     apiBase,
     board,
     issues,
+    streamFor,
+    refreshStreams,
     sprints,
     loading,
     lastError,

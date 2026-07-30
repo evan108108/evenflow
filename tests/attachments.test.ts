@@ -110,7 +110,7 @@ describe("upload", () => {
     expect(body.code).toBe("size_exceeded");
     expect(body.message).toContain("5.0MB per file");
     expect(body.message).toContain("Set up your own bucket");
-    expect(body.link).toBe("/@tester/settings/storage");
+    expect(body.link).toBe("/@tester/settings#storage");
     expect(h.blossom.calls).toHaveLength(0);
   });
 

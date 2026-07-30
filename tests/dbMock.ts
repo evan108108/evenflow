@@ -117,22 +117,62 @@ export const makeDbMock = (): DbMock => {
     params: ReadonlyArray<unknown>,
     at: number,
   ): [Row[], number] => {
-    if (sql.includes("AND status = ?")) {
-      return [rows.filter((r) => r["status"] === params[at]), at + 1];
+    // Filters COMPOSE since phase 22, so this walks EVERY present clause in
+    // the exact order routes/issues.ts appends them and advances the param
+    // cursor once per clause. The previous early-return-on-first-match
+    // shape silently mis-bound params the moment two filters were combined
+    // (clause 2 read clause 1's value), which reads as an empty result
+    // rather than an error — keep this list in lockstep with the route.
+    let out = rows;
+    let i = at;
+    // The column_id clause embeds "... IS NULL AND status = ?", which makes
+    // a naive includes("AND status = ?") fire for a request that has no
+    // status filter at all — binding the container's param as a status and
+    // silently emptying the result. Mask that clause out before probing for
+    // the others; it is handled last, matching the route's param order.
+    const COLUMN_CLAUSE = " AND (column_id = ? OR (column_id IS NULL AND status = ?))";
+    const hasColumnClause = sql.includes(COLUMN_CLAUSE);
+    const probe = hasColumnClause ? sql.replace(COLUMN_CLAUSE, "") : sql;
+    if (probe.includes("AND status = ?")) {
+      out = out.filter((r) => r["status"] === params[i]);
+      i += 1;
     }
-    if (sql.includes("AND container = ?")) {
-      return [rows.filter((r) => r["container"] === params[at]), at + 1];
+    if (probe.includes("AND container = ?")) {
+      out = out.filter((r) => r["container"] === params[i]);
+      i += 1;
     }
-    if (sql.includes("AND assignee_pubkey = ?")) {
-      return [rows.filter((r) => r["assignee_pubkey"] === params[at]), at + 1];
+    if (probe.includes("AND assignee_pubkey = ?")) {
+      out = out.filter((r) => r["assignee_pubkey"] === params[i]);
+      i += 1;
     }
-    if (sql.includes("json_each")) {
-      return [
-        rows.filter((r) => (JSON.parse(str(r["labels"])) as string[]).includes(str(params[at]))),
-        at + 1,
-      ];
+    if (probe.includes("json_each")) {
+      out = out.filter((r) => (JSON.parse(str(r["labels"])) as string[]).includes(str(params[i])));
+      i += 1;
     }
-    return [rows, at];
+    if (probe.includes("AND sprint_id = ?")) {
+      out = out.filter((r) => r["sprint_id"] === params[i]);
+      i += 1;
+    }
+    if (probe.includes("title LIKE ?")) {
+      // Route sends the same needle twice (title OR body), already
+      // %-wrapped and escaped.
+      const needle = str(params[i]).replace(/^%|%$/g, "").replace(/\\([\\%_])/g, "$1");
+      out = out.filter(
+        (r) =>
+          str(r["title"]).toLowerCase().includes(needle.toLowerCase()) ||
+          str(r["body"] ?? "").toLowerCase().includes(needle.toLowerCase()),
+      );
+      i += 2;
+    }
+    if (hasColumnClause) {
+      const colId = params[i];
+      const colName = params[i + 1];
+      out = out.filter(
+        (r) => r["column_id"] === colId || (r["column_id"] == null && r["status"] === colName),
+      );
+      i += 2;
+    }
+    return [out, i];
   };
 
   const service: DbService = {
@@ -922,7 +962,17 @@ export const makeDbMock = (): DbMock => {
       Effect.sync(() => {
         // Reorder's column-mates query — must precede the generic
         // board-list handler, which shares its prefix.
-        if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND container = ? AND (column_id = ?")) {
+        // Reorder's column-mates fetch (issues.ts:1030). Since phase 22 the
+        // paged LIST query can begin with this exact prefix too — same
+        // board/container/column clauses — so this branch must additionally
+        // require the ABSENCE of an ORDER BY, which only the list query
+        // carries. Without that guard this handler swallows the list query
+        // and returns it unfiltered, unordered and unlimited: the caller
+        // then sees rows.length > limit forever and the scroll never ends.
+        if (
+          sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND container = ? AND (column_id = ?") &&
+          !sql.includes("ORDER BY")
+        ) {
           return issues
             .filter(
               (r) =>
@@ -949,6 +999,35 @@ export const makeDbMock = (): DbMock => {
           let rows = issuesForBoardDesc(params[0]);
           let at = 1;
           [rows, at] = applyIssueFilter(sql, rows, params, at);
+          // Phase 22 position stream: ORDER BY (position IS NULL) ASC,
+          // position ASC, id DESC. The NULL-position tail sorts LAST — a
+          // scalar comparison cannot express that, which is why both the
+          // sort and the cursor below work on the (isNull, value, id) tuple.
+          const positionStream = sql.includes("ORDER BY (position IS NULL) ASC");
+          if (positionStream) {
+            rows = [...rows].sort((a, b) => {
+              const an = a["position"] == null ? 1 : 0;
+              const bn = b["position"] == null ? 1 : 0;
+              if (an !== bn) return an - bn;
+              const ap = num(a["position"] ?? 0);
+              const bp = num(b["position"] ?? 0);
+              if (ap !== bp) return ap - bp;
+              return str(b["id"]).localeCompare(str(a["id"]));
+            });
+          }
+          if (sql.includes("AND ((position IS NULL) > ?")) {
+            const isNull = num(params[at]);
+            const value = num(params[at + 2]);
+            const afterId = str(params[at + 5]);
+            at += 6;
+            rows = rows.filter((r) => {
+              const rn = r["position"] == null ? 1 : 0;
+              const rp = num(r["position"] ?? 0);
+              if (rn !== isNull) return rn > isNull;
+              if (rp !== value) return rp > value;
+              return str(r["id"]) < afterId;
+            });
+          }
           if (sql.includes("(updated_at_ms < ?")) {
             const [upd, , afterId] = [params[at], params[at + 1], params[at + 2]];
             at += 3;

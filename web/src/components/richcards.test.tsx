@@ -83,8 +83,21 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
  * markdown renderer, the shiki bundle) resolve across a variable number of
  * macrotasks, so any single-flush assertion on their output is a flake.
  */
-const waitFor = async (pred: () => boolean, tries = 40) => {
-  for (let i = 0; i < tries && !pred(); i++) await flush();
+/**
+ * Poll until `pred` holds or the deadline passes.
+ *
+ * Deliberately time-based, not tick-based. The previous "40 flushes"
+ * budget raced the LAZY CHUNK IMPORT the preview pane triggers on first
+ * render — under load the dynamic import needed more turns than the budget
+ * allowed and the test failed intermittently (~1 run in 3) with no code
+ * change behind it. A wall-clock deadline decouples the wait from how busy
+ * the machine is.
+ */
+const waitFor = async (pred: () => boolean, timeoutMs = 3000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!pred() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 };
 
 describe("MarkdownEditor", () => {
@@ -264,7 +277,7 @@ describe("AttachmentsPanel", () => {
   it("surfaces the actionable upload rejection with its settings link", async () => {
     const onUpload = vi.fn(async () => ({
       message: "This file is 6.3MB — Evenflow's default storage caps at 5.0MB per file. Set up your own bucket to upload larger files.",
-      link: "/@acme/settings/storage",
+      link: "/@acme/settings#storage",
     }));
     const { container, cleanup } = mount(() => (
       <AttachmentsPanel
@@ -283,7 +296,7 @@ describe("AttachmentsPanel", () => {
     await flush();
     const error = container.querySelector(".attachment-error")!;
     expect(error.textContent).toContain("caps at 5.0MB per file");
-    expect(error.querySelector("a")!.getAttribute("href")).toBe("/@acme/settings/storage");
+    expect(error.querySelector("a")!.getAttribute("href")).toBe("/@acme/settings#storage");
     cleanup();
   });
 });

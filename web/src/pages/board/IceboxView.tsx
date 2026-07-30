@@ -3,6 +3,7 @@
 
 import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
+import { StreamSentinel } from "../../components/StreamSentinel";
 import { moveZone, type DndHandle } from "../../lib/dnd";
 import type { BoardStore } from "./store";
 
@@ -52,6 +53,7 @@ export const IceboxView = (props: {
           <For each={iced()}>
             {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
           </For>
+      <StreamSentinel stream={props.store.streamFor("icebox")} />
         </Show>
       </section>
     </div>
