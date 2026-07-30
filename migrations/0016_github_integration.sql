@@ -1,4 +1,4 @@
--- Evenflow D1 schema — migration 0015: GitHub integration (inbound).
+-- Evenflow D1 schema — migration 0016: GitHub integration (inbound).
 --
 -- NAMING: the pre-existing webhookRoutes / webhookDeliveries tables (0001)
 -- are OUTBOUND — evenflow calling someone else's URL. Everything here is
