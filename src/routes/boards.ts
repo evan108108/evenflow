@@ -220,9 +220,15 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         derived !== null
           ? derived
           : yield* validatePrefix(body["issue_prefix"] as string);
-
-      // Target org: the mounted org (must administer it) or the caller's
-      // personal org (auto-created — bootstrap may not have run yet).
+      // Create-time visibility: private is the default (safer for a mixed
+      // public/internal use), but a fresh board still lands in the "private
+      // but not yet encrypted" third state — audience minting only happens
+      // on an explicit PATCH visibility=private, so opting in at create
+      // time doesn't silently pay the crypto tax.
+      const createVisibility =
+        body["visibility"] === undefined
+          ? "private"
+          : yield* validateVisibility(body["visibility"]);
       const orgSlugParam = c.req.param("org_slug");
       let org: OrgShape;
       if (orgSlugParam !== undefined) {
@@ -265,7 +271,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         issue_prefix,
         next_issue_number: 1,
         org_id: org.id,
-        visibility: "private",
+        visibility: createVisibility,
         default_sprint_days: DEFAULT_SPRINT_DAYS,
         archived_at_ms: null,
         created_at_ms: now,
@@ -286,7 +292,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           issue_prefix,
           1,
           org.id,
-          "private",
+          createVisibility,
           now,
           now,
         ],
@@ -479,17 +485,15 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       // Privacy is ONE setting since migration 0015: `visibility`. Asking for
       // 'private' on a board whose audience hasn't been minted yet IS the
       // privacy flip — it mints the audience below (phase 16.5 machinery).
-      // Going back to 'public' is a v1 409 once encryption is live, because
-      // unwrapping already-published ciphertext is future work; a board that
-      // is private but never encrypted (the create-time default) can still
-      // be made public freely.
+      // Going back to 'public' after encryption was live is fine: past
+      // gift-wrapped events stay on substrate as ciphertext forever (the
+      // audience_pubkey and grants stay too, so members-at-encryption-time
+      // can keep decrypting their history), and new events publish plaintext
+      // from the flip onward. The UI's warning states this plainly.
       //
       // A pre-0015 client may still send `is_encrypted` — accepted and
       // ignored, `visibility` is authoritative.
       const flipToPrivate = requestedVisibility === "private" && !current.encryption_active;
-      if (visibility === "public" && current.encryption_active) {
-        return yield* new ConflictError({ reason: "unsupported-private-to-public" });
-      }
       if (flipToPrivate) {
         // The flip itself is owner-only (the rest of the PATCH stays admin).
         yield* resolveBoardScope(

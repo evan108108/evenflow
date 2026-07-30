@@ -380,7 +380,8 @@ export const BoardSettings = () => {
                   Adding or removing members rotates keys.
                 </span>
                 <span class="visibility-warning">
-                  Private→public conversion is not supported in v1.
+                  Encrypted events stay encrypted — going back to public only publishes new events
+                  in the clear.
                 </span>
               </span>
             </label>
@@ -391,8 +392,9 @@ export const BoardSettings = () => {
               rather than implying ciphertext that doesn't exist yet. */}
           <Show when={board()?.board.encryption_active === true}>
             <p class="muted" style={{ "font-size": "0.85rem", "margin-top": "0.8rem" }}>
-              Encryption is active (epoch {board()?.board.audience_epoch ?? 1}) — this board can no
-              longer be made public.
+              Encryption is active (epoch {board()?.board.audience_epoch ?? 1}). Switching back to
+              public publishes new events in the clear — past encrypted events stay encrypted on
+              the substrate for the members who were granted at write time.
             </p>
           </Show>
           <Show

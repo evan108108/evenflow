@@ -12,6 +12,7 @@ export interface NewBoardInput {
   issue_prefix?: string;
   columns?: string[];
   member_policy?: "open" | "invite";
+  visibility?: "public" | "private";
 }
 
 /** The slice of the POST /boards response the modal needs. */
@@ -40,6 +41,7 @@ export const NewBoardModal = (props: {
   const [prefix, setPrefix] = createSignal("");
   const [prefixTouched, setPrefixTouched] = createSignal(false);
   const [description, setDescription] = createSignal("");
+  const [visibility, setVisibility] = createSignal<"public" | "private">("private");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // Set when the server auto-suffixed a taken prefix — the modal stays open
@@ -72,6 +74,7 @@ export const NewBoardModal = (props: {
         slug: s,
         title: t,
         issue_prefix: p,
+        visibility: visibility(),
         ...(description().trim() === "" ? {} : { description: description().trim() }),
       });
       if (board.issue_prefix === p) props.onDone(board);
@@ -151,6 +154,39 @@ export const NewBoardModal = (props: {
             value={description()}
             onInput={(e) => setDescription(e.currentTarget.value)}
           />
+          <fieldset class="visibility-picker">
+            <legend>Visibility</legend>
+            <label class="visibility-option">
+              <input
+                type="radio"
+                name="nb-visibility"
+                value="private"
+                checked={visibility() === "private"}
+                onChange={() => setVisibility("private")}
+              />
+              <span>
+                <strong>Private</strong>
+                <span class="muted">
+                  Members-only. Turn on encryption in Board Settings any time.
+                </span>
+              </span>
+            </label>
+            <label class="visibility-option">
+              <input
+                type="radio"
+                name="nb-visibility"
+                value="public"
+                checked={visibility() === "public"}
+                onChange={() => setVisibility("public")}
+              />
+              <span>
+                <strong>Public</strong>
+                <span class="muted">
+                  Anyone with the URL can read events from the 4a substrate.
+                </span>
+              </span>
+            </label>
+          </fieldset>
           <Show when={error() !== null}>
             <p class="muted" style={{ color: "var(--color-warn, #a35b2f)", margin: "0.5rem 0 0" }}>
               {error()}

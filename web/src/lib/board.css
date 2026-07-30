@@ -1191,10 +1191,25 @@
 }
 
 /* ── the unified visibility control (0015) ── */
-.visibility-choice {
+.visibility-choice,
+.visibility-picker {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.visibility-picker {
+  border: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+}
+.visibility-picker legend {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  padding: 0;
+  margin-bottom: 0.35rem;
 }
 .visibility-option {
   display: flex;

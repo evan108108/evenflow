@@ -118,13 +118,26 @@ describe("privacy flip (PATCH visibility)", () => {
     expect(paths).toContain("/v0/audience/raw/grant");
   });
 
-  it("once encryption is live the flip is one-way: private→public answers 409", async () => {
+  it("private→public after encryption is live: new events go plaintext, past ciphertext stays", async () => {
     const h = makeHarness();
     await createBoard(h);
     await flipPrivate(h);
+    // Sanity: the audience is minted and the board is encryption_active.
+    expect(h.db.audienceKeys).toHaveLength(1);
+    const audiencePubkeyBefore = h.db.boards[0]!["audience_pubkey"];
+    expect(audiencePubkeyBefore).toMatch(/^[0-9a-f]{64}$/);
+
     const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "conflict", reason: "unsupported-private-to-public" });
+    expect(res.status).toBe(200);
+    const { board } = (await res.json()) as { board: BoardWire };
+    expect(board.visibility).toBe("public");
+    // Encryption is no longer active (visibility now public), but the key
+    // material stays so members-at-encryption-time can keep reading their
+    // history off substrate — going back to public affects the FORWARD
+    // publish path, not the past.
+    expect(board.encryption_active).toBe(false);
+    expect(board.audience_pubkey).toBe(audiencePubkeyBefore);
+    expect(h.db.audienceKeys).toHaveLength(1);
   });
 
   // Boards are BORN visibility='private' with no audience. That state is
