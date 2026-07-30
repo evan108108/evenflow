@@ -16,7 +16,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Audience, BoardEmitter, Db, DbError, FourA, bootstrap } from "../effects";
+import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
@@ -150,7 +150,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
 
   const runJson = async (
     c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, SprintsFailure, Db | AuditLog | BoardEmitter | Audience | FourA>,
+    program: Effect.Effect<unknown, SprintsFailure, Db | AuditLog | BoardEmitter | Audience>,
     okStatus: 200 | 201 = 200,
   ) => {
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -628,8 +628,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     subject: TideSubject,
     input: TideInput,
     subjectStartedAtMs: number,
-    serviceJwt: string | undefined,
-  ): Effect.Effect<unknown, DbError, Db | Audience | BoardEmitter | FourA> =>
+  ): Effect.Effect<unknown, DbError, Db | Audience | BoardEmitter> =>
     Effect.gen(function* () {
       const readings = computeTide(input);
       const closed = yield* rollForwardNow(subject, readings, subjectStartedAtMs);
@@ -642,7 +641,6 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           snapshot_id: closed.snapshot_id,
           reading: closed.reading,
           at_ms: now,
-          service_jwt: serviceJwt,
         });
       }
       return {
@@ -689,7 +687,6 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         { board_id: board.id, sprint_id: sprint.id },
         input,
         sprint.created_at_ms,
-        c.env.EVENFLOW_TIDE_SERVICE_JWT,
       );
     });
     return runJson(c, program);
@@ -711,7 +708,6 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         { board_id: board.id, sprint_id: null },
         input,
         boardShape.created_at_ms,
-        c.env.EVENFLOW_TIDE_SERVICE_JWT,
       );
     });
     return runJson(c, program);

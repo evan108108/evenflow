@@ -276,15 +276,6 @@ export interface BuildSprintTideInput {
 export function buildSprintTide(input: BuildSprintTideInput): EventTemplate {
   const subject = input.sprintId ?? input.boardId;
   const scope = input.sprintId === undefined ? "board" : "sprint";
-  const tags: string[][] = [
-    ["d", `${subject}:${input.day}`],
-    ["fa:context", FA_CONTEXT_V0],
-    ["alt", `Tide ${input.day}: ${input.remainingPts} of ${input.committedPts} pts remaining`],
-    ["fa:board", input.boardId],
-    ["fa:day", input.day],
-    ["fa:scope", scope],
-  ];
-  if (input.sprintId !== undefined) tags.push(["fa:sprint", input.sprintId]);
   const content = JSON.stringify({
     "@context": FA_CONTEXT_V0,
     "@type": "KanbanTideSnapshot",
@@ -294,6 +285,16 @@ export function buildSprintTide(input: BuildSprintTideInput): EventTemplate {
     adds_today: input.addsToday,
     drops_today: input.dropsToday,
   });
+  const tags: string[][] = [
+    ["d", `${subject}:${input.day}`],
+    ["fa:context", FA_CONTEXT_V0],
+    ["alt", `Tide ${input.day}: ${input.remainingPts} of ${input.committedPts} pts remaining`],
+    ["blake3", blake3ContentTag(content)],
+    ["fa:board", input.boardId],
+    ["fa:day", input.day],
+    ["fa:scope", scope],
+  ];
+  if (input.sprintId !== undefined) tags.push(["fa:sprint", input.sprintId]);
   return {
     kind: KIND_SPRINT_TIDE,
     created_at: input.createdAt ?? nowSec(),

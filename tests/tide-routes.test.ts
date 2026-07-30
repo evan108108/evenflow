@@ -203,7 +203,9 @@ describe("tide roll-forward", () => {
       day_start_ms: DAY0,
       committed_pts: 5,
       remaining_pts: 5,
-      substrate_event_id: null, // publish lands in the 4a phase
+      // Public board: the 30560 is signed and posted, so the row is stamped
+      // with that event's id. tide-publish.test.ts covers the publish itself.
+      substrate_event_id: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
 
     // A second read the same day must not write a duplicate.

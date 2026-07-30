@@ -35,6 +35,16 @@ export class AudienceError extends Data.TaggedError("AudienceError")<{
 export interface AudienceService {
   /** Server audience keypair, or null when EVENFLOW_AUDIENCE_SECRET is unset. */
   readonly serverKeys: () => ServerAudienceKeys | null;
+  /**
+   * Keypair signing PUBLIC kanban events — today just kind-30560 tide
+   * snapshots (EFB-22). Null when EVENFLOW_KANBAN_SECRET is unset, which
+   * degrades to "cache in D1, don't publish" rather than failing anything.
+   *
+   * Separate from serverKeys on purpose: that key seals private-board
+   * material at rest, this one signs events the whole world reads. Same
+   * no-key-reuse rule the other four secrets follow.
+   */
+  readonly kanbanKeys: () => ServerAudienceKeys | null;
   /** NIP-98-signed POST to /v0/audience/raw/<path suffix>. */
   readonly rawPost: (
     path: string,
@@ -50,8 +60,10 @@ export const AudienceLive: Layer.Layer<Audience, never, AppEnv> = Layer.effect(
   Effect.gen(function* () {
     const env = yield* AppEnv;
     const keys = deriveServerAudienceKeys(env.EVENFLOW_AUDIENCE_SECRET);
+    const kanban = deriveServerAudienceKeys(env.EVENFLOW_KANBAN_SECRET);
     return {
       serverKeys: () => keys,
+      kanbanKeys: () => kanban,
       rawPost: (path, body, signerPriv) =>
         Effect.tryPromise({
           try: async () => {
@@ -95,23 +107,32 @@ export const bestEffortAudience = <A>(
 export interface AudienceTestHandle {
   readonly layer: Layer.Layer<Audience>;
   readonly calls: Array<{ path: string; body: unknown }>;
-  /** Set true to make every rawPost fail (substrate-outage tests). */
-  flags: { failPosts: boolean };
+  /**
+   * failPosts: every rawPost fails (substrate-outage tests).
+   * noKanbanKey: kanbanKeys() returns null (EVENFLOW_KANBAN_SECRET unset).
+   */
+  flags: { failPosts: boolean; noKanbanKey: boolean };
 }
 
 /** Deterministic test secret — any fixed 32-byte hex works for the mock. */
 export const AUDIENCE_TEST_SECRET =
   "5f0e17a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8";
 
+/** Distinct from AUDIENCE_TEST_SECRET so tests can tell the two signers apart. */
+export const KANBAN_TEST_SECRET =
+  "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
+
 export const makeAudienceTest = (): AudienceTestHandle => {
   const calls: Array<{ path: string; body: unknown }> = [];
-  const flags = { failPosts: false };
+  const flags = { failPosts: false, noKanbanKey: false };
   const keys = deriveServerAudienceKeys(AUDIENCE_TEST_SECRET);
+  const kanban = deriveServerAudienceKeys(KANBAN_TEST_SECRET);
   return {
     calls,
     flags,
     layer: Layer.succeed(Audience, {
       serverKeys: () => keys,
+      kanbanKeys: () => (flags.noKanbanKey ? null : kanban),
       rawPost: (path, body) =>
         flags.failPosts
           ? Effect.fail(new AudienceError({ reason: "http", status: 502 }))

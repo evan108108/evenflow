@@ -57,18 +57,23 @@ export interface WorkerEnv {
    */
   readonly EVENFLOW_WEBHOOK_SECRET?: string;
   /**
-   * Long-lived JWT identifying Evenflow itself to the 4a gateway, so public
-   * sprint-tide snapshots (kind 30560) can be published with no caller to
-   * borrow (EFB-22). Not key material — a bearer credential the gateway
-   * verifies with ITS signing key, and it is scoped gateway-side to
-   * /v0/publish/kanban_tide alone.
+   * 32-byte hex Nostr secret signing public sprint-tide snapshots, kind 30560
+   * (EFB-22). A fifth distinct secret — no key reuse with blossom (schnorr
+   * uploads), storage (ECDH), audience (private-board sealing), or webhook
+   * (AES-GCM).
    *
-   * Minted by 4a's scripts/mint-service-jwt.mjs; expires, so it needs
-   * re-minting. Absence is not an error: public boards then cache the
-   * snapshot in D1 with a NULL substrate_event_id, exactly as during an
-   * outage, and the reading itself is unaffected.
+   * Public tide is Evenflow attesting to a number anyone can re-derive, so it
+   * signs as itself rather than borrowing a caller's identity — the cron has
+   * no request and a public board's GET /tide is anonymous. One key across
+   * all public boards is deliberate: the author is Evenflow, not the board.
+   * (Encrypted 30565 stays per-board under its aud_id, because encryption
+   * already scopes per board.)
+   *
+   * Absence is not an error: public boards then cache the snapshot in D1 with
+   * a NULL substrate_event_id, exactly as during an outage, and the reading
+   * itself is unaffected.
    */
-  readonly EVENFLOW_TIDE_SERVICE_JWT?: string;
+  readonly EVENFLOW_KANBAN_SECRET?: string;
 }
 
 export class AppEnv extends Context.Tag("evenflow/AppEnv")<AppEnv, WorkerEnv>() {}

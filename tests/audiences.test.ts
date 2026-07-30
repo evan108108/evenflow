@@ -207,6 +207,7 @@ describe("privacy flip (PATCH visibility)", () => {
     // Same app, but an Audience layer with no server keys.
     const noKeys = Layer.succeed(Audience, {
       serverKeys: () => null,
+      kanbanKeys: () => null,
       rawPost: () => {
         throw new Error("unreachable");
       },
