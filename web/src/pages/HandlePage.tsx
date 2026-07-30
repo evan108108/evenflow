@@ -5,11 +5,12 @@
 // localStorage so bootstrap can auto-slug the personal org.
 
 import { useNavigate, useParams } from "@solidjs/router";
-import { For, Show, createResource } from "solid-js";
+import { For, Show, createResource, createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
 import { unwrapApiError } from "./board/store";
 import { TopBar } from "../components/TopBar";
+import { NewBoardModal, type CreatedBoard, type NewBoardInput } from "../components/NewBoardModal";
 import { currentMe, bootstrap, setLastActiveOrg, stashClaimedHandle } from "../lib/orgStore";
 import "../lib/board.css";
 
@@ -101,11 +102,39 @@ export const HandlePage = () => {
   const handle = () => params.handle.replace(/^@/, "");
 
   void bootstrap();
-  const [page] = createResource(handle, fetchHandle);
+  const [page, { refetch }] = createResource(handle, fetchHandle);
+  const [showNewBoard, setShowNewBoard] = createSignal(false);
 
   const isMember = () => {
     const data = page();
     return data !== undefined && data !== NOT_FOUND && data.detail.role !== null;
+  };
+  // EFB-12: + New board affordance on the org landing. Only shown when the
+  // caller is authenticated + admin/owner on this org (server enforces the
+  // same on the create-board endpoint). Posts to the org-scoped endpoint so
+  // the board lands here, not in the caller's personal org.
+  const canCreateBoard = () => {
+    const data = page();
+    if (data === undefined || data === NOT_FOUND) return false;
+    const role = data.detail.role;
+    return role === "owner" || role === "admin";
+  };
+  const onCreate = async (input: NewBoardInput): Promise<CreatedBoard> => {
+    const res = await appRuntime.runPromise(
+      Effect.flatMap(ApiClient, (c) =>
+        c.post<{ board: CreatedBoard }>(
+          `/api/v0/orgs/${encodeURIComponent(handle())}/boards`,
+          input,
+        ),
+      ),
+    );
+    void refetch();
+    return res.board;
+  };
+  const onDone = (board: CreatedBoard) => {
+    setShowNewBoard(false);
+    setLastActiveOrg(handle());
+    navigate(`/@${handle()}/${board.slug}`);
   };
 
   return (
@@ -134,11 +163,21 @@ export const HandlePage = () => {
                 Settings
               </a>
             </Show>
-            <Show when={false}>
-              <span />
+            <Show when={canCreateBoard()}>
+              <button class="btn btn-solid" onClick={() => setShowNewBoard(true)}>
+                + New board
+              </button>
             </Show>
           </div>
         </header>
+
+        <Show when={showNewBoard()}>
+          <NewBoardModal
+            onClose={() => setShowNewBoard(false)}
+            onCreate={onCreate}
+            onDone={onDone}
+          />
+        </Show>
 
         <Show when={!page.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
           <Show when={page() !== undefined && page() !== NOT_FOUND}>
