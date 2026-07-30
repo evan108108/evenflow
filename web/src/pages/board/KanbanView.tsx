@@ -117,6 +117,7 @@ const StatusStack = (props: {
                           props.highlightSprintId != null &&
                           issue.sprint_id === props.highlightSprintId
                         }
+                        compact={props.layout === "vertical"}
                       />
                     )}
                   </For>
