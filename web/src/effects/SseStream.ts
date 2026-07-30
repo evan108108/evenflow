@@ -91,13 +91,22 @@ export const SseStreamLive: Layer.Layer<SseStream, never, ApiConfig | AuthManage
 
           // Each pull reads until at least one full frame is buffered (or
           // the stream ends). Heartbeat-only reads just loop again.
+          //
+          // On `done: true`: the server-side reader has ended, which happens
+          // in production most commonly when Cloudflare replaces the Worker
+          // instance on a deploy (the DO drops open SSE connections). Fail
+          // with a real SseError so Stream.retry below fires and we
+          // reconnect — Option.none() would terminate the stream cleanly and
+          // the client would silently stop receiving updates. Symptom: SSE
+          // worked pre-deploy, went dark post-deploy until the user hit
+          // reload. (Filed as EFB-19 during dogfood 2026-07-30.)
           const pull = Effect.gen(function* () {
             for (;;) {
               const { value, done } = yield* Effect.tryPromise({
                 try: () => reader.read(),
                 catch: () => new SseError({ reason: "read" }),
               });
-              if (done) return yield* Effect.fail(Option.none<SseError>());
+              if (done) return yield* Effect.fail(new SseError({ reason: "read" }));
               buffer += decoder.decode(value, { stream: true });
               const [events, rest] = parseSseBuffer(buffer);
               buffer = rest;
