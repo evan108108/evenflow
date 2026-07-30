@@ -12,6 +12,13 @@ routes = [
 [observability]
 enabled = true
 
+# Daily sprint-tide roll-forward (EFB-22). 06:17 UTC — off-peak, and an
+# odd minute so we're not sharing Cloudflare's on-the-hour cron surge.
+# The read path already closes out a day on the first visit; this exists for
+# boards nobody visited, so their history has no gaps. Handler: src/scheduled.ts.
+[triggers]
+crons = ["17 6 * * *"]
+
 [vars]
 # Default Evenflow-managed Blossom host for issue attachments (phase 18a).
 # blossom.band: BUD-01/02 compliant, free, public, no account gate — see

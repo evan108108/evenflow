@@ -24,6 +24,7 @@ import { makeNotificationsRouter } from "./routes/notifications";
 import { makeStorageRouter } from "./routes/storage";
 import { makeGithubRouter } from "./routes/github";
 import { makeWellKnownRouter } from "./routes/wellknown";
+import { scheduled } from "./scheduled";
 
 const app = new Hono<AppHonoEnv>();
 
@@ -170,4 +171,7 @@ app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 // Durable Object classes must be exported from the Worker entrypoint.
 export { BoardDO } from "./durable-objects/BoardDO";
 
-export default app;
+// The default export carries both entrypoints since EFB-22 added the tide
+// cron: `app.fetch` alone would leave `[triggers]` in wrangler.toml firing
+// into a Worker with no scheduled handler.
+export default { fetch: app.fetch, scheduled };
