@@ -7,7 +7,7 @@
 import { For, Show, createSignal } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { StreamSentinel } from "../../components/StreamSentinel";
-import { moveZone, sprintZone, type DndHandle } from "../../lib/dnd";
+import { moveZone, sprintZone, transitionZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
 import { FALLBACK_SPRINT_DAYS, effectiveSprintDays } from "../../lib/sprints";
@@ -179,16 +179,25 @@ export const BacklogView = (props: {
         </h2>
         <Show when={active().length > 0} fallback={<p class="empty-state">Still waters.</p>}>
           <For each={enabledColumns(props.store.board()?.columns ?? [])}>
-            {(column) => (
-              <Show when={activeInColumn(column).length > 0}>
-                <div class="status-group">
-                  <h4>{column.name}</h4>
+            {(column) => {
+              const zone = transitionZone(column.id);
+              // Always render the group — an empty column needs to remain a
+              // drop target so you can transition a card into it from another
+              // column (otherwise the only way to reach an empty column is
+              // via the Kanban tab).
+              return (
+                <div
+                  class="status-group"
+                  classList={{ "drop-over": props.dnd.overZone() === zone }}
+                  data-dropzone={zone}
+                >
+                  <h4>{column.name} <span class="count figure muted">{activeInColumn(column).length}</span></h4>
                   <For each={activeInColumn(column)}>
                     {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
                   </For>
                 </div>
-              </Show>
-            )}
+              );
+            }}
           </For>
         </Show>
       </section>

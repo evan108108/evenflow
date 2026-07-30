@@ -242,9 +242,28 @@ export const createBoardStore = (
   const replaceIssue = (updated: Issue) =>
     setIssues((list) => list.map((i) => (i.id === updated.id ? updated : i)));
 
+  // Track issues we just mutated locally so the board-stream SSE echo of our
+  // own write doesn't fire a full refetchIssues() (which wipes streams and
+  // re-primes — visible flash). 2s TTL is well past round-trip.
+  const localMutationDeadlines = new Map<string, number>();
+  const LOCAL_MUTATION_TTL_MS = 2000;
+  const noteLocalMutation = (id: string) => {
+    localMutationDeadlines.set(id, Date.now() + LOCAL_MUTATION_TTL_MS);
+  };
+  const isLocalMutation = (id: string): boolean => {
+    const until = localMutationDeadlines.get(id);
+    if (until === undefined) return false;
+    if (Date.now() > until) {
+      localMutationDeadlines.delete(id);
+      return false;
+    }
+    return true;
+  };
+
   /** Optimistically apply `patch` to one issue, run the API call, roll back on failure. */
   const optimistic = async (id: string, patch: Partial<Issue>, call: () => Promise<Issue>) => {
     const snapshot = issues();
+    noteLocalMutation(id);
     setIssues((list) => list.map((i) => (i.id === id ? ({ ...i, ...patch } as Issue) : i)));
     try {
       replaceIssue(await call());
@@ -580,6 +599,7 @@ export const createBoardStore = (
     statusFeed,
     load,
     refetchIssues,
+    isLocalMutation,
     refetchStatusFeed,
     refetchSprints,
     createSprint,

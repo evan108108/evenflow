@@ -13,6 +13,13 @@
 import { createSignal } from "solid-js";
 
 const DRAG_THRESHOLD_PX = 6;
+// Edge-scroll: while dragging, if the pointer sits within EDGE_PX of the top
+// or bottom of the viewport, scroll the page by up to MAX_SPEED_PX per frame
+// (scaled by how close to the edge the pointer is). Same for the nearest
+// scrollable ancestor of the element under the pointer, so vertical Kanban
+// rails and modals with their own scroll surface also auto-scroll.
+const EDGE_PX = 60;
+const MAX_SPEED_PX = 22;
 
 export interface DndHandle {
   /** Issue id currently being dragged, null when idle. */
@@ -24,6 +31,19 @@ export interface DndHandle {
   readonly startDrag: (e: PointerEvent, id: string, onClick: () => void) => void;
 }
 
+const scrollableAncestor = (el: Element | null): Element | null => {
+  let node: Element | null = el;
+  while (node !== null && node !== document.body) {
+    const style = window.getComputedStyle(node);
+    const canScrollY =
+      (style.overflowY === "auto" || style.overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight;
+    if (canScrollY) return node;
+    node = node.parentElement;
+  }
+  return null;
+};
+
 export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle => {
   const [draggingId, setDraggingId] = createSignal<string | null>(null);
   const [overZone, setOverZone] = createSignal<string | null>(null);
@@ -34,6 +54,42 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
     const startX = e.clientX;
     const startY = e.clientY;
     let active = false;
+    let lastY = e.clientY;
+    let lastX = e.clientX;
+    let scrollRaf: number | null = null;
+
+    const stopScroll = () => {
+      if (scrollRaf !== null) {
+        cancelAnimationFrame(scrollRaf);
+        scrollRaf = null;
+      }
+    };
+
+    const tickScroll = () => {
+      scrollRaf = null;
+      if (!active) return;
+      const vh = window.innerHeight;
+      // Window scroll based on distance from top/bottom edges.
+      let winDy = 0;
+      if (lastY < EDGE_PX) winDy = -Math.ceil(((EDGE_PX - lastY) / EDGE_PX) * MAX_SPEED_PX);
+      else if (lastY > vh - EDGE_PX) winDy = Math.ceil(((lastY - (vh - EDGE_PX)) / EDGE_PX) * MAX_SPEED_PX);
+      if (winDy !== 0) window.scrollBy(0, winDy);
+      // Also scroll the nearest scrollable ancestor of the element under the
+      // pointer (vertical Kanban rail, modal body). Element-local edge check.
+      const under = document.elementFromPoint(lastX, lastY);
+      const scroller = scrollableAncestor(under);
+      if (scroller !== null) {
+        const r = scroller.getBoundingClientRect();
+        let ancDy = 0;
+        if (lastY - r.top < EDGE_PX) {
+          ancDy = -Math.ceil(((EDGE_PX - (lastY - r.top)) / EDGE_PX) * MAX_SPEED_PX);
+        } else if (r.bottom - lastY < EDGE_PX) {
+          ancDy = Math.ceil(((EDGE_PX - (r.bottom - lastY)) / EDGE_PX) * MAX_SPEED_PX);
+        }
+        if (ancDy !== 0) scroller.scrollTop += ancDy;
+      }
+      if (winDy !== 0 || (scroller !== null)) scrollRaf = requestAnimationFrame(tickScroll);
+    };
 
     const move = (ev: PointerEvent) => {
       if (!active && Math.hypot(ev.clientX - startX, ev.clientY - startY) > DRAG_THRESHOLD_PX) {
@@ -42,6 +98,8 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
       }
       if (!active) return;
       ev.preventDefault();
+      lastX = ev.clientX;
+      lastY = ev.clientY;
       setPos({ x: ev.clientX, y: ev.clientY });
       const under = document.elementFromPoint(ev.clientX, ev.clientY);
       const zoneEl = under?.closest("[data-dropzone]") ?? null;
@@ -54,11 +112,15 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
         zone = `${zone}:${ev.clientY < rect.top + rect.height / 2 ? "before" : "after"}`;
       }
       setOverZone(zone);
+      // Kick off an edge-scroll animation if we're in the danger zone. The
+      // tick reschedules itself while it's still scrolling something.
+      if (scrollRaf === null) scrollRaf = requestAnimationFrame(tickScroll);
     };
 
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      stopScroll();
       const zone = overZone();
       const wasDrag = active;
       setDraggingId(null);

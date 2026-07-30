@@ -138,10 +138,10 @@ export const UserNav = () => {
             </For>
             <a
               class="user-nav-item user-nav-org-create"
-              href="/o/new"
+              href="/orgs"
               onClick={() => setOpen(false)}
             >
-              + Create org
+              Organizations
             </a>
             <div class="user-nav-divider" />
           </Show>

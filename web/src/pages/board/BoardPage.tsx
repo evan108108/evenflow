@@ -193,15 +193,19 @@ export const BoardPage = () => {
     } else if (target.type === "sprint") {
       void store.addIssueToSprint(issue, target.sprint);
     } else if (target.action in CONTAINER_OF_MOVE) {
-      // Dropping a sprint-member backlog issue onto the plain Backlog
-      // section reads as "take it out of the sprint" — the container move
-      // itself would be a no-op.
+      // Dropping a sprint-assigned issue onto Backlog or Icebox reads as
+      // "take it out of the sprint" — otherwise the card visually stays put
+      // (sprint sections filter by sprint_id, not container, so a container
+      // move alone leaves the card inside the sprint). Also fire the
+      // container move when the issue wasn't already in that container.
       if (
-        target.action === "promote_to_backlog" &&
-        issue.container === "backlog" &&
+        (target.action === "promote_to_backlog" || target.action === "send_to_icebox") &&
         (issue.sprint_id ?? null) !== null
       ) {
         void store.removeIssueFromSprint(issue);
+        if (issue.container !== CONTAINER_OF_MOVE[target.action as ContainerMove]) {
+          void store.moveContainer(issue, target.action as ContainerMove);
+        }
         return;
       }
       void store.moveContainer(issue, target.action as ContainerMove);
@@ -218,6 +222,11 @@ export const BoardPage = () => {
       void decryptBoardPayload(apiBase, event.board_id, event.payload);
     }
     if (event.kind.startsWith("issue.")) {
+      // Echo suppression: if this issue.* event is the round-trip of a
+      // mutation we JUST made, our local state is already right. A full
+      // refetchIssues() would wipe every stream and re-prime — visible flash
+      // right after every drag. Other users' changes still refetch.
+      if (event.issue_id !== undefined && store.isLocalMutation(event.issue_id)) return;
       void store.refetchIssues();
       void store.refetchStatusFeed();
       void store.refetchSprints();
