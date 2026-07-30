@@ -17,7 +17,12 @@ export interface Board {
   readonly columns: ReadonlyArray<Column>;
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
-  readonly is_encrypted: boolean;
+  // Privacy is one setting — `visibility` (below). `encryption_active` is
+  // derived server-side: visibility is private AND the board's 4a audience
+  // has been minted. Optional so pre-0015 payloads still parse.
+  readonly encryption_active?: boolean;
+  /** @deprecated pre-0015 mirror of `encryption_active`. */
+  readonly is_encrypted?: boolean;
   // Phase 16.5 audience state. Optional so pre-16.5 payloads still parse.
   readonly audience_epoch?: number;
   readonly audience_pubkey?: string | null;

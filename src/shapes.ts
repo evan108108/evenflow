@@ -25,6 +25,24 @@ export interface BoardShape {
   readonly columns: ReadonlyArray<Column>;
   readonly labels: ReadonlyArray<unknown>;
   readonly member_policy: string;
+  // ── privacy: ONE setting since migration 0015 ───────────────────────────
+  // `visibility` (below) is the single source of truth. public = plaintext
+  // publish to the 4a substrate + anonymous read; private = members only,
+  // and once the board's audience exists every event publishes encrypted
+  // through the phase-16.5 machinery.
+  //
+  // `encryption_active` is DERIVED — never read from D1. It means
+  // "visibility is private AND this board's audience has been minted", which
+  // is exactly what the dead boardCache.is_encrypted column used to record.
+  // Boards are born private with no audience, so private-but-not-yet-
+  // encrypted is a real state: it may still be flipped public. Once
+  // encryption is active the flip is one-way (no unwrapping ciphertext).
+  readonly encryption_active: boolean;
+  /**
+   * @deprecated Wire mirror of `encryption_active`, kept so pre-0015 clients
+   * keep parsing. No server code reads this — gate on `encryption_active`
+   * (or on `visibility` directly when you mean the user-facing setting).
+   */
   readonly is_encrypted: boolean;
   // Private-board audience state (phase 16.5). Epoch bumps on member
   // removal; audience_pubkey (the aud_id) is set when first flipped
@@ -332,6 +350,10 @@ export const parseBoardRow = (row: unknown): BoardShape => {
   const visibility = h.string(r["visibility"] ?? "private", "visibility");
   if (visibility !== "private" && visibility !== "public") raise("visibility not a visibility");
 
+  const audience_pubkey = h.stringOrNull(r["audience_pubkey"] ?? null, "audience_pubkey");
+  // Derived, not read: the is_encrypted column is dead as of migration 0015.
+  const encryption_active = visibility === "private" && audience_pubkey !== null;
+
   return {
     id: h.string(r["id"], "id"),
     pubkey: h.string(r["pubkey"], "pubkey"),
@@ -341,9 +363,10 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     columns,
     labels: labels as ReadonlyArray<unknown>,
     member_policy: h.string(r["member_policy"], "member_policy"),
-    is_encrypted: h.number(r["is_encrypted"], "is_encrypted") !== 0,
+    encryption_active,
+    is_encrypted: encryption_active,
     audience_epoch: h.number(r["audience_epoch"] ?? 1, "audience_epoch"),
-    audience_pubkey: h.stringOrNull(r["audience_pubkey"] ?? null, "audience_pubkey"),
+    audience_pubkey,
     issue_prefix: h.stringOrNull(r["issue_prefix"] ?? null, "issue_prefix"),
     next_issue_number: h.number(r["next_issue_number"] ?? 1, "next_issue_number"),
     org_id: h.stringOrNull(r["org_id"] ?? null, "org_id"),

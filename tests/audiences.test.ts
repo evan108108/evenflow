@@ -45,10 +45,11 @@ const registerKey = async (h: Harness, sessionPub: string, token?: string) => {
 };
 
 const flipPrivate = (h: Harness, slug = "kb") =>
-  h.app.request(`/api/v0/boards/${slug}`, jsonReq("PATCH", { is_encrypted: true }), {});
+  h.app.request(`/api/v0/boards/${slug}`, jsonReq("PATCH", { visibility: "private" }), {});
 
 interface BoardWire {
-  is_encrypted: boolean;
+  visibility: "private" | "public";
+  encryption_active: boolean;
   audience_epoch: number;
   audience_pubkey: string | null;
 }
@@ -85,7 +86,7 @@ describe("POST /api/v0/session/register-key", () => {
   });
 });
 
-describe("privacy flip (PATCH is_encrypted)", () => {
+describe("privacy flip (PATCH visibility)", () => {
   it("owner flips private: audience minted, keys sealed, grants issued", async () => {
     const h = makeHarness();
     await createBoard(h);
@@ -95,7 +96,8 @@ describe("privacy flip (PATCH is_encrypted)", () => {
     const res = await flipPrivate(h);
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardWire };
-    expect(board.is_encrypted).toBe(true);
+    expect(board.visibility).toBe("private");
+    expect(board.encryption_active).toBe(true);
     expect(board.audience_epoch).toBe(1);
     expect(board.audience_pubkey).toMatch(/^[0-9a-f]{64}$/);
 
@@ -116,26 +118,52 @@ describe("privacy flip (PATCH is_encrypted)", () => {
     expect(paths).toContain("/v0/audience/raw/grant");
   });
 
-  it("the flip is one-way: true→false answers 409", async () => {
+  it("once encryption is live the flip is one-way: private→public answers 409", async () => {
     const h = makeHarness();
     await createBoard(h);
     await flipPrivate(h);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { is_encrypted: false }), {});
+    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "conflict", reason: "unsupported-private-to-public" });
   });
 
-  it("an encrypted board can never be publicly visible — either order 409s", async () => {
+  // Boards are BORN visibility='private' with no audience. That state is
+  // members-only but never encrypted, so it must stay freely flippable to
+  // public — otherwise no board created after 0015 could ever be made public.
+  it("a board that is private but never encrypted can still be made public", async () => {
     const h = makeHarness();
     await createBoard(h);
-    await flipPrivate(h);
-    const pub = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
-    expect(pub.status).toBe(409);
+    expect(h.db.boards[0]!["visibility"]).toBe("private");
+    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
+    expect(res.status).toBe(200);
+    const { board } = (await res.json()) as { board: BoardWire };
+    expect(board.visibility).toBe("public");
+    expect(board.encryption_active).toBe(false);
+    expect(h.db.audienceKeys).toHaveLength(0);
+  });
 
+  it("public→private is the supported direction and mints the audience", async () => {
+    const h = makeHarness();
     await createBoard(h, "kb2");
     await h.app.request("/api/v0/boards/kb2", jsonReq("PATCH", { visibility: "public" }), {});
-    const flip = await h.app.request("/api/v0/boards/kb2", jsonReq("PATCH", { is_encrypted: true }), {});
-    expect(flip.status).toBe(409);
+    const flip = await flipPrivate(h, "kb2");
+    expect(flip.status).toBe(200);
+    const { board } = (await flip.json()) as { board: BoardWire };
+    expect(board.visibility).toBe("private");
+    expect(board.encryption_active).toBe(true);
+    expect(board.audience_pubkey).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  // An unrelated field edit must never trip the crypto path: only an
+  // EXPLICIT visibility='private' mints the audience.
+  it("patching an unrelated field on a born-private board does not mint keys", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { title: "Renamed" }), {});
+    expect(res.status).toBe(200);
+    const { board } = (await res.json()) as { board: BoardWire };
+    expect(board.encryption_active).toBe(false);
+    expect(h.db.audienceKeys).toHaveLength(0);
   });
 
   it("flip is owner-only: a board admin who is not org owner gets 403", async () => {
@@ -144,17 +172,24 @@ describe("privacy flip (PATCH is_encrypted)", () => {
     seedBoardMember(h, h.db.boards[0]!["id"] as string, pubkeyFor("adm"), "admin");
     const res = await h.app.request(
       "/api/v0/boards/kb",
-      jsonReq("PATCH", { is_encrypted: true }, tokenFor("adm")),
+      jsonReq("PATCH", { visibility: "private" }, tokenFor("adm")),
       {},
     );
     expect(res.status).toBe(403);
   });
 
-  it("rejects a non-boolean is_encrypted and answers 409 when the secret is unset", async () => {
+  it("rejects an unknown visibility; a lone legacy is_encrypted is not a patch", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const bad = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { is_encrypted: "yes" }), {});
+    const bad = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "sorta" }), {});
     expect(bad.status).toBe(400);
+
+    // Pre-0015 clients sent is_encrypted. It is no longer a settable field —
+    // failing loudly beats silently no-op'ing a privacy request.
+    const legacy = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { is_encrypted: true }), {});
+    expect(legacy.status).toBe(400);
+    expect(await legacy.json()).toEqual({ error: "invalid-body", reason: "empty-patch" });
+    expect(h.db.audienceKeys).toHaveLength(0);
 
     // Same app, but an Audience layer with no server keys.
     const noKeys = Layer.succeed(Audience, {

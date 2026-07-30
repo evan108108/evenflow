@@ -50,7 +50,7 @@ const privateBoardsOfOrg = (orgId: string) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const rows = yield* db.queryAll(
-      "SELECT * FROM boardCache WHERE org_id = ? AND is_encrypted = 1",
+      "SELECT * FROM boardCache WHERE org_id = ? AND visibility = 'private' AND audience_pubkey IS NOT NULL",
       [orgId],
     );
     return rows.map(parseBoardRow);
@@ -569,7 +569,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       // Private boards: surface each member's current-epoch grant state so
       // the settings page can show "Key grant issued … (epoch n)".
       let grants: Array<{ member_pubkey: string; epoch: number; issued_at_ms: number }> = [];
-      if (board.is_encrypted) {
+      if (board.encryption_active) {
         const grantRows = yield* db.queryAll<{
           member_pubkey: string;
           epoch: number;
@@ -586,7 +586,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       }
       return {
         members: rows.map(parseMemberRow),
-        ...(board.is_encrypted ? { audience_epoch: board.audience_epoch, key_grants: grants } : {}),
+        ...(board.encryption_active ? { audience_epoch: board.audience_epoch, key_grants: grants } : {}),
       };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -617,7 +617,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         token,
         grant: { scope: "board", target: `${orgSlug}/${board.slug}` },
       });
-      if (board.is_encrypted) yield* grantOnJoinBestEffort(board, memberPubkey);
+      if (board.encryption_active) yield* grantOnJoinBestEffort(board, memberPubkey);
       return { added: true, pubkey: memberPubkey, role };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -674,7 +674,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const targetPubkey = c.req.param("pubkey");
       // Rotate FIRST: if the epoch bump fails, the removal fails with it
       // and stays retryable — a removed member must never keep a live key.
-      if (board.is_encrypted) {
+      if (board.encryption_active) {
         const existing = yield* Db.pipe(
           Effect.flatMap((db) =>
             db.queryFirst("SELECT role FROM boardMemberCache WHERE board_id = ? AND pubkey = ?", [

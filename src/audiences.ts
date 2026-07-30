@@ -1,6 +1,7 @@
 // Private-board audience lifecycle (phase 16.5).
 //
-// A private board (boardCache.is_encrypted = 1) owns one 4a audience:
+// A private board (visibility = 'private' with a minted audience) owns one 4a
+// audience:
 // aud_id keypair (never rotates, signs everything) + one keypair per
 // epoch. Epochs bump on member removal — honest crypto: the old key is
 // dead for every event published after the rotation, no soft revocation.
@@ -279,6 +280,10 @@ export const initializeBoardAudience = (board: BoardShape) =>
     const audId = generateAudienceIdentity();
     const epochKp = yield* storeEpochKeys(board.id, 1, audId, serverKeys);
     const now = yield* Clock.currentTimeMillis;
+    // audience_pubkey going non-null is what makes encryption live (with
+    // visibility = 'private'). is_encrypted is a dead column since 0015 —
+    // still written so hand-run SQL against boardCache tells the truth,
+    // never read.
     yield* db.execute(
       "UPDATE boardCache SET is_encrypted = 1, audience_epoch = 1, audience_pubkey = ?, updated_at_ms = ? WHERE id = ?",
       [audId.pub, now, board.id],
@@ -531,6 +536,6 @@ export const emitSecureBoardEvent = (
       Effect.catchAll(() => Effect.succeed(null)),
     );
     const safe =
-      board !== null && board.is_encrypted ? yield* secureBoardEvent(board, event) : event;
+      board !== null && board.encryption_active ? yield* secureBoardEvent(board, event) : event;
     yield* emitBoardEvent(board_id, safe);
   });

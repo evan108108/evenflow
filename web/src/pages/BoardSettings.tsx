@@ -38,11 +38,14 @@ interface BoardDetail {
     id: string;
     slug: string;
     title: string;
+    // The ONE privacy setting (unified in migration 0015).
     visibility: "private" | "public";
     columns: Column[];
     default_sprint_days: number;
-    // Phase 16.5 — substrate encryption (one-way flag) + audience state.
-    is_encrypted: boolean;
+    // Derived server-side: visibility is private AND the board's 4a audience
+    // has been minted, so events actually publish encrypted. A board born
+    // private has this false until privacy is turned on.
+    encryption_active: boolean;
     audience_epoch: number;
     audience_pubkey: string | null;
   };
@@ -128,7 +131,7 @@ export const BoardSettings = () => {
     // Removing a member from an encrypted board rotates the epoch key —
     // an irreversible act worth one explicit confirmation.
     if (
-      board()?.board.is_encrypted === true &&
+      board()?.board.encryption_active === true &&
       !window.confirm("This will rotate keys — you cannot un-do this. Remove the member?")
     ) {
       return;
@@ -139,34 +142,35 @@ export const BoardSettings = () => {
     );
   };
 
-  const makePrivate = () => {
-    if (
-      !window.confirm(
-        "Flip this board to private? Events will be encrypted to board members. This cannot be undone in v1.",
-      )
-    ) {
-      return;
-    }
-    withRefresh(
-      api((c) => c.patch(apiBase(), { is_encrypted: true })),
-      () => {
-        void refetchBoard();
-        void refetchMembers();
-      },
-    );
-  };
-
   const revokeInvite = (id: string) =>
     withRefresh(
       api((c) => c.delete(`/api/v0/invites/${encodeURIComponent(id)}`)),
       () => void refetchInvites(),
     );
 
-  const toggleVisibility = () => {
-    const next = board()?.board.visibility === "public" ? "private" : "public";
+  // The one privacy control. Choosing "private" on a board whose audience
+  // hasn't been minted turns encryption ON — one-way, hence the confirm.
+  const setVisibility = (next: "private" | "public") => {
+    const b = board()?.board;
+    if (b === undefined) return;
+    // No-op only when nothing would actually change. Re-asserting "private"
+    // on a board that is private but not yet encrypted DOES change things:
+    // it mints the audience.
+    if (b.visibility === next && (next === "public" || b.encryption_active)) return;
+    if (
+      next === "private" &&
+      !window.confirm(
+        "Make this board private? Events will publish encrypted to board members. This cannot be undone in v1.",
+      )
+    ) {
+      return;
+    }
     withRefresh(
       api((c) => c.patch(apiBase(), { visibility: next })),
-      () => void refetchBoard(),
+      () => {
+        void refetchBoard();
+        void refetchMembers();
+      },
     );
   };
 
@@ -340,6 +344,73 @@ export const BoardSettings = () => {
 
       <Show when={tab() === "General"}>
         <section class="settings-section">
+          <h2>Visibility</h2>
+          <div class="visibility-choice">
+            <label class="visibility-option">
+              <input
+                type="radio"
+                name="board-visibility"
+                value="public"
+                checked={board()?.board.visibility === "public"}
+                disabled={board()?.board.encryption_active === true}
+                onChange={() => setVisibility("public")}
+              />
+              <span>
+                <strong>Public</strong>
+                <span class="muted">
+                  Anyone with the URL can read events from the 4a substrate. Fast, indexable, no
+                  crypto overhead. Recommended for open-source projects and public roadmaps.
+                </span>
+              </span>
+            </label>
+            <label class="visibility-option">
+              <input
+                type="radio"
+                name="board-visibility"
+                value="private"
+                checked={board()?.board.visibility === "private"}
+                onChange={() => setVisibility("private")}
+              />
+              <span>
+                <strong>Private</strong>
+                <span class="muted">
+                  Events publish encrypted to the 4a substrate. Only board members can decrypt.
+                  Adding or removing members rotates keys.
+                </span>
+                <span class="visibility-warning">
+                  Private→public conversion is not supported in v1.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {/* Encryption status — a board born private has no audience until
+              privacy is explicitly turned on, so say which state it's in
+              rather than implying ciphertext that doesn't exist yet. */}
+          <Show when={board()?.board.encryption_active === true}>
+            <p class="muted" style={{ "font-size": "0.85rem", "margin-top": "0.8rem" }}>
+              Encryption is active (epoch {board()?.board.audience_epoch ?? 1}) — this board can no
+              longer be made public.
+            </p>
+          </Show>
+          <Show
+            when={
+              board()?.board.visibility === "private" &&
+              board()?.board.encryption_active !== true
+            }
+          >
+            <p class="muted" style={{ "font-size": "0.85rem", "margin-top": "0.8rem" }}>
+              Members-only, but events still publish in the clear — this board's encryption keys
+              have not been minted yet.
+            </p>
+            <div style={{ "margin-top": "0.6rem" }}>
+              <button type="button" class="btn" onClick={() => setVisibility("private")}>
+                Turn on encryption
+              </button>
+            </div>
+          </Show>
+        </section>
+        <section class="settings-section">
           <h2>Sprints</h2>
           <label for="default-sprint-days" class="muted" style={{ display: "block", "font-size": "0.8rem", "letter-spacing": "0.08em", "text-transform": "uppercase", "margin-bottom": "0.35rem" }}>
             Default sprint length (days)
@@ -356,49 +427,6 @@ export const BoardSettings = () => {
           <p class="muted" style={{ "font-size": "0.85rem", "margin-top": "0.5rem" }}>
             Teams that run 1-week sprints: set 7. Individual sprints can override this.
           </p>
-        </section>
-        <section class="settings-section">
-          <h2>Privacy</h2>
-          <Show
-            when={board()?.board.is_encrypted === true}
-            fallback={
-              <>
-                <p>
-                  <strong>Standard</strong> — this board's activity syncs to the 4a substrate
-                  in the clear (subject to the board's visibility setting).
-                </p>
-                <p class="muted" style={{ "font-size": "0.9rem" }}>
-                  <strong>Private</strong>: only board members can decrypt this board's events.
-                  Removing a member rotates keys — future events are unreadable to them; past
-                  events they already saw stay decrypted in their client's memory.
-                </p>
-                <p class="visibility-warning">Flipping to private cannot be undone in v1.</p>
-                <div style={{ "margin-top": "0.8rem" }}>
-                  <button
-                    type="button"
-                    class="btn"
-                    disabled={board()?.board.visibility === "public"}
-                    title={
-                      board()?.board.visibility === "public"
-                        ? "Make the board privately visible first — an encrypted board cannot be public."
-                        : undefined
-                    }
-                    onClick={makePrivate}
-                  >
-                    Make private
-                  </button>
-                </div>
-              </>
-            }
-          >
-            <p>
-              <strong>Private</strong> — events are encrypted to board members
-              (epoch {board()?.board.audience_epoch ?? 1}). Removing a member rotates keys.
-            </p>
-            <p class="muted" style={{ "font-size": "0.9rem" }}>
-              Private→public conversion is not supported in v1.
-            </p>
-          </Show>
         </section>
         <section class="settings-section">
           <p class="muted">More board settings will land here — title, description, avatar.</p>
@@ -581,36 +609,9 @@ export const BoardSettings = () => {
         </section>
       </Show>
 
+      {/* Visibility lives on the General tab — it is an ordinary setting, not
+          a destructive action. */}
       <Show when={tab() === "Danger zone"}>
-        <section class="settings-section">
-          <h2>Visibility</h2>
-          <p>
-            This board is{" "}
-            <strong>{board()?.board.visibility === "public" ? "Public" : "Private"}</strong>.
-          </p>
-          <Show when={board()?.board.visibility === "public"}>
-            <p class="visibility-warning">
-              Anyone with the URL can view this board — no sign-in required to read.
-            </p>
-          </Show>
-          <Show when={board()?.board.is_encrypted === true}>
-            <p class="muted" style={{ "font-size": "0.85rem" }}>
-              This board is encrypted — it cannot be made publicly visible.
-            </p>
-          </Show>
-          <div style={{ "margin-top": "0.8rem" }}>
-            <button
-              type="button"
-              class="btn"
-              disabled={
-                board()?.board.visibility === "private" && board()?.board.is_encrypted === true
-              }
-              onClick={toggleVisibility}
-            >
-              Make {board()?.board.visibility === "public" ? "private" : "public"}
-            </button>
-          </div>
-        </section>
         <section class="settings-section">
           <div class="danger-zone">
             <h3>Danger zone</h3>

@@ -407,14 +407,23 @@ describe("BoardSettings", () => {
     const { container, dispose } = mountAt("/@acme/roadmap/settings", "/:handle/:board_slug/settings", () => <BoardSettings />);
     await tick(80);
     expect(container.textContent).toContain("Board settings");
-    // Visibility moved to the Danger-zone tab in the phase-18 polish pass.
     const tabButton = (label: string) =>
       [...container.querySelectorAll<HTMLButtonElement>(".settings-tabs button")].find(
         (b) => b.textContent === label,
       );
+    // Unified in 0015: ONE Visibility control, on the General tab (the
+    // default), with the Private option reflecting the board's setting.
+    const options = [...container.querySelectorAll<HTMLInputElement>(".visibility-option input")];
+    expect(options.map((o) => o.value)).toEqual(["public", "private"]);
+    expect(options.find((o) => o.value === "private")!.checked).toBe(true);
+    expect(container.textContent).toContain("Private");
+
+    // ...and no leftover duplicate in the Danger zone.
     tabButton("Danger zone")!.click();
     await tick(20);
-    expect(container.textContent).toContain("Private");
+    expect(container.querySelector(".visibility-option")).toBeNull();
+    expect(container.textContent).toContain("Danger zone");
+
     tabButton("Members")!.click();
     await tick(20);
     const select = container.querySelector<HTMLSelectElement>(".member-row select");
