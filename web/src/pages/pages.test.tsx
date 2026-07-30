@@ -28,7 +28,8 @@ describe("Landing", () => {
   it("renders the wordmark, tagline, and both sign-in buttons", () => {
     const { container, dispose } = mount(() => <Landing />);
     expect(container.querySelector("h1")?.textContent).toBe("Evenflow");
-    expect(container.textContent).toContain("The Even Flow of Work.");
+    // Tagline now lives in the rotating seal (uppercase, no period).
+    expect(container.textContent?.toUpperCase()).toContain("THE EVEN FLOW OF WORK");
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(hrefs).toContain("/auth/oauth/start?provider=google");
     expect(hrefs).toContain("/auth/oauth/start?provider=github");

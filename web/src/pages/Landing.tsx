@@ -28,15 +28,46 @@ export const Landing = () => {
     }}
   >
     <div style={{ "max-width": "var(--measure)", "text-align": "center" }}>
-      <ButterflyMark class="landing-mark" />
-      <h1 style={{ "font-size": "clamp(3.5rem, 14vw, 7.5rem)" }}>Evenflow</h1>
-      <p
-        class="muted"
-        style={{ "font-style": "italic", "font-size": "1.3rem", margin: "1.2rem 0 0" }}
+      {/* Kept for document structure / screen readers — the visual identity is the seal below. */}
+      <h1
+        style={{
+          position: "absolute",
+          width: "1px",
+          height: "1px",
+          padding: 0,
+          margin: "-1px",
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          "white-space": "nowrap",
+          border: 0,
+        }}
       >
-        The Even Flow of Work.
-      </p>
-      <p class="muted" style={{ margin: "0.4rem 0 3.5rem" }}>
+        Evenflow
+      </h1>
+      {/*
+        Landing seal — butterfly at rest in the center of a slow-turning
+        wordmark ring. Replaces the earlier butterfly+"Evenflow" wordmark
+        hero: the tagline itself becomes the identity, circling once every
+        minute (respects prefers-reduced-motion by holding still).
+      */}
+      <div class="landing-seal" role="img" aria-label="Evenflow — the even flow of work">
+        <svg class="landing-seal-ring" viewBox="0 0 600 600" aria-hidden="true">
+          <defs>
+            {/* Circle path text runs along — starts at 12 o'clock, sweeps clockwise. */}
+            <path
+              id="landing-seal-arc"
+              d="M 300,300 m 0,-240 a 240,240 0 1,1 0,480 a 240,240 0 1,1 0,-480"
+            />
+          </defs>
+          <text class="landing-seal-text">
+            <textPath href="#landing-seal-arc" startOffset="0">
+              THE EVEN FLOW OF WORK · THE EVEN FLOW OF WORK ·
+            </textPath>
+          </text>
+        </svg>
+        <ButterflyMark class="landing-seal-butterfly" />
+      </div>
+      <p class="muted" style={{ margin: "2.4rem 0 3.5rem" }}>
         A kanban built on <a href="https://4a4.ai">4a</a>. Free. Yours.
       </p>
       <div style={{ display: "flex", gap: "1rem", "justify-content": "center", "flex-wrap": "wrap" }}>
