@@ -92,7 +92,6 @@ export const createBoardStore = (
   const [members, setMembers] = createSignal<Array<{ pubkey: string; role: string }>>([]);
   const [loading, setLoading] = createSignal(true);
   const [lastError, setLastError] = createSignal<string | null>(null);
-  const [statusFeed, setStatusFeed] = createSignal<FeedItem[]>([]);
 
   const api = <A>(f: (client: ApiClientService) => Effect.Effect<A, ApiError>) =>
     run(Effect.flatMap(ApiClient, f));
@@ -358,18 +357,6 @@ export const createBoardStore = (
       setStreamTick((n) => n + 1);
     } catch {
       // Quiet refresh — a failed background refetch keeps the current view.
-    }
-  };
-
-  /** Status-change feed rows for "The Current" (velocity sparkline). */
-  const refetchStatusFeed = async () => {
-    try {
-      const res = await api((c) =>
-        c.get<{ activity: FeedItem[] }>(`${apiBase}/activity?type=status&limit=100`),
-      );
-      setStatusFeed(res.activity);
-    } catch {
-      // Sparkline is decoration; never block the board on it.
     }
   };
 
@@ -663,11 +650,9 @@ export const createBoardStore = (
     sprints,
     loading,
     lastError,
-    statusFeed,
     load,
     refetchIssues,
     isLocalMutation,
-    refetchStatusFeed,
     refetchSprints,
     createSprint,
     patchSprint,
