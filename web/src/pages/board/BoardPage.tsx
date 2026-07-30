@@ -1,8 +1,8 @@
 // BoardPage — shell for the three board views. Owns: the store, the dnd
 // handle (drop → transition/container-move), the SSE subscription (any
 // issue.* event refetches the board; comment.* bumps the sheet's comment
-// version), "The Current" sparkline, the view tabs, the + New Issue modal,
-// and the butterfly.
+// version), the TideBadge, the view tabs, the + New Issue modal, and the
+// butterfly.
 
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
@@ -13,7 +13,6 @@ import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effec
 import { createDnd, parseZone } from "../../lib/dnd";
 import { decryptBoardPayload, isEncryptedPayload } from "../../lib/boardKeys";
 import { pubkeyOfJwt } from "../../lib/jwt";
-import { doneNames } from "../../lib/columns";
 import {
   LAYOUT_STORAGE_KEY,
   effectiveKanbanLayout,
@@ -26,6 +25,7 @@ import { sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
+import { TideBadge } from "../../components/TideBadge";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
 import { KanbanView } from "./KanbanView";
@@ -33,53 +33,7 @@ import { BacklogView } from "./BacklogView";
 import { IceboxView } from "./IceboxView";
 
 const LOADING_LINES = ["Finding the rhythm…", "Catching the current…", "Following the thread…"];
-const DAY_MS = 86_400_000;
 const BUTTERFLY_FLIGHT_MS = 1_700;
-
-/**
- * Trailing-7d daily buckets of estimate points completed while active.
- * Done-ness is the COLUMN CATEGORY (isDone matches feed status names
- * against the board's done-category columns) — statusChange rows carry
- * names, so pre-17 history keeps counting via the same name match.
- */
-const velocityBuckets = (
-  feed: ReadonlyArray<{ to: string | null; container_at_completion: string | null; occurred_at_ms: number; issue_id: string }>,
-  estimateOf: (issueId: string) => number,
-  now: number,
-  isDone: (statusName: string) => boolean,
-): number[] => {
-  const start = now - 7 * DAY_MS;
-  const buckets = [0, 0, 0, 0, 0, 0, 0];
-  for (const item of feed) {
-    if (item.to === null || !isDone(item.to) || item.container_at_completion !== "active") continue;
-    if (item.occurred_at_ms < start) continue;
-    const day = Math.min(6, Math.floor((item.occurred_at_ms - start) / DAY_MS));
-    buckets[day] = (buckets[day] ?? 0) + estimateOf(item.issue_id);
-  }
-  return buckets;
-};
-
-const Sparkline = (props: { buckets: number[] }) => {
-  const points = () => {
-    const max = Math.max(1, ...props.buckets);
-    return props.buckets
-      .map((v, i) => `${(i * 84) / 6 + 3},${21 - (v / max) * 16}`)
-      .join(" ");
-  };
-  return (
-    <svg width="90" height="24" viewBox="0 0 90 24" aria-label="velocity, trailing 7 days">
-      <polyline
-        points={points()}
-        fill="none"
-        stroke="var(--color-ink)"
-        stroke-width="1.6"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        opacity="0.75"
-      />
-    </svg>
-  );
-};
 
 export const BoardPage = () => {
   // Two addressing modes: canonical /@{handle}/{board_slug} (org-scoped API)
@@ -105,6 +59,9 @@ export const BoardPage = () => {
   // when an active sprint exists (Linear posture: "here's the current
   // sprint's board"). Users toggle off with the chip to see everything.
   const [sprintFilterOff, setSprintFilterOff] = createSignal(false);
+  // Bumped whenever something that could move the tide lands; TideBadge
+  // refetches on the change rather than recomputing client-side.
+  const [tideVersion, setTideVersion] = createSignal(0);
 
   // Kanban layout: explicit preference from localStorage, else the
   // viewport decides (narrow = vertical). Below the force breakpoint the
@@ -232,10 +189,15 @@ export const BoardPage = () => {
       // right after every drag. Other users' changes still refetch.
       if (event.issue_id !== undefined && store.isLocalMutation(event.issue_id)) return;
       void store.refetchIssues();
-      void store.refetchStatusFeed();
       void store.refetchSprints();
+      // Any issue movement can move the tide (ship, re-open, re-estimate,
+      // scope change), and the reading is computed server-side from audit
+      // rows — so the badge refetches rather than trying to derive it here.
+      setTideVersion((v) => v + 1);
     } else if (event.kind.startsWith("comment.")) {
       setCommentsVersion((v) => v + 1);
+    } else if (event.kind.startsWith("sprint.tide.")) {
+      setTideVersion((v) => v + 1);
     }
   };
 
@@ -249,7 +211,6 @@ export const BoardPage = () => {
         }
         setCallerPubkey(pubkeyOfJwt(jwt));
         void store.load();
-        void store.refetchStatusFeed();
         sseFiber = appRuntime.runFork(
           Effect.flatMap(SseStream, (sse) =>
             Stream.runForEach(
@@ -269,7 +230,9 @@ export const BoardPage = () => {
     if (sseFiber !== undefined) appRuntime.runFork(Fiber.interrupt(sseFiber));
   });
 
-  // The badge tracks the most recently started active sprint.
+  // The badge tracks the most recently started active sprint. NOTE: this is
+  // null (not undefined) when the board has no active sprint — compare
+  // against null, never undefined.
   const activeSprint = createMemo(() => {
     const started = store
       .sprints()
@@ -277,32 +240,10 @@ export const BoardPage = () => {
       .sort((a, b) => (b.started_at_ms ?? 0) - (a.started_at_ms ?? 0));
     return started[0] ?? null;
   });
+  /** Sprint the tide should read, or null for the board's kanban-only tide. */
+  const tideSprint = createMemo(() => (sprintFilterOff() ? null : activeSprint()));
   const countdownFor = (sprint: { planned_days?: number | null; started_at_ms: number | null }) =>
     sprintCountdown(sprint, store.board()?.default_sprint_days, Date.now());
-
-  const buckets = createMemo(() => {
-    const estimates = new Map(store.issues().map((i) => [i.id, i.estimate ?? 0]));
-    const done = doneNames(store.board()?.columns ?? []);
-    // EFB-follow-up: when the sprint filter chip is ON, The Current should
-    // reflect only the current sprint's velocity. Restrict feed rows to
-    // issues currently members of the active sprint. Members-are-current is
-    // the same lens the Kanban board uses; sums stay consistent.
-    let feed = store.statusFeed();
-    const active = activeSprint();
-    if (active !== undefined && !sprintFilterOff()) {
-      const members = new Set(
-        store.issues().filter((i) => i.sprint_id === active.id).map((i) => i.id),
-      );
-      feed = feed.filter((r) => members.has(r.issue_id));
-    }
-    return velocityBuckets(
-      feed,
-      (id) => estimates.get(id) ?? 0,
-      Date.now(),
-      (name) => done.has(name),
-    );
-  });
-  const velocityTotal = () => buckets().reduce((a, b) => a + b, 0);
 
   const createIssue = async (input: NewIssueInput, files: ReadonlyArray<File>) => {
     const issue = await store.createIssue(input);
@@ -455,25 +396,12 @@ export const BoardPage = () => {
                     </Show>
                   </button>
                 </Show>
-                <div
-                  class="current"
-                  title={
-                    activeSprint() !== undefined && !sprintFilterOff()
-                      ? `Points transitioned into a done column during the trailing 7 days, filtered to ${activeSprint()!.name}. Each transition counts — an issue that goes to Done, out, and back to Done counts twice.`
-                      : "Points transitioned into a done column during the trailing 7 days. Each transition counts — an issue that goes to Done, out, and back to Done counts twice."
-                  }
-                >
-                  <span class="label">
-                    The Current
-                    <Show when={activeSprint() !== undefined && !sprintFilterOff()}>
-                      <span class="muted" style={{ "margin-left": "0.35rem", "font-size": "0.72rem" }}>
-                        · {activeSprint()!.name}
-                      </span>
-                    </Show>
-                  </span>
-                  <Sparkline buckets={buckets()} />
-                  <span class="figure">{velocityTotal()}</span>
-                </div>
+                <TideBadge
+                  apiBase={apiBase}
+                  sprintId={tideSprint()?.id ?? null}
+                  sprintName={tideSprint()?.name ?? null}
+                  refreshKey={tideVersion()}
+                />
               </div>
 
               <Show when={store.lastError()}>
@@ -543,5 +471,3 @@ export const BoardPage = () => {
     </main>
   );
 };
-
-export { velocityBuckets };

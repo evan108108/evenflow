@@ -1,12 +1,11 @@
 // Board store tests over a capturing ApiClient layer: endpoint dispatch,
-// optimistic updates + rollback, and the velocity bucketing math.
+// optimistic updates + rollback.
 
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { ApiClient, ApiError } from "../../effects";
 import type { Board, Issue } from "../../lib/types";
 import type { Column } from "../../lib/columns";
-import { velocityBuckets } from "./BoardPage";
 import { createBoardStore, type RunApi } from "./store";
 
 export const FAIL = Symbol("fail");
@@ -251,38 +250,5 @@ describe("createBoardStore", () => {
     await store.startSprint("s1");
     expect(calls.map((c) => c.path)).toContain("/api/v0/boards/kb/sprints/s1/start");
     expect(store.sprints()[0]!.status).toBe("active");
-  });
-});
-
-describe("velocityBuckets", () => {
-  const NOW = 8 * 86_400_000;
-  const doneAt = (ms: number, cac: string | null, issue_id = "i1") => ({
-    to: "Done",
-    container_at_completion: cac,
-    occurred_at_ms: ms,
-    issue_id,
-  });
-
-  const isDone = (name: string) => name === "Done";
-
-  it("sums only done-in-active completions inside the trailing week", () => {
-    const feed = [
-      doneAt(NOW - 1 * 86_400_000, "active"), // yesterday → bucket 6ish
-      doneAt(NOW - 1 * 86_400_000, "icebox"), // wrong container → dropped
-      doneAt(NOW - 10 * 86_400_000, "active"), // too old → dropped
-      { to: "In Progress", container_at_completion: null, occurred_at_ms: NOW - 1, issue_id: "i1" },
-    ];
-    const buckets = velocityBuckets(feed, () => 3, NOW, isDone);
-    expect(buckets.reduce((a, b) => a + b, 0)).toBe(3);
-  });
-
-  it("counts by column CATEGORY, so a renamed done column keeps flowing", () => {
-    const feed = [
-      { to: "Shipped", container_at_completion: "active", occurred_at_ms: NOW - 1, issue_id: "i1" },
-      doneAt(NOW - 2, "active"), // old rows still name-match "Done"
-    ];
-    // Board renamed Done → Shipped: both names sit in a done-category column.
-    const buckets = velocityBuckets(feed, () => 2, NOW, (n) => n === "Shipped" || n === "Done");
-    expect(buckets.reduce((a, b) => a + b, 0)).toBe(4);
   });
 });

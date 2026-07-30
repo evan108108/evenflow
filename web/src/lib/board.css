@@ -288,6 +288,21 @@ select:disabled {
   align-self: center;
 }
 
+/* ── sprint tide (EFB-22) ── inherits .current's layout; the arrow and the
+   loading placeholder are the only additions. */
+.current.tide .tide-direction {
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--color-ink-soft);
+}
+
+.current.tide .tide-placeholder {
+  /* Holds the sparkline's width so the header doesn't reflow on load. */
+  display: inline-block;
+  min-width: 90px;
+  text-align: center;
+}
+
 /* ── view switcher pills ── */
 .view-tabs {
   display: flex;
