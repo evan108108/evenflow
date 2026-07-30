@@ -117,7 +117,7 @@ export const BoardsList = (props: { archived?: boolean }) => {
 
   if (props.archived === true) {
     return (
-      <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
+      <main class="board-page">
         <TopBar crumbs={[{ label: "Boards", href: "/boards" }, { label: "Archived" }]} />
         <header style={{ margin: "1.6rem 0 2.5rem" }}>
           <h1 style={{ "font-size": "2.6rem" }}>Archived boards</h1>
@@ -170,7 +170,7 @@ export const BoardsList = (props: { archived?: boolean }) => {
   }
 
   return (
-    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "2.5rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
+    <main class="board-page">
       <TopBar crumbs={[{ label: "Boards" }]} />
       <header
         style={{
