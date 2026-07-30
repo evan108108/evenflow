@@ -62,7 +62,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "viewer",
       );
-      if (!board.is_encrypted) return yield* new NotFoundError({ reason: "not-private" });
+      if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
       const sessionPub = yield* sessionPubOfCaller(c.get("token") ?? "");
       if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });
       const db = yield* Db;
@@ -87,7 +87,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "viewer",
       );
-      if (!board.is_encrypted) return yield* new NotFoundError({ reason: "not-private" });
+      if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
       const sessionPub = yield* sessionPubOfCaller(c.get("token") ?? "");
       if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });
       yield* grantMemberOnJoin(board, pubkey).pipe(

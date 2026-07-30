@@ -978,9 +978,18 @@ export const makeDbMock = (): DbMock => {
             .filter((r) => r["board_id"] === params[0] && r["epoch"] === params[1] && r["revoked_at_ms"] === null)
             .map((r) => ({ recipient_pubkey: r["recipient_pubkey"] })) as R[];
         }
-        if (sql.startsWith("SELECT * FROM boardCache WHERE org_id = ? AND is_encrypted = 1")) {
+        if (
+          sql.startsWith(
+            "SELECT * FROM boardCache WHERE org_id = ? AND visibility = 'private' AND audience_pubkey IS NOT NULL",
+          )
+        ) {
           return boards
-            .filter((r) => r["org_id"] === params[0] && r["is_encrypted"] === 1)
+            .filter(
+              (r) =>
+                r["org_id"] === params[0] &&
+                r["visibility"] === "private" &&
+                r["audience_pubkey"] != null,
+            )
             .map((r) => ({ ...r })) as R[];
         }
         if (sql.startsWith("SELECT pubkey FROM orgMemberCache WHERE org_id = ? AND role IN")) {

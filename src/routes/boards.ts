@@ -255,6 +255,10 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         columns,
         labels,
         member_policy,
+        // Born private with no audience: members-only reads, plaintext
+        // publish, and still freely flippable to public. Encryption goes
+        // live on an explicit PATCH visibility=private.
+        encryption_active: false,
         is_encrypted: false,
         audience_epoch: 1,
         audience_pubkey: null,
@@ -424,7 +428,6 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         "issue_prefix",
         "visibility",
         "default_sprint_days",
-        "is_encrypted",
       ].some((k) => body[k] !== undefined);
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 
@@ -461,30 +464,31 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body["member_policy"] === undefined
           ? current.member_policy
           : yield* validateMemberPolicy(body["member_policy"]);
-      const visibility =
-        body["visibility"] === undefined
-          ? current.visibility
-          : yield* validateVisibility(body["visibility"]);
+      // Explicitly requested visibility (null = untouched by this PATCH).
+      // The distinction matters: only an EXPLICIT `visibility: 'private'`
+      // mints the audience, so an unrelated title edit on a board that is
+      // private-but-not-yet-encrypted never trips the crypto path.
+      const requestedVisibility =
+        body["visibility"] === undefined ? null : yield* validateVisibility(body["visibility"]);
+      const visibility = requestedVisibility ?? current.visibility;
       const default_sprint_days =
         body["default_sprint_days"] === undefined
           ? current.default_sprint_days
           : yield* validateSprintDays(body["default_sprint_days"]);
 
-      // One-way privacy flip (phase 16.5). false→true mints the board's 4a
-      // audience below; true→false is a v1 409 (unwrap-and-clear is future
-      // work); an encrypted board can never be publicly visible.
-      let flipToPrivate = false;
-      if (body["is_encrypted"] !== undefined) {
-        if (typeof body["is_encrypted"] !== "boolean") {
-          return yield* new ValidationError({ reason: "is_encrypted" });
-        }
-        if (body["is_encrypted"] === false && current.is_encrypted) {
-          return yield* new ConflictError({ reason: "unsupported-private-to-public" });
-        }
-        flipToPrivate = body["is_encrypted"] && !current.is_encrypted;
-      }
-      if ((current.is_encrypted || flipToPrivate) && visibility === "public") {
-        return yield* new ConflictError({ reason: "encrypted-board-must-stay-private" });
+      // Privacy is ONE setting since migration 0015: `visibility`. Asking for
+      // 'private' on a board whose audience hasn't been minted yet IS the
+      // privacy flip — it mints the audience below (phase 16.5 machinery).
+      // Going back to 'public' is a v1 409 once encryption is live, because
+      // unwrapping already-published ciphertext is future work; a board that
+      // is private but never encrypted (the create-time default) can still
+      // be made public freely.
+      //
+      // A pre-0015 client may still send `is_encrypted` — accepted and
+      // ignored, `visibility` is authoritative.
+      const flipToPrivate = requestedVisibility === "private" && !current.encryption_active;
+      if (visibility === "public" && current.encryption_active) {
+        return yield* new ConflictError({ reason: "unsupported-private-to-public" });
       }
       if (flipToPrivate) {
         // The flip itself is owner-only (the rest of the PATCH stays admin).
@@ -599,7 +603,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         issue_prefix,
         visibility,
         default_sprint_days,
-        is_encrypted: current.is_encrypted || flipToPrivate,
+        encryption_active: visibility === "private" && audienceState.audience_pubkey !== null,
+        is_encrypted: visibility === "private" && audienceState.audience_pubkey !== null,
         audience_epoch: audienceState.audience_epoch,
         audience_pubkey: audienceState.audience_pubkey,
         updated_at_ms: now,
