@@ -85,6 +85,30 @@ button {
   cursor: pointer;
 }
 
+/* Any button that didn't opt into a class inherits the outline .btn look
+   — so a stray <button>Save</button> doesn't fall back to the browser's
+   grey system chrome. Class-tagged buttons (.btn, .btn-solid, icon carets,
+   the layout toggle, etc.) are unaffected. */
+button:not([class]) {
+  display: inline-block;
+  padding: 0.55rem 1.1rem;
+  border: 1.5px solid var(--color-ink);
+  border-radius: var(--radius-chamfer);
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  transition: background 140ms ease, color 140ms ease;
+}
+button:not([class]):hover:not(:disabled) {
+  background: var(--color-ink);
+  color: var(--color-cream);
+}
+button:not([class]):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* No focus outlines anywhere — Evan's standing UI rule. */
 :focus,
 :focus-visible {
