@@ -109,6 +109,7 @@ export const BoardSettings = () => {
   const [tab, setTab] = createSignal<Tab>("General");
   const [showInvite, setShowInvite] = createSignal(false);
   const [confirmDelete, setConfirmDelete] = createSignal(false);
+  const [confirmArchive, setConfirmArchive] = createSignal(false);
   const [confirmText, setConfirmText] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
 
@@ -617,8 +618,13 @@ export const BoardSettings = () => {
               <button type="button" class="btn btn-danger" onClick={() => setConfirmDelete(true)}>
                 Delete board
               </button>
-              <button type="button" class="btn" disabled title="Archive lands in a later phase">
-                Archive
+              <button
+                type="button"
+                class="btn"
+                style={{ color: "var(--danger, #c0392b)", "border-color": "var(--danger, #c0392b)" }}
+                onClick={() => setConfirmArchive(true)}
+              >
+                Archive board
               </button>
             </div>
           </div>
@@ -675,6 +681,40 @@ export const BoardSettings = () => {
             </div>
           </div>
         )}
+      </Show>
+
+      <Show when={confirmArchive()}>
+        <div
+          class="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setConfirmArchive(false)}
+        >
+          <div class="modal" role="dialog" aria-label="Archive board">
+            <h2>Archive this board?</h2>
+            <p>
+              This board will be hidden from your boards list. You can restore it from the
+              archived boards view.
+            </p>
+            <div class="actions" style={{ "margin-top": "1rem" }}>
+              <button
+                type="button"
+                class="btn"
+                style={{ color: "var(--danger, #c0392b)", "border-color": "var(--danger, #c0392b)" }}
+                onClick={() => {
+                  setConfirmArchive(false);
+                  withRefresh(
+                    api((c) => c.post(`${apiBase()}/archive`, {})),
+                    () => navigate("/boards", { replace: true }),
+                  );
+                }}
+              >
+                Archive board
+              </button>
+              <button type="button" class="btn" onClick={() => setConfirmArchive(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       </Show>
 
       <Show when={confirmDelete()}>

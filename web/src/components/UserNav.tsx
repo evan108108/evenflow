@@ -152,6 +152,13 @@ export const UserNav = () => {
           >
             Profile
           </a>
+          <a
+            class="user-nav-item"
+            href="/settings/notifications"
+            onClick={() => setOpen(false)}
+          >
+            Notifications
+          </a>
           <button
             type="button"
             class="user-nav-item"

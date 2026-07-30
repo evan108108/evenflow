@@ -40,6 +40,7 @@ import { makeMcpRouter } from "../src/routes/mcp";
 import { makeOrgsRouter } from "../src/routes/orgs";
 import { makeSessionRouter } from "../src/routes/session";
 import { makeSprintsRouter } from "../src/routes/sprints";
+import { makeNotificationsRouter } from "../src/routes/notifications";
 import { makeStorageRouter } from "../src/routes/storage";
 import { makeWellKnownRouter } from "../src/routes/wellknown";
 import type { IssueShape } from "../src/shapes";
@@ -99,6 +100,7 @@ export const makeHarness = () => {
   app.route("/api/v0", makeInvitesRouter(() => layer));
   app.route("/api/v0", makeKeysRouter(() => layer));
   app.route("/api/v0", makeStorageRouter(() => layer));
+  app.route("/api/v0", makeNotificationsRouter(() => layer));
   app.route("/api/v0", makeBoardsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeSprintsRouter(() => layer));

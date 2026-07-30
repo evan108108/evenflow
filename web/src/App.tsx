@@ -11,7 +11,7 @@
 import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardSettings } from "./pages/BoardSettings";
-import { BoardsList } from "./pages/BoardsList";
+import { ArchivedBoardsList, BoardsList } from "./pages/BoardsList";
 import { DeveloperKeys } from "./pages/DeveloperKeys";
 import { Docs } from "./pages/Docs";
 import { HandlePage } from "./pages/HandlePage";
@@ -20,6 +20,7 @@ import { Landing } from "./pages/Landing";
 import { LegacyBoardRedirect } from "./pages/LegacyBoardRedirect";
 import { NewOrg } from "./pages/NewOrg";
 import { OrgMembers } from "./pages/OrgMembers";
+import { NotificationsSettings } from "./pages/NotificationsSettings";
 import { OrgSettings } from "./pages/OrgSettings";
 import { Profile } from "./pages/Profile";
 import { SignIn } from "./pages/SignIn";
@@ -42,7 +43,10 @@ export const App = () => (
     <Route path="/profile" component={Profile} />
     <Route path="/docs" component={Docs} />
     <Route path="/settings/keys" component={DeveloperKeys} />
-    <Route path="/boards" component={BoardsList} />
+    <Route path="/settings/notifications" component={NotificationsSettings} />
+    <Route path="/boards" component={() => <BoardsList />} />
+    {/* Static /boards/archived must register before the :slug legacy redirect. */}
+    <Route path="/boards/archived" component={ArchivedBoardsList} />
     <Route path="/boards/:slug" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/backlog" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/icebox" component={LegacyBoardRedirect} />

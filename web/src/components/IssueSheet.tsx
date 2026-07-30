@@ -5,6 +5,9 @@
 // fire the container-move endpoints; comments + recent activity below.
 
 import { For, Show, createResource, createSignal } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { Effect } from "effect";
+import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
@@ -17,6 +20,16 @@ import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { MarkdownView } from "./MarkdownView";
+
+const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promise<T> =>
+  appRuntime.runPromise(Effect.flatMap(ApiClient, f));
+
+interface MovableBoard {
+  id: string;
+  slug: string;
+  title: string;
+  org_slug: string | null;
+}
 
 const ESTIMATES = [1, 2, 3, 5, 8, 13];
 const PRIORITIES = [1, 2, 3, 4];
@@ -34,6 +47,13 @@ export const IssueSheet = (props: {
   commentsVersion: () => number;
   onClose: () => void;
 }) => {
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  const [showMove, setShowMove] = createSignal(false);
+  const [moveFilter, setMoveFilter] = createSignal("");
+  const [moveTarget, setMoveTarget] = createSignal<MovableBoard | null>(null);
+  const [moveBusy, setMoveBusy] = createSignal(false);
+  const [moveError, setMoveError] = createSignal<string | null>(null);
   const [editingBody, setEditingBody] = createSignal(false);
   const [bodyDraft, setBodyDraft] = createSignal("");
   const [commentDraft, setCommentDraft] = createSignal("");
@@ -131,6 +151,48 @@ export const IssueSheet = (props: {
     }
   };
 
+  // Boards the caller could move this issue to — everything they can see
+  // minus the current board; the server still enforces contributor on both.
+  const [movableBoards] = createResource(
+    () => (showMove() ? props.issue.id : null),
+    async () => {
+      const res = await api<{ boards: MovableBoard[] }>((c) => c.get("/api/v0/boards?limit=100"));
+      return res.boards.filter((b) => b.id !== props.board.id);
+    },
+  );
+
+  const filteredBoards = () => {
+    const q = moveFilter().trim().toLowerCase();
+    const all = movableBoards() ?? [];
+    return q === ""
+      ? all
+      : all.filter((b) => b.title.toLowerCase().includes(q) || b.slug.toLowerCase().includes(q));
+  };
+
+  const doMove = async () => {
+    const target = moveTarget();
+    if (target === null || moveBusy()) return;
+    setMoveBusy(true);
+    setMoveError(null);
+    try {
+      const { issue: moved } = await api<{ issue: Issue }>((c) =>
+        c.post(`/api/v0/issues/${props.issue.id}/move-to-board`, { target_board_id: target.id }),
+      );
+      setShowMove(false);
+      props.onClose();
+      const ref = moved.short_id ?? moved.id;
+      navigate(
+        target.org_slug !== null
+          ? `/@${target.org_slug}/${target.slug}/issues/${ref}`
+          : `/boards/${target.slug}/issues/${ref}`,
+      );
+    } catch {
+      setMoveError("The move didn't take — check you can contribute to that board.");
+    } finally {
+      setMoveBusy(false);
+    }
+  };
+
   return (
     <>
       <div class="sheet-overlay" onClick={props.onClose} />
@@ -138,6 +200,50 @@ export const IssueSheet = (props: {
         <button class="close" onClick={props.onClose} aria-label="Close">
           ×
         </button>
+        <Show when={!readOnly()}>
+          <div style={{ position: "absolute", top: "0.6rem", right: "2.6rem" }}>
+            <button
+              type="button"
+              class="btn"
+              style={{ padding: "0.1rem 0.55rem", "line-height": "1.4" }}
+              aria-haspopup="menu"
+              aria-label="Issue actions"
+              onClick={() => setMenuOpen(!menuOpen())}
+            >
+              ⋯
+            </button>
+            <Show when={menuOpen()}>
+              <div
+                role="menu"
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  "margin-top": "0.3rem",
+                  background: "var(--bg, #fff)",
+                  border: "1px solid var(--border, #ddd)",
+                  "border-radius": "6px",
+                  "box-shadow": "0 4px 14px rgba(0,0,0,0.12)",
+                  "z-index": 30,
+                  "white-space": "nowrap",
+                }}
+              >
+                <button
+                  type="button"
+                  class="user-nav-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setMoveFilter("");
+                    setMoveTarget(null);
+                    setMoveError(null);
+                    setShowMove(true);
+                  }}
+                >
+                  Move to another board…
+                </button>
+              </div>
+            </Show>
+          </div>
+        </Show>
 
         <Show when={props.issue.short_id}>
           {(shortId) => (
@@ -449,6 +555,71 @@ export const IssueSheet = (props: {
           </For>
         </section>
       </aside>
+
+      <Show when={showMove()}>
+        <div
+          class="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setShowMove(false)}
+        >
+          <div class="modal" role="dialog" aria-label="Move to another board">
+            <h2>Move to another board</h2>
+            <p class="muted" style={{ "font-size": "0.85rem" }}>
+              The issue gets a new id in the target board's numbering and lands in its first
+              matching column.
+            </p>
+            <input
+              type="text"
+              placeholder="Search boards…"
+              value={moveFilter()}
+              onInput={(e) => setMoveFilter(e.currentTarget.value)}
+            />
+            <div style={{ "max-height": "14rem", "overflow-y": "auto", "margin-top": "0.6rem" }}>
+              <Show when={!movableBoards.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
+                <Show when={filteredBoards().length > 0} fallback={<p class="muted">No other boards.</p>}>
+                  <For each={filteredBoards()}>
+                    {(b) => (
+                      <button
+                        type="button"
+                        class="user-nav-item"
+                        style={{
+                          width: "100%",
+                          "text-align": "left",
+                          background: moveTarget()?.id === b.id ? "var(--surface-2, #f0f0f0)" : "transparent",
+                        }}
+                        aria-pressed={moveTarget()?.id === b.id}
+                        onClick={() => setMoveTarget(b)}
+                      >
+                        {b.title}
+                        <span class="muted" style={{ "margin-left": "0.5rem", "font-size": "0.8rem" }}>
+                          {b.org_slug !== null ? `@${b.org_slug}/` : ""}{b.slug}
+                        </span>
+                      </button>
+                    )}
+                  </For>
+                </Show>
+              </Show>
+            </div>
+            <Show when={moveError()}>
+              <p class="muted" role="alert" style={{ "margin-top": "0.6rem" }}>
+                {moveError()}
+              </p>
+            </Show>
+            <div class="actions" style={{ "margin-top": "1rem" }}>
+              <button
+                type="button"
+                class="btn btn-solid"
+                disabled={moveTarget() === null || moveBusy()}
+                onClick={() => void doMove()}
+              >
+                {moveBusy() ? "Moving…" : "Move issue"}
+              </button>
+              <button type="button" class="btn" onClick={() => setShowMove(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
     </>
   );
 };

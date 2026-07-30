@@ -774,6 +774,111 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program);
   });
 
+  // ── POST /issues/:id/move-to-board — cross-board move ───────────────────
+  // Contributor on BOTH boards. The issue keeps its container but gets a
+  // fresh short_id minted in the target's prefix (links to the old id keep
+  // resolving nowhere — short ids are per-board vocabulary), lands in the
+  // same-named enabled column when the target has one, else the first
+  // enabled todo-category column, else the first enabled column. Sprint
+  // assignment is per-board, so it resets.
+  issues.post("/issues/:id/move-to-board", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const pubkey = callerPubkey(claims);
+      const body = yield* readJsonBody(c);
+      if (typeof body["target_board_id"] !== "string" || body["target_board_id"] === "") {
+        return yield* new ValidationError({ reason: "target_board_id" });
+      }
+      const { issue, board: source } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
+      if (body["target_board_id"] === source.id) {
+        return yield* new ValidationError({ reason: "target-is-source" });
+      }
+      const { board: target } = yield* authorizeBoardById(
+        body["target_board_id"],
+        pubkey,
+        "contributor",
+      ).pipe(
+        Effect.mapError((e) =>
+          e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "target-board" }) : e,
+        ),
+      );
+
+      const enabled = enabledColumns(target.columns);
+      if (enabled.length === 0) return yield* new ValidationError({ reason: "target-columns" });
+      const sameName = columnByName(target.columns, issue.status);
+      const column =
+        (sameName !== undefined && sameName.enabled ? sameName : undefined) ??
+        enabled.find((col) => col.category === "todo") ??
+        enabled[0]!;
+
+      const db = yield* Db;
+      // Re-mint in the target's prefix — deriving one first for legacy
+      // boards that predate 0003, exactly like the create path.
+      let prefix = target.issue_prefix;
+      if (prefix === null) {
+        const taken = yield* db.queryAll<{ issue_prefix: string }>(
+          "SELECT issue_prefix FROM boardCache WHERE issue_prefix IS NOT NULL",
+        );
+        prefix = uniquePrefix(derivePrefix(target.title), new Set(taken.map((r) => r.issue_prefix)));
+        yield* db.execute(
+          "UPDATE boardCache SET issue_prefix = ? WHERE id = ? AND issue_prefix IS NULL",
+          [prefix, target.id],
+        );
+      }
+      const claimed = yield* db.queryFirst<{ n: number }>(
+        "UPDATE boardCache SET next_issue_number = next_issue_number + 1 WHERE id = ? RETURNING next_issue_number - 1 AS n",
+        [target.id],
+      );
+      if (claimed === null) return yield* new NotFoundError({ reason: "target-board" });
+      const short_id = `${prefix}-${claimed.n}`;
+
+      const maxPos = yield* db.queryFirst<{ m: number | null }>(
+        "SELECT MAX(position) AS m FROM issueCache WHERE board_id = ?",
+        [target.id],
+      );
+      const position = (maxPos?.m ?? 0) + POSITION_STEP;
+      const now = yield* Clock.currentTimeMillis;
+      yield* db.execute(
+        "UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?",
+        [target.id, short_id, column.id, column.name, position, now, issue.id],
+      );
+      const moved = {
+        ...issue,
+        board_id: target.id,
+        short_id,
+        column_id: column.id,
+        status: column.name,
+        sprint_id: null,
+        position,
+        updated_at_ms: now,
+      };
+      const audit = yield* AuditLog;
+      yield* audit.record({
+        event_type: "issue_moved_to_board",
+        actor: claims.login,
+        details: { issue: issue.id, from_board: source.id, to_board: target.id, short_id },
+      });
+      // Both streams: the source board sees the card leave, the target sees
+      // it arrive.
+      yield* emitSecureBoardEvent(source.id, {
+        kind: "issue.updated",
+        board_id: source.id,
+        issue_id: issue.id,
+        at_ms: now,
+        payload: { issue_id: issue.id, moved_to_board: target.id },
+      });
+      yield* emitSecureBoardEvent(target.id, {
+        kind: "issue.updated",
+        board_id: target.id,
+        issue_id: issue.id,
+        at_ms: now,
+        payload: { issue: moved },
+      });
+      return { issue: moved };
+    });
+    return runJson(c, program);
+  });
+
   // ── PATCH /issues/:id/reorder — intra-column fractional positioning ─────
   // Body: { before_issue_id?, after_issue_id? } — the visible neighbors
   // around the drop slot (before = the card above, after = the card below;
