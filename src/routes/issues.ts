@@ -741,6 +741,15 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           occurred_at_ms: now,
         });
       }
+      // Estimate changes are audited (EFB-22): issueCache.estimate holds only
+      // the current value, so without this row a re-estimate would silently
+      // redraw every earlier day of the sprint tide at the new number.
+      if (estimate !== current.estimate) {
+        yield* db.execute(
+          "INSERT INTO issueEstimateHistory (id, issue_id, occurred_at_ms, prev_estimate, next_estimate, actor_pubkey) VALUES (?, ?, ?, ?, ?, ?)",
+          [crypto.randomUUID(), current.id, now, current.estimate, estimate, pubkey],
+        );
+      }
       yield* audit.record({
         event_type: "issue_updated",
         actor: claims.login,

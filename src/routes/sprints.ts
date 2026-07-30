@@ -30,6 +30,18 @@ import {
 } from "../authz";
 import { parseBoardRow, parseIssueRow, parseSprintRow, type BoardShape, type SprintShape } from "../shapes";
 import { isDoneStatus } from "../columns";
+import {
+  DEFAULT_TIDE_DAYS,
+  MAX_TIDE_DAYS,
+  computeTide,
+  dayRange,
+  tideDirection,
+  utcDayStart,
+  type TideInput,
+} from "../lib/tide/compute";
+import { loadKanbanTideInput, loadSprintTideInput } from "../lib/tide/facts";
+import { rollForwardNow, type TideSubject } from "../lib/tide/snapshot";
+import { publishTide } from "../lib/tide/publish";
 
 const MAX_NAME_LENGTH = 80;
 const MAX_GOAL_LENGTH = 200;
@@ -213,6 +225,12 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         started_at_ms: null,
         completed_at_ms: null,
         created_at_ms: now,
+        // Metrics land at start/complete time; a fresh sprint carries the
+        // same values the 0018 columns default to.
+        points_committed_start: null,
+        points_completed: null,
+        points_carried: null,
+        adds_mid_sprint: 0,
       };
       yield* db.execute(
         "INSERT INTO sprintCache (id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -592,6 +610,105 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         dropped: dropped,
         open: open,
       };
+    });
+    return runJson(c, program);
+  });
+
+  // ── GET /boards/:slug/sprints/:id/tide + GET /boards/:slug/tide ─────────
+  // Points remaining over the last N days: the sparkline behind TideBadge.
+  //
+  // Every day in the window is replayed live from audit rows, so the numbers
+  // are right even where no snapshot was ever written (a substrate outage, or
+  // days predating migration 0021). The snapshot table is the durable +
+  // published record, not the source of the answer.
+  //
+  // Reads are the lazy roll-forward trigger: the first visit of a new day
+  // closes out yesterday. Quiet boards get the same treatment from the cron.
+  const tideResponse = (
+    subject: TideSubject,
+    input: TideInput,
+    subjectStartedAtMs: number,
+  ): Effect.Effect<unknown, DbError, Db | Audience | BoardEmitter> =>
+    Effect.gen(function* () {
+      const readings = computeTide(input);
+      const closed = yield* rollForwardNow(subject, readings, subjectStartedAtMs);
+      // A day that just closed is published once. Best-effort by design: the
+      // reading above is already correct whether or not 4a takes it.
+      if (closed !== null) {
+        const now = yield* Clock.currentTimeMillis;
+        yield* publishTide({
+          subject,
+          snapshot_id: closed.snapshot_id,
+          reading: closed.reading,
+          at_ms: now,
+        });
+      }
+      return {
+        days: readings,
+        today: readings[readings.length - 1] ?? null,
+        direction: tideDirection(readings),
+      };
+    });
+
+  const requestedDays = (c: Context<AppHonoEnv>) =>
+    Effect.gen(function* () {
+      const raw = c.req.query("days");
+      if (raw === undefined) return DEFAULT_TIDE_DAYS;
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TIDE_DAYS) {
+        return yield* new ValidationError({ reason: "days" });
+      }
+      return parsed;
+    });
+
+  /** Board row with columns parsed — done-ness is a column category, not a name. */
+  const fetchBoardShape = (boardId: string) =>
+    Effect.gen(function* () {
+      const db = yield* Db;
+      const row = yield* db.queryFirst("SELECT * FROM boardCache WHERE id = ?", [boardId]);
+      if (row === null) return yield* new NotFoundError({ reason: "board" });
+      return parseBoardRow(row);
+    });
+
+  sprints.get("/boards/:slug/sprints/:id/tide", async (c) => {
+    const program = Effect.gen(function* () {
+      const { board } = yield* boardScope(c, callerPubkeyOrNull(c.get("claims")), "viewer");
+      const sprint = yield* fetchSprint(board.id, c.req.param("id"));
+      const days = yield* requestedDays(c);
+      const boardShape = yield* fetchBoardShape(board.id);
+      const now = yield* Clock.currentTimeMillis;
+      const input = yield* loadSprintTideInput(
+        sprint.id,
+        boardShape.columns,
+        sprint.completed_at_ms,
+        dayRange(utcDayStart(now), days),
+      );
+      return yield* tideResponse(
+        { board_id: board.id, sprint_id: sprint.id },
+        input,
+        sprint.created_at_ms,
+      );
+    });
+    return runJson(c, program);
+  });
+
+  sprints.get("/boards/:slug/tide", async (c) => {
+    const program = Effect.gen(function* () {
+      const { board } = yield* boardScope(c, callerPubkeyOrNull(c.get("claims")), "viewer");
+      const days = yield* requestedDays(c);
+      const boardShape = yield* fetchBoardShape(board.id);
+      const now = yield* Clock.currentTimeMillis;
+      const input = yield* loadKanbanTideInput(
+        board.id,
+        boardShape.columns,
+        boardShape.done_window_days,
+        dayRange(utcDayStart(now), days),
+      );
+      return yield* tideResponse(
+        { board_id: board.id, sprint_id: null },
+        input,
+        boardShape.created_at_ms,
+      );
     });
     return runJson(c, program);
   });

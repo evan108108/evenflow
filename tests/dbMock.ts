@@ -37,6 +37,8 @@ export interface DbMock {
   readonly githubRules: Row[];
   readonly githubAudit: Row[];
   readonly githubDedup: Row[];
+  readonly estimateHistory: Row[];
+  readonly tideSnapshots: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -67,6 +69,8 @@ export const makeDbMock = (): DbMock => {
   const githubRules: Row[] = [];
   const githubAudit: Row[] = [];
   const githubDedup: Row[] = [];
+  const estimateHistory: Row[] = [];
+  const tideSnapshots: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
     issues
@@ -274,6 +278,43 @@ export const makeDbMock = (): DbMock => {
           statusChanges.push({ id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms });
           return;
         }
+        // ── EFB-22 sprint tide ────────────────────────────────────────────
+        if (sql.startsWith("INSERT INTO issueEstimateHistory")) {
+          const [id, issue_id, occurred_at_ms, prev_estimate, next_estimate, actor_pubkey] = params;
+          estimateHistory.push({ id, issue_id, occurred_at_ms, prev_estimate, next_estimate, actor_pubkey });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO sprintTideSnapshot")) {
+          const [id, sprint_id, board_id, day_start_ms, committed_pts, done_pts, remaining_pts, adds_today, drops_today, computed_at_ms] = params;
+          // Mirrors the two partial unique indexes from migration 0021.
+          const clash = tideSnapshots.some((s) =>
+            sprint_id === null
+              ? s["sprint_id"] === null &&
+                s["board_id"] === board_id &&
+                s["day_start_ms"] === day_start_ms
+              : s["sprint_id"] === sprint_id && s["day_start_ms"] === day_start_ms,
+          );
+          if (clash) {
+            throw new Error("DbMock: UNIQUE violation on sprintTideSnapshot (subject, day)");
+          }
+          tideSnapshots.push({ id, sprint_id, board_id, day_start_ms, committed_pts, done_pts, remaining_pts, adds_today, drops_today, computed_at_ms, substrate_event_id: null });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintTideSnapshot") && sql.includes("SET committed_pts")) {
+          const [committed_pts, done_pts, remaining_pts, adds_today, drops_today, computed_at_ms, id] = params;
+          const row = tideSnapshots.find((s) => s["id"] === id);
+          if (row !== undefined) {
+            Object.assign(row, { committed_pts, done_pts, remaining_pts, adds_today, drops_today, computed_at_ms });
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintTideSnapshot SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = tideSnapshots.find((s) => s["id"] === id);
+          if (row !== undefined) row["substrate_event_id"] = substrate_event_id;
+          return;
+        }
+
         // Org creation: session bootstrap inlines 'personal', the orgs
         // router inlines 'team'; the literal picks the param shape.
         if (sql.startsWith("INSERT INTO orgCache") && sql.includes("'personal'")) {
@@ -1101,6 +1142,22 @@ export const makeDbMock = (): DbMock => {
           );
           return (r ? { pubkey: r["pubkey"] } : null) as R | null;
         }
+        // ── EFB-22 sprint tide ────────────────────────────────────────────
+        if (sql.startsWith("SELECT id FROM sprintTideSnapshot WHERE board_id = ? AND sprint_id IS NULL")) {
+          const r = tideSnapshots.find(
+            (x) =>
+              x["board_id"] === params[0] &&
+              x["sprint_id"] === null &&
+              x["day_start_ms"] === params[1],
+          );
+          return (r ? { id: r["id"] } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT id FROM sprintTideSnapshot WHERE sprint_id = ?")) {
+          const r = tideSnapshots.find(
+            (x) => x["sprint_id"] === params[0] && x["day_start_ms"] === params[1],
+          );
+          return (r ? { id: r["id"] } : null) as R | null;
+        }
         throw new Error(`DbMock: unexpected queryFirst: ${sql}`);
       }),
     queryAll: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -1535,6 +1592,87 @@ export const makeDbMock = (): DbMock => {
             .slice(0, limit)
             .map((r) => ({ ...r })) as R[];
         }
+        // ── EFB-22 sprint tide ────────────────────────────────────────────
+        if (sql.startsWith("SELECT s.id AS sprint_id, s.board_id")) {
+          return sprints
+            .filter((s) => s["status"] === "active")
+            .map((s) => ({
+              sprint_id: s["id"],
+              board_id: s["board_id"],
+              sprint_created_at_ms: s["created_at_ms"],
+              completed_at_ms: s["completed_at_ms"] ?? null,
+            })) as R[];
+        }
+        if (sql === "SELECT id FROM boardCache") {
+          return boards.map((b) => ({ id: b["id"] })) as R[];
+        }
+        if (sql.startsWith("SELECT issue_id, added_at_ms, removed_at_ms FROM sprintMembership WHERE sprint_id = ?")) {
+          return sprintMemberships
+            .filter((m) => m["sprint_id"] === params[0])
+            .map((m) => ({
+              issue_id: m["issue_id"],
+              added_at_ms: m["added_at_ms"],
+              removed_at_ms: m["removed_at_ms"] ?? null,
+            })) as R[];
+        }
+        if (sql.startsWith("SELECT id, estimate, status, created_at_ms FROM issueCache WHERE id IN")) {
+          const wanted = new Set(params.map(str));
+          return issues
+            .filter((i) => wanted.has(str(i["id"])))
+            .map((i) => ({
+              id: i["id"],
+              estimate: i["estimate"] ?? null,
+              status: i["status"],
+              created_at_ms: i["created_at_ms"],
+            })) as R[];
+        }
+        if (sql.startsWith("SELECT issue_id, occurred_at_ms, prev_estimate, next_estimate FROM issueEstimateHistory WHERE issue_id IN")) {
+          const wanted = new Set(params.map(str));
+          return estimateHistory
+            .filter((e) => wanted.has(str(e["issue_id"])))
+            .map((e) => ({
+              issue_id: e["issue_id"],
+              occurred_at_ms: e["occurred_at_ms"],
+              prev_estimate: e["prev_estimate"] ?? null,
+              next_estimate: e["next_estimate"] ?? null,
+            })) as R[];
+        }
+        if (sql.startsWith("SELECT issue_id, occurred_at_ms, from_status, to_status FROM statusChangeCache WHERE issue_id IN")) {
+          const wanted = new Set(params.map(str));
+          return statusChanges
+            .filter((s) => wanted.has(str(s["issue_id"])))
+            .map((s) => ({
+              issue_id: s["issue_id"],
+              occurred_at_ms: s["occurred_at_ms"],
+              from_status: s["from_status"] ?? null,
+              to_status: s["to_status"] ?? null,
+            })) as R[];
+        }
+        // Kanban tide scope: board issues that are either still open or moved
+        // recently enough for the Done window to still cover them. Params are
+        // [board_id, rangeEnd, ...openColumnNames, activitySince].
+        if (sql.startsWith("SELECT i.id, i.estimate, i.status, i.created_at_ms")) {
+          const board_id = params[0];
+          const rangeEnd = num(params[1]);
+          const activitySince = num(params[params.length - 1]);
+          const openNames = new Set(params.slice(2, params.length - 1).map(str));
+          return issues
+            .filter((i) => i["board_id"] === board_id && num(i["created_at_ms"]) <= rangeEnd)
+            .filter(
+              (i) =>
+                openNames.has(str(i["status"])) ||
+                statusChanges.some(
+                  (s) =>
+                    s["issue_id"] === i["id"] && num(s["occurred_at_ms"]) >= activitySince,
+                ),
+            )
+            .map((i) => ({
+              id: i["id"],
+              estimate: i["estimate"] ?? null,
+              status: i["status"],
+              created_at_ms: i["created_at_ms"],
+            })) as R[];
+        }
         throw new Error(`DbMock: unexpected queryAll: ${sql}`);
       }),
   };
@@ -1563,6 +1701,8 @@ export const makeDbMock = (): DbMock => {
     githubRules,
     githubAudit,
     githubDedup,
+    estimateHistory,
+    tideSnapshots,
     layer: Layer.succeed(Db, service),
   };
 };
