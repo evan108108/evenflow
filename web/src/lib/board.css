@@ -273,7 +273,11 @@ select {
 .view-tabs {
   display: flex;
   gap: 0.4rem;
-  margin-bottom: 1.8rem;
+  /* No margin-bottom: this always sits inside .tabs-row (which owns the
+     bottom spacing). A margin here inflates the flex-item outer box, and
+     since .tabs-row uses align-items: center, an inflated view-tabs box
+     shifts UP relative to its neighbors — the sprint-badge would sit
+     visibly lower than the tabs. */
 }
 
 .view-tabs a {
