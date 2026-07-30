@@ -2260,13 +2260,14 @@ input.sprint-name:focus {
 .vertical-split.with-rail {
   --rail-gap: 2rem;
   display: grid;
-  /* ~60/40. Widened so the left stack keeps the same --measure reading
-     width it has with no rail — the rail is added beside it rather than
-     squeezing it. */
+  /* ~60/40. Grid fills the full board-page width (capped at 1440px on
+     .board-page); the left status stack is a full-width flex flowing
+     top-down inside its track. On ultrawide viewports the space actually
+     gets used instead of dead margin on the right. */
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: var(--rail-gap);
   align-items: start;
-  max-width: calc(var(--measure) / 0.6 + var(--rail-gap));
+  max-width: none;
 }
 
 /* The grid track owns the width now. */
