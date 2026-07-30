@@ -122,22 +122,34 @@ export const estimateAt = (facts: TideIssueFacts, atMs: number): number => {
 };
 
 /**
- * Status in force at `atMs`. Three cases: after some changes (the latest
- * `to_status` wins), before every recorded change (the first change's
+ * Rows in `statusChangeCache` that actually move the status. Container moves
+ * (backlog/icebox promotions) write a row with BOTH `from_status` and
+ * `to_status` null — they record a container transition, not a status one.
+ * Treating those as status changes makes an issue appear to revert to
+ * whatever it reads today the moment it's moved between containers, which
+ * silently understates `done_pts` for every day in between.
+ */
+const statusTransitions = (facts: TideIssueFacts): ReadonlyArray<StatusChange> =>
+  facts.status_changes.filter((c) => c.to_status !== null);
+
+/**
+ * Status in force at `atMs`. Three cases: after some transitions (the latest
+ * `to_status` wins), before every recorded one (the first transition's
  * `from_status` — the state it moved away from), or no history at all
  * (whatever the issue reads today).
  */
 export const statusAt = (facts: TideIssueFacts, atMs: number): string => {
-  if (facts.status_changes.length === 0) return facts.current_status;
-  let latest: string | null | undefined;
-  for (const change of facts.status_changes) {
+  const changes = statusTransitions(facts);
+  if (changes.length === 0) return facts.current_status;
+  let latest: string | undefined;
+  for (const change of changes) {
     if (change.occurred_at_ms > atMs) break;
-    latest = change.to_status;
+    if (change.to_status !== null) latest = change.to_status;
   }
   if (latest === undefined) {
-    return facts.status_changes[0]?.from_status ?? facts.current_status;
+    return changes[0]?.from_status ?? facts.current_status;
   }
-  return latest ?? facts.current_status;
+  return latest;
 };
 
 const isDoneAt = (
@@ -157,16 +169,18 @@ const doneSinceMs = (
   facts: TideIssueFacts,
   atMs: number,
 ): number | null => {
-  const first = facts.status_changes[0];
+  const changes = statusTransitions(facts);
+  const first = changes[0];
   let done =
     first === undefined
       ? isDoneStatus(columns, facts.current_status)
       : isDoneStatus(columns, first.from_status ?? facts.current_status);
   // Predating every change, we only know done-ness, never when it started.
   let since: number | null = done ? facts.created_at_ms : null;
-  for (const change of facts.status_changes) {
+  for (const change of changes) {
     if (change.occurred_at_ms > atMs) break;
-    const nowDone = isDoneStatus(columns, change.to_status ?? facts.current_status);
+    if (change.to_status === null) continue;
+    const nowDone = isDoneStatus(columns, change.to_status);
     if (nowDone && !done) since = change.occurred_at_ms;
     else if (!nowDone) since = null;
     done = nowDone;

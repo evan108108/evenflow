@@ -119,6 +119,46 @@ describe("statusAt", () => {
   it("falls back to the current status with no recorded changes", () => {
     expect(statusAt(issue({ issue_id: "i2", current_status: "Todo" }), midday(3))).toBe("Todo");
   });
+
+  // Container moves (backlog/icebox) write a statusChangeCache row with both
+  // status fields null. Counting those as transitions makes the issue look
+  // like it reverted to its present-day status the moment it was moved.
+  it("ignores container-move rows, which carry a null to_status", () => {
+    const moved = issue({
+      issue_id: "i3",
+      current_status: "In Progress",
+      status_changes: [
+        { occurred_at_ms: midday(1), from_status: "Todo", to_status: "Done" },
+        { occurred_at_ms: midday(2), from_status: null, to_status: null },
+        { occurred_at_ms: midday(5), from_status: "Done", to_status: "In Progress" },
+      ],
+    });
+    // Day 3 sits after the container move but before the re-open: still Done.
+    expect(statusAt(moved, midday(3))).toBe("Done");
+    expect(statusAt(moved, midday(6))).toBe("In Progress");
+  });
+});
+
+describe("computeTide — container moves", () => {
+  it("keeps points booked as done across a container move", () => {
+    const issues = [
+      issue({
+        issue_id: "a",
+        current_estimate: 5,
+        current_status: "In Progress",
+        status_changes: [
+          { occurred_at_ms: midday(1), from_status: "Todo", to_status: "Done" },
+          { occurred_at_ms: midday(2), from_status: null, to_status: null },
+          { occurred_at_ms: midday(5), from_status: "Done", to_status: "In Progress" },
+        ],
+      }),
+    ];
+    const out = computeTide(sprintInput(issues, dayRange(day(5), 6)));
+    // Done from day 1 until the day-5 re-open; the day-2 container move must
+    // not un-book the points in between.
+    expect(out.map((d) => d.done_pts)).toEqual([0, 5, 5, 5, 5, 0]);
+    expect(out.map((d) => d.remaining_pts)).toEqual([5, 0, 0, 0, 0, 5]);
+  });
 });
 
 // ── the sprint burndown ───────────────────────────────────────────────────
