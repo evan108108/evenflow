@@ -1108,6 +1108,12 @@ export const makeDbMock = (): DbMock => {
             .filter((r) => (r["sprint_id"] ?? null) === params[0])
             .map((r) => ({ estimate: r["estimate"] ?? null })) as R[];
         }
+        // Phase 21d: velocity — done issues within window.
+        if (sql === "SELECT estimate FROM issueCache WHERE board_id = ? AND completed_at_ms IS NOT NULL AND completed_at_ms >= ?") {
+          return issues
+            .filter((r) => r["board_id"] === params[0] && r["completed_at_ms"] != null && (r["completed_at_ms"] as number) >= (params[1] as number))
+            .map((r) => ({ estimate: r["estimate"] ?? null })) as R[];
+        }
         if (sql.startsWith("SELECT m.*, i.title, i.short_id, i.status, i.column_id, i.estimate, i.assignee_pubkey, i.priority FROM sprintMembership m LEFT JOIN issueCache i")) {
           const [sprint_id] = params;
           return sprintMemberships

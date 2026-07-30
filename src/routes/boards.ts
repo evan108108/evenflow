@@ -416,6 +416,54 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
+  // ── GET /boards/:slug/velocity ────────────────────────────────────────────
+  // Rolling velocity: sum of estimates for issues whose completed_at_ms fell
+  // within the window. `?days=N` overrides the board's done_window_days; the
+  // response echoes the effective window so the caller can render "we ship
+  // ~X pts every N days" without re-deriving. Works whether the board uses
+  // sprints or not — completed_at_ms is stamped by the shared transition
+  // handler regardless of sprint state.
+  boards.get("/boards/:slug/velocity", async (c) => {
+    const program = Effect.gen(function* () {
+      const pubkey = callerPubkeyOrNull(c.get("claims"));
+      const { board } = yield* resolveBoardScope(
+        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
+        pubkey,
+        "viewer",
+      );
+      const daysRaw = c.req.query("days");
+      const days = (() => {
+        if (daysRaw === undefined) return board.done_window_days;
+        const n = Number(daysRaw);
+        if (!Number.isInteger(n) || n < 1 || n > 365) return board.done_window_days;
+        return n;
+      })();
+
+      const db = yield* Db;
+      const now = yield* Clock.currentTimeMillis;
+      const cutoff = now - days * 86_400_000;
+      const rows = yield* db.queryAll(
+        "SELECT estimate FROM issueCache WHERE board_id = ? AND completed_at_ms IS NOT NULL AND completed_at_ms >= ?",
+        [board.id, cutoff],
+      );
+      const total = rows.reduce(
+        (sum: number, r) => sum + ((r as { estimate: number | null }).estimate ?? 0),
+        0,
+      );
+      const issues_completed = rows.length;
+      const per_day = days > 0 ? total / days : 0;
+      return {
+        window_days: days,
+        points_completed: total,
+        issues_completed,
+        per_day_average: Math.round(per_day * 100) / 100,
+      };
+    });
+    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
+    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
+    return c.json(exit.value);
+  });
+
   // ── PATCH /boards/:slug — partial update of mutable fields (admin) ──────
   boards.patch("/boards/:slug", async (c) => {
     const program = Effect.gen(function* () {
@@ -435,6 +483,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         "issue_prefix",
         "visibility",
         "default_sprint_days",
+        "done_window_days",
       ].some((k) => body[k] !== undefined);
       if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
 

@@ -98,6 +98,18 @@ export const SprintsList = () => {
       return res.sprints;
     },
   );
+  const [velocity] = createResource(
+    () => `${apiBase()}/velocity`,
+    async () =>
+      api((c) =>
+        c.get<{
+          window_days: number;
+          points_completed: number;
+          issues_completed: number;
+          per_day_average: number;
+        }>(`${apiBase()}/velocity`),
+      ),
+  );
 
   const planning = () => (sprints() ?? []).filter((s) => s.status === "planning");
   const active = () => (sprints() ?? []).filter((s) => s.status === "active");
@@ -119,6 +131,18 @@ export const SprintsList = () => {
       />
       <header style={{ "margin-bottom": "2rem" }}>
         <h1 style={{ "font-size": "2.6rem", margin: 0 }}>Sprints</h1>
+        <Show when={velocity()}>
+          {(v) => (
+            <p
+              class="muted figure"
+              style={{ "margin-top": "0.6rem", "font-size": "0.95rem" }}
+              title={`${v().issues_completed} issues shipped in the last ${v().window_days} days`}
+            >
+              velocity · {v().points_completed}pt / {v().window_days}d ·{" "}
+              {v().per_day_average} pt/day
+            </p>
+          )}
+        </Show>
       </header>
       <Show when={!sprints.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
         <Group title="Active" sprints={active()} basePath={basePath()} empty="No sprint in flight." />
