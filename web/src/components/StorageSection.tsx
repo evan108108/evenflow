@@ -210,6 +210,7 @@ export const StorageSection = (props: { handle: string }) => {
               type="password"
               autocomplete="off"
               maxlength="512"
+              style={{ width: "100%" }}
               value={accessKeyId()}
               onInput={(e) => setAccessKeyId(e.currentTarget.value)}
             />
@@ -219,6 +220,7 @@ export const StorageSection = (props: { handle: string }) => {
               type="password"
               autocomplete="off"
               maxlength="512"
+              style={{ width: "100%" }}
               value={secretAccessKey()}
               onInput={(e) => setSecretAccessKey(e.currentTarget.value)}
             />
@@ -236,7 +238,7 @@ export const StorageSection = (props: { handle: string }) => {
             </span>
           </Show>
 
-          <div class="actions" style={{ "margin-top": "1rem" }}>
+          <div class="actions" style={{ "margin-top": "1rem", gap: "0.6rem" }}>
             <button class="btn btn-solid" type="submit" disabled={busy()}>
               {busy() ? "Saving…" : "Save"}
             </button>
