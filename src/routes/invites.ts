@@ -22,6 +22,7 @@ import {
   resolveOrgBySlug,
 } from "../authz";
 import { upsertMembership } from "../membership";
+import { grantMemberOnJoin } from "../audiences";
 import { parseBoardRow, parseInviteRow, parseOrgRow, type InviteShape } from "../shapes";
 import { realPubkeyOfMember } from "../nostr";
 import {
@@ -354,6 +355,24 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
           token,
           grant: { scope: "board", target: `${org.slug}/${board.slug}` },
         });
+        // Private board: mint an audience key grant for the accepter at the
+        // current epoch. Previously grants only landed at "next sign-in",
+        // which never fired because the accept IS the sign-in that would
+        // trigger it — the member sat with "No key grant yet (epoch N)" and
+        // couldn't decrypt any post-accept encrypted issue events. Failures
+        // during the grant path are non-fatal: the accept still succeeds
+        // (audit row still written), and the grant can be retried later.
+        if (board.encryption_active === true) {
+          yield* grantMemberOnJoin(board, pubkey).pipe(
+            Effect.catchAll((err) =>
+              Effect.sync(() => {
+                console.warn(
+                  `[invites] grantMemberOnJoin failed for ${board.slug}: ${String(err)}`,
+                );
+              }),
+            ),
+          );
+        }
         targetUrl = `/@${org.slug}/${board.slug}`;
       } else {
         yield* upsertMembership({
