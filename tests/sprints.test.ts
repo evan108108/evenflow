@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SprintShape } from "../src/shapes";
-import { createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
+import { bearer, createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -305,5 +305,90 @@ describe("sprint length (migration 0011)", () => {
       );
       expect(res.status).toBe(400);
     }
+  });
+});
+
+describe("phase 21a — sprint membership audit + delete", () => {
+  it("add-issue inserts an open sprintMembership row; remove-issue stamps removed_at_ms", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h);
+
+    vi.setSystemTime(2_000);
+    await addIssue(h, sprint.id, issue.id);
+    expect(h.db.sprintMemberships).toHaveLength(1);
+    expect(h.db.sprintMemberships[0]).toMatchObject({
+      sprint_id: sprint.id,
+      issue_id: issue.id,
+      added_at_ms: 2_000,
+      removed_at_ms: null,
+    });
+
+    vi.setSystemTime(3_000);
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
+      jsonReq("POST", { issue_id: issue.id }),
+      {},
+    );
+    expect(res.status).toBe(200);
+    expect(h.db.sprintMemberships[0]!["removed_at_ms"]).toBe(3_000);
+  });
+
+  it("add-issue on an ACTIVE sprint increments adds_mid_sprint", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const seed = await createIssue(h, { title: "seed" });
+    await addIssue(h, sprint.id, seed.id);
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    expect(h.db.sprints[0]!["adds_mid_sprint"] ?? 0).toBe(0);
+
+    const late = await createIssue(h, { title: "late" });
+    await addIssue(h, sprint.id, late.id);
+    expect(h.db.sprints[0]!["adds_mid_sprint"]).toBe(1);
+  });
+
+  it("DELETE /sprints/:id (planning) clears members and drops the sprint", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const a = await createIssue(h, { title: "A" });
+    const b = await createIssue(h, { title: "B" });
+    await addIssue(h, sprint.id, a.id);
+    await addIssue(h, sprint.id, b.id);
+
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      { method: "DELETE", headers: { ...bearer } },
+      {},
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ deleted: true, member_count: 2 });
+    expect(h.db.sprints).toHaveLength(0);
+    expect(h.db.sprintMemberships).toHaveLength(0);
+    expect(h.db.issues.find((r) => r["id"] === a.id)!["sprint_id"]).toBeNull();
+    expect(h.db.issues.find((r) => r["id"] === b.id)!["sprint_id"]).toBeNull();
+  });
+
+  it("DELETE /sprints/:id refuses non-planning sprints with 409", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    const active = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      { method: "DELETE", headers: { ...bearer } },
+      {},
+    );
+    expect(active.status).toBe(409);
+
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/complete`, jsonReq("POST", {}), {});
+    const completed = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      { method: "DELETE", headers: { ...bearer } },
+      {},
+    );
+    expect(completed.status).toBe(409);
   });
 });

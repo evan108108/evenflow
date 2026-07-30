@@ -462,6 +462,20 @@ export const createBoardStore = (
     }
   };
 
+  /** Delete a planning sprint. Members' sprint_id gets cleared server-side;
+   *  we drop the sprint locally and let the SSE refetch reconcile issue
+   *  rows so their card returns to Unassigned Backlog. */
+  const deleteSprint = async (id: string) => {
+    try {
+      await api((c) => c.delete<{ deleted: true }>(`${apiBase}/sprints/${id}`));
+      setSprints((list) => list.filter((s) => s.id !== id));
+      setLastError(null);
+      void refetchIssues();
+    } catch (e) {
+      setLastError(errorText(e));
+    }
+  };
+
   const setSprintMembership = (issue: Issue, sprintId: string | null) => {
     if ((issue.sprint_id ?? null) === sprintId) return Promise.resolve();
     const verb = sprintId === null ? "remove-issue" : "add-issue";
@@ -606,6 +620,7 @@ export const createBoardStore = (
     patchSprint,
     startSprint,
     completeSprint,
+    deleteSprint,
     addIssueToSprint,
     removeIssueFromSprint,
     transition,

@@ -20,6 +20,7 @@ export interface DbMock {
   readonly statusChanges: Row[];
   readonly attachments: Row[];
   readonly sprints: Row[];
+  readonly sprintMemberships: Row[];
   readonly apiKeys: Row[];
   readonly orgs: Row[];
   readonly orgMembers: Row[];
@@ -49,6 +50,7 @@ export const makeDbMock = (): DbMock => {
   const statusChanges: Row[] = [];
   const attachments: Row[] = [];
   const sprints: Row[] = [];
+  const sprintMemberships: Row[] = [];
   const apiKeys: Row[] = [];
   const orgs: Row[] = [];
   const orgMembers: Row[] = [];
@@ -648,6 +650,54 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { status: "completed", completed_at_ms: params[0] });
           return;
         }
+        // ── phase 21a: sprint membership audit + adds counter + delete ──
+        if (sql.startsWith("INSERT INTO sprintMembership")) {
+          const [id, sprint_id, issue_id, added_at_ms] = params;
+          sprintMemberships.push({
+            id,
+            sprint_id,
+            issue_id,
+            added_at_ms,
+            removed_at_ms: null,
+            was_completed_in_sprint: 0,
+            carried_to_sprint_id: null,
+          });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintCache SET adds_mid_sprint = adds_mid_sprint + 1 WHERE id = ?")) {
+          const row = sprints.find((r) => r["id"] === params[0]);
+          if (row) row["adds_mid_sprint"] = ((row["adds_mid_sprint"] as number) ?? 0) + 1;
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintMembership SET removed_at_ms = ? WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL")) {
+          const [removed_at_ms, sprint_id, issue_id] = params;
+          for (const m of sprintMemberships) {
+            if (m["sprint_id"] === sprint_id && m["issue_id"] === issue_id && m["removed_at_ms"] === null) {
+              m["removed_at_ms"] = removed_at_ms;
+            }
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET sprint_id = NULL, updated_at_ms = ? WHERE sprint_id = ?")) {
+          const [updated_at_ms, sprint_id] = params;
+          for (const row of issues) {
+            if (row["sprint_id"] === sprint_id) Object.assign(row, { sprint_id: null, updated_at_ms });
+          }
+          return;
+        }
+        if (sql.startsWith("DELETE FROM sprintMembership WHERE sprint_id = ?")) {
+          const [sprint_id] = params;
+          for (let i = sprintMemberships.length - 1; i >= 0; i--) {
+            if (sprintMemberships[i]!["sprint_id"] === sprint_id) sprintMemberships.splice(i, 1);
+          }
+          return;
+        }
+        if (sql.startsWith("DELETE FROM sprintCache WHERE id = ?")) {
+          const [id] = params;
+          const idx = sprints.findIndex((r) => r["id"] === id);
+          if (idx >= 0) sprints.splice(idx, 1);
+          return;
+        }
         // ── polish batch: cross-board move + notifications ──
         if (sql.startsWith("UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?")) {
           const [board_id, short_id, column_id, status, position, updated_at_ms, id] = params;
@@ -985,6 +1035,12 @@ export const makeDbMock = (): DbMock => {
         }
         // Sprint-start's backlog sweep — must precede the generic
         // board-list handler, which shares its prefix.
+        // Phase 21a: delete-planning-sprint enumeration.
+        if (sql === "SELECT * FROM issueCache WHERE sprint_id = ?") {
+          return issues
+            .filter((r) => (r["sprint_id"] ?? null) === params[0])
+            .map((r) => ({ ...r })) as R[];
+        }
         if (sql.startsWith("SELECT * FROM issueCache WHERE board_id = ? AND sprint_id = ? AND container = 'backlog'")) {
           return issues
             .filter(
@@ -1357,6 +1413,7 @@ export const makeDbMock = (): DbMock => {
     statusChanges,
     attachments,
     sprints,
+    sprintMemberships,
     apiKeys,
     orgs,
     orgMembers,

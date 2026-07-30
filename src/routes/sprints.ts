@@ -328,6 +328,10 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── add-issue / remove-issue — the only writers of issueCache.sprint_id ─
+  // Also writes the sprintMembership audit trail: add-issue inserts a fresh
+  // open row (added_at_ms=now, removed_at_ms=null); remove-issue stamps the
+  // existing open row's removed_at_ms. History survives across future
+  // reassignments of the single-value sprint_id.
   const membershipEndpoint = (
     verb: "add-issue" | "remove-issue",
     apply: (sprint: SprintShape, issueId: string) => { sprint_id: string | null },
@@ -360,6 +364,27 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           now,
           issue.id,
         ]);
+        if (verb === "add-issue") {
+          yield* db.execute(
+            "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
+            [crypto.randomUUID(), current.id, issue.id, now],
+          );
+          if (current.status === "active") {
+            yield* db.execute(
+              "UPDATE sprintCache SET adds_mid_sprint = adds_mid_sprint + 1 WHERE id = ?",
+              [current.id],
+            );
+          }
+        } else {
+          // Stamp only the still-open row for this (sprint, issue). A no-op
+          // if there's no open row (issue was already remove-issue'd or the
+          // sprint was created before membership audit existed and the pair
+          // never got backfilled — the update just affects zero rows).
+          yield* db.execute(
+            "UPDATE sprintMembership SET removed_at_ms = ? WHERE sprint_id = ? AND issue_id = ? AND removed_at_ms IS NULL",
+            [now, current.id, issue.id],
+          );
+        }
         const audit = yield* AuditLog;
         yield* audit.record({
           event_type: verb === "add-issue" ? "sprint_issue_added" : "sprint_issue_removed",
@@ -381,6 +406,61 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   };
   membershipEndpoint("add-issue", (sprint) => ({ sprint_id: sprint.id }));
   membershipEndpoint("remove-issue", () => ({ sprint_id: null }));
+
+  // ── DELETE /boards/:slug/sprints/:id ─────────────────────────────────────
+  // Planning sprints only. Clears sprint_id on every member issue, deletes
+  // membership rows (a planning sprint that never started has no history
+  // worth keeping), then deletes the sprint. Active/completed sprints must
+  // be completed first — deleting them would destroy the audit trail that
+  // velocity and sprint archives depend on.
+  sprints.delete("/boards/:slug/sprints/:id", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
+      const current = yield* fetchSprint(board.id, c.req.param("id"));
+      if (current.status !== "planning") {
+        return yield* new ConflictError({ reason: `sprint-${current.status}` });
+      }
+
+      const db = yield* Db;
+      const now = yield* Clock.currentTimeMillis;
+      // Members get their sprint_id cleared and an updated_at bump so
+      // subscribers (SSE) refresh. Do it BEFORE deleting the sprint so we
+      // can enumerate them, then broadcast one issue.updated per member.
+      const memberRows = yield* db.queryAll(
+        "SELECT * FROM issueCache WHERE sprint_id = ?",
+        [current.id],
+      );
+      yield* db.execute(
+        "UPDATE issueCache SET sprint_id = NULL, updated_at_ms = ? WHERE sprint_id = ?",
+        [now, current.id],
+      );
+      // sprintMembership rows are FK'd ON DELETE CASCADE; deleting the
+      // sprint takes them out too. Explicit for the audit log's benefit.
+      yield* db.execute("DELETE FROM sprintMembership WHERE sprint_id = ?", [current.id]);
+      yield* db.execute("DELETE FROM sprintCache WHERE id = ?", [current.id]);
+
+      const audit = yield* AuditLog;
+      yield* audit.record({
+        event_type: "sprint_deleted",
+        actor: claims.login,
+        details: { board: board.slug, sprint: current.id, member_count: memberRows.length },
+      });
+      for (const row of memberRows) {
+        const issue = parseIssueRow(row);
+        const updated = { ...issue, sprint_id: null, updated_at_ms: now };
+        yield* emitSecureBoardEvent(board.id, {
+          kind: "issue.updated",
+          board_id: board.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: updated },
+        });
+      }
+      return { deleted: true, member_count: memberRows.length };
+    });
+    return runJson(c, program);
+  });
 
   return sprints;
 };

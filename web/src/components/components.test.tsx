@@ -454,10 +454,11 @@ describe("BacklogView sprints (phase 20)", () => {
       patchSprint: async () => undefined,
       startSprint: async () => undefined,
       completeSprint: async () => undefined,
+      deleteSprint: async () => undefined,
       ...over,
     }) as unknown as BoardStore;
 
-  it("renders a planning sprint as a drop zone with count and Start button", async () => {
+  it("renders a planning sprint as a drop zone with count and Start button (phase 21a)", async () => {
     const startSprint = vi.fn(async () => undefined);
     const store = backlogStore({
       sprints: () => [sprint()],
@@ -471,9 +472,13 @@ describe("BacklogView sprints (phase 20)", () => {
     const section = container.querySelector(".sprint-section")!;
     expect(section.getAttribute("data-dropzone")).toBe("sprint:s1");
     expect(section.textContent).toContain("1");
-    // The sprint owns the issue, so the flat backlog list shows empty copy.
+    // The sprint-assigned backlog issue lives INSIDE the sprint section;
+    // Unassigned Backlog shows the empty-state copy.
     expect(container.textContent).toContain("Nothing on your mind");
-    (section.querySelector("button.btn") as HTMLButtonElement).click();
+    // Grab the specific "Start sprint" button (Delete is also a .btn now).
+    const buttons = Array.from(section.querySelectorAll("button.btn")) as HTMLButtonElement[];
+    const start = buttons.find((b) => b.textContent?.includes("Start sprint"))!;
+    start.click();
     expect(startSprint).toHaveBeenCalledWith("s1");
     cleanup();
   });
@@ -490,7 +495,7 @@ describe("BacklogView sprints (phase 20)", () => {
     cleanup();
   });
 
-  it("started sprints collapse to a summary row until clicked", async () => {
+  it("started sprints do NOT render on Backlog view (phase 21a — Kanban owns active)", async () => {
     const store = backlogStore({
       sprints: () => [sprint({ status: "active", started_at_ms: 5 })],
       issues: () => [{ ...issue, sprint_id: "s1" }],
@@ -499,11 +504,26 @@ describe("BacklogView sprints (phase 20)", () => {
       <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
     ));
     await flush();
-    const section = container.querySelector(".sprint-section.started")!;
-    expect(section.querySelector(".issue-card")).toBeNull();
-    (section.querySelector(".sprint-name") as HTMLButtonElement).click();
+    expect(container.querySelector(".sprint-section")).toBeNull();
+    cleanup();
+  });
+
+  it("Delete on a planning sprint (empty) calls deleteSprint without confirm", async () => {
+    const deleteSprint = vi.fn(async () => undefined);
+    const store = backlogStore({
+      sprints: () => [sprint()],
+      issues: () => [],
+      deleteSprint,
+    });
+    const { container, cleanup } = mount(() => (
+      <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
+    ));
     await flush();
-    expect(section.querySelector(".issue-card")).not.toBeNull();
+    const section = container.querySelector(".sprint-section")!;
+    const buttons = Array.from(section.querySelectorAll("button.btn")) as HTMLButtonElement[];
+    const del = buttons.find((b) => b.textContent?.trim() === "Delete")!;
+    del.click();
+    expect(deleteSprint).toHaveBeenCalledWith("s1");
     cleanup();
   });
 });
@@ -532,6 +552,7 @@ describe("BacklogView sprint length (migration 0011)", () => {
       patchSprint,
       startSprint: async () => undefined,
       completeSprint: async () => undefined,
+      deleteSprint: async () => undefined,
     } as unknown as BoardStore;
     const { container, cleanup } = mount(() => (
       <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
@@ -549,7 +570,7 @@ describe("BacklogView sprint length (migration 0011)", () => {
     cleanup();
   });
 
-  it("started sprints get no days input", async () => {
+  it("started sprints do not appear at all on Backlog view (phase 21a)", async () => {
     const store = {
       ...storeStub,
       board: () => board,
@@ -559,11 +580,13 @@ describe("BacklogView sprint length (migration 0011)", () => {
       patchSprint: async () => undefined,
       startSprint: async () => undefined,
       completeSprint: async () => undefined,
+      deleteSprint: async () => undefined,
     } as unknown as BoardStore;
     const { container, cleanup } = mount(() => (
       <BacklogView store={store} dnd={clickDnd} onOpen={() => undefined} />
     ));
     await flush();
+    expect(container.querySelector(".sprint-section")).toBeNull();
     expect(container.querySelector(".sprint-days")).toBeNull();
     cleanup();
   });
