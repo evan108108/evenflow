@@ -26,7 +26,7 @@ import {
 } from "../lib/columns";
 import { InviteModal } from "../components/InviteModal";
 import { MembersPanel, type MemberRow } from "../components/MembersPanel";
-import { UserNav } from "../components/UserNav";
+import { TopBar } from "../components/TopBar";
 import "../lib/board.css";
 
 const BOARD_ROLES = ["admin", "contributor", "viewer"] as const;
@@ -311,21 +311,17 @@ export const BoardSettings = () => {
     columns().filter((c) => c.enabled && c.id !== except.id);
 
   return (
-    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
-      <nav class="crumb muted" style={{ "margin-bottom": "1rem" }}>
-        <a href="/boards">← Boards</a> / <a href={`/@${handle()}`}>@{handle()}</a> /{" "}
-        <a href={base()}>{board()?.board.title ?? params.board_slug}</a> / settings
-      </nav>
-      <header
-        style={{
-          display: "flex",
-          "align-items": "center",
-          "justify-content": "space-between",
-          "margin-bottom": "1rem",
-        }}
-      >
+    <main class="board-page">
+      <TopBar
+        crumbs={[
+          { label: "Boards", href: "/boards" },
+          { label: `@${handle()}`, href: `/@${handle()}` },
+          { label: board()?.board.title ?? params.board_slug ?? "", href: base() },
+          { label: "settings" },
+        ]}
+      />
+      <header style={{ "margin-bottom": "1rem" }}>
         <h1 style={{ "font-size": "2.2rem" }}>Board settings</h1>
-        <UserNav />
       </header>
 
       <nav class="tab-row settings-tabs">
