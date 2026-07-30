@@ -43,6 +43,17 @@ const makeDbMock = () => {
           else profiles.push(next);
           return;
         }
+        // Regression fix (2026-07-30): /profile/me persists the OAuth
+        // picture claim into profileCache when the cached row's picture is
+        // null. Matches the SQL in src/routes/profile.ts.
+        if (sql.startsWith("UPDATE profileCache SET picture = ?, updated_at_ms = ?, fetched_at_ms = ? WHERE pubkey = ? AND picture IS NULL")) {
+          const [picture, updated_at_ms, fetched_at_ms, pubkey] = params;
+          const row = profiles.find((r) => r["pubkey"] === pubkey);
+          if (row !== undefined && (row["picture"] === null || row["picture"] === undefined)) {
+            Object.assign(row, { picture, updated_at_ms, fetched_at_ms });
+          }
+          return;
+        }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -240,17 +251,20 @@ describe("GET /api/v0/profile?pubkeys= bulk", () => {
 describe("GET /api/v0/profile/me OAuth picture seed", () => {
   const pictureBearer = { Authorization: "Bearer evenflow-test-token-with-picture" };
 
-  it("seeds picture from the JWT claim with seeded_from=oauth, without caching it", async () => {
+  it("seeds picture from the JWT claim with seeded_from=oauth AND persists to profileCache", async () => {
     const h = makeHarness();
     const res = await h.app.request("/api/v0/profile/me", { headers: pictureBearer }, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { profile: Record<string, unknown>; seeded_from: string | null };
     expect(body.profile["picture"]).toBe("https://avatars.example/me.png");
     expect(body.seeded_from).toBe("oauth");
-    // Cached miss row keeps picture null — the seed is response-only.
+    // Regression fix (2026-07-30): the seed used to be response-only, so
+    // bulk /profile lookups (which cards use) never got the picture and
+    // AssigneeAvatars rendered as empty circles. Now we persist on first
+    // read so subsequent lookups from any surface find it.
     const row = h.db.profiles.find((r) => r["pubkey"] === CALLER);
     expect(row).toBeDefined();
-    expect(row!["picture"]).toBeNull();
+    expect(row!["picture"]).toBe("https://avatars.example/me.png");
   });
 
   it("does not seed when the cached profile already has a picture", async () => {

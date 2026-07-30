@@ -193,14 +193,23 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
       if (me.event_id === null && me.display_name === null && me.name === null) {
         out = { ...out, display_name: claims.login.split("@")[0] ?? null };
       }
-      // OAuth avatar seed, same response-only posture: an unset picture
-      // shows the provider avatar riding in the JWT until the user Saves
-      // (which publishes it) or replaces it. seeded_from tells the UI to
-      // badge it as "your Google/GitHub avatar — save to keep it".
+      // OAuth avatar seed. Previously response-only ("save to keep it"),
+      // but that meant every card-side profile lookup returned picture:null
+      // for users who signed in with OAuth and never explicitly saved. Now
+      // we persist it to profileCache the first time we see it, so bulk
+      // lookups from cards / assignee avatars find the picture too. Users
+      // can still replace it explicitly. seeded_from is left set so the UI
+      // can still surface the "provider avatar" affordance if it wants.
       let seeded_from: "oauth" | null = null;
       if (out.picture === null && claims.picture !== undefined) {
         out = { ...out, picture: claims.picture };
         seeded_from = "oauth";
+        const db = yield* Db;
+        const nowMs = yield* Clock.currentTimeMillis;
+        yield* db.execute(
+          "UPDATE profileCache SET picture = ?, updated_at_ms = ?, fetched_at_ms = ? WHERE pubkey = ? AND picture IS NULL",
+          [claims.picture, nowMs, nowMs, callerPubkey(claims)],
+        );
       }
       return { profile: out, seeded_from };
     });

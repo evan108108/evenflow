@@ -816,6 +816,30 @@ export const makeDbMock = (): DbMock => {
           }
           return;
         }
+        // Profile OAuth-seed persistence (regression fix for missing PFP on
+        // cards): the /profile/me handler upserts picture into profileCache
+        // when the JWT carries one and the cached row has picture=null.
+        if (sql.startsWith("UPDATE profileCache SET picture = ?, updated_at_ms = ?, fetched_at_ms = ? WHERE pubkey = ? AND picture IS NULL")) {
+          const [picture, updated_at_ms, fetched_at_ms, pubkey] = params;
+          const existing = profiles.find((r) => r["pubkey"] === pubkey);
+          if (existing !== undefined) {
+            if (existing["picture"] === null || existing["picture"] === undefined) {
+              Object.assign(existing, { picture, updated_at_ms, fetched_at_ms });
+            }
+          } else {
+            profiles.push({
+              pubkey,
+              name: null,
+              display_name: null,
+              picture,
+              about: null,
+              event_id: null,
+              updated_at_ms,
+              fetched_at_ms,
+            });
+          }
+          return;
+        }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
