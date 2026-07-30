@@ -148,10 +148,22 @@ export const createBoardStore = (
     }
   };
 
-  /** Move to a column by stable id (column_id survives renames). */
-  const transition = (issue: Issue, to: Column) => {
-    if (to.id === issue.column_id && to.name === issue.status) return Promise.resolve();
-    return optimistic(issue.id, { status: to.name, column_id: to.id }, async () => {
+  /** Move to a column by stable id (column_id survives renames). If the
+   *  issue is in the backlog or icebox (rail drop → status column), promote
+   *  to active first — /transition only touches status, not container. */
+  const transition = async (issue: Issue, to: Column) => {
+    if (to.id === issue.column_id && to.name === issue.status && issue.container === "active") {
+      return;
+    }
+    if (issue.container !== "active") {
+      await optimistic(issue.id, { container: "active" }, async () => {
+        const res = await api((c) =>
+          c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/promote_to_active`, {}),
+        );
+        return res.issue;
+      });
+    }
+    await optimistic(issue.id, { status: to.name, column_id: to.id }, async () => {
       const res = await api((c) =>
         c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/transition`, { column_id: to.id }),
       );
