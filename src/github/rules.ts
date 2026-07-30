@@ -105,7 +105,11 @@ export interface Rule {
   readonly bucket: RuleBucket;
   readonly priority: number;
   readonly when: RulePredicate;
-  readonly do: RuleAction;
+  /** One action or a list — a single matched rule runs every action in
+   *  order, so "PR merged" can both set the pr_merged pill AND transition
+   *  to Done in one atomic rule fire (first-match-per-event is preserved
+   *  at the RULE level, not the action level). */
+  readonly do: RuleAction | ReadonlyArray<RuleAction>;
   readonly enabled: boolean;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
@@ -194,7 +198,17 @@ export const predicateProblem = (v: unknown): string | null => {
 };
 
 export const actionProblem = (v: unknown, allowedStates: ReadonlyArray<string>): string | null => {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return "do-shape";
+  // A `do` may be a single action object or an ordered list of them; check
+  // each item in the list, first bad one wins.
+  if (Array.isArray(v)) {
+    if (v.length === 0) return "do-empty-list";
+    for (const item of v) {
+      const problem = actionProblem(item, allowedStates);
+      if (problem !== null) return problem;
+    }
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return "do-shape";
   const a = v as Record<string, unknown>;
   const type = a["type"];
   if (!(ACTION_TYPES as ReadonlyArray<string>).includes(type as string)) return "do-type";
@@ -255,10 +269,15 @@ export const actionProblem = (v: unknown, allowedStates: ReadonlyArray<string>):
 export const RULE_PRESETS = ["defaults", "status_only", "custom", "off"] as const;
 export type RulePreset = (typeof RULE_PRESETS)[number];
 
-export interface PresetRule {
+export interface PresetRuleV0 {
   readonly bucket: RuleBucket;
   readonly when: RulePredicate;
   readonly do: RuleAction;
+}
+export interface PresetRule {
+  readonly bucket: RuleBucket;
+  readonly when: RulePredicate;
+  readonly do: RuleAction | ReadonlyArray<RuleAction>;
 }
 
 /**
@@ -289,7 +308,10 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
   {
     bucket: "match",
     when: { event: "pull_request", action: "closed", merged: true },
-    do: { type: "transition_to_column", category: "done" },
+    do: [
+      { type: "set_external_state", value: "pr_merged" },
+      { type: "transition_to_column", category: "done" },
+    ],
   },
   {
     bucket: "match",
@@ -351,10 +373,18 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
  * hand-driven.
  */
 export const STATUS_ONLY_PRESET_RULES: ReadonlyArray<PresetRule> = DEFAULT_PRESET_RULES.map(
-  (r): PresetRule =>
-    r.do.type === "transition_to_column"
-      ? { ...r, do: { type: "set_external_state", value: "pr_merged" } }
-      : r,
+  (r): PresetRule => {
+    const actions = Array.isArray(r.do) ? r.do : [r.do];
+    const withoutTransitions = actions.filter((a) => a.type !== "transition_to_column");
+    // A rule that was JUST a transition needs a replacement action so the
+    // preset still surfaces the state visibly — collapse to the set-pill
+    // equivalent (pr_merged for the merged rule) rather than dropping the
+    // rule entirely.
+    if (withoutTransitions.length === 0) {
+      return { ...r, do: { type: "set_external_state", value: "pr_merged" } };
+    }
+    return { ...r, do: withoutTransitions.length === 1 ? withoutTransitions[0]! : withoutTransitions };
+  },
 );
 
 export const presetRules = (preset: RulePreset): ReadonlyArray<PresetRule> => {

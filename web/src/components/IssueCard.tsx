@@ -14,7 +14,7 @@ import type { DndHandle } from "../lib/dnd";
 import { typeLabel } from "../lib/columns";
 import { externalStateLabel, externalStateTone, primaryPrLink, prUrl } from "../lib/externalState";
 import { attachParallax } from "../lib/parallax";
-import { Author } from "./Author";
+import { AssigneeAvatar } from "./AssigneeAvatar";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 
@@ -67,9 +67,7 @@ const CardMeta = (props: { issue: Issue }) => (
         <span class="chip priority">P{props.issue.priority}</span>
       </Show>
       <Show when={props.issue.assignee_pubkey !== null}>
-        <span class="chip">
-          <Author pubkey={props.issue.assignee_pubkey as string} class="" />
-        </span>
+        <AssigneeAvatar pubkey={props.issue.assignee_pubkey as string} />
       </Show>
       <For each={props.issue.labels}>{(label) => <span class="chip">{label}</span>}</For>
     </div>

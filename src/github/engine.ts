@@ -216,6 +216,20 @@ const resolveColumn = (
   return col === undefined ? { reason: `no-column-in-category-${category}` } : { column: col };
 };
 
+/** A rule's `do` may be a single action or an ordered list; every action
+ *  fires in sequence for the one matched rule, so "PR merged" can flip the
+ *  pill AND transition in a single fire. */
+const planActions = (
+  actionOrList: RuleAction | ReadonlyArray<RuleAction>,
+  input: EvaluateInput,
+  issue: TargetIssue,
+): PlannedEffect[] => {
+  const list = Array.isArray(actionOrList) ? actionOrList : [actionOrList];
+  const out: PlannedEffect[] = [];
+  for (const action of list) out.push(...planAction(action, input, issue));
+  return out;
+};
+
 const planAction = (
   action: RuleAction,
   input: EvaluateInput,
@@ -283,7 +297,7 @@ export const evaluateDelivery = (input: EvaluateInput): EvaluationPlan => {
       outcomes:
         rule === null
           ? []
-          : [{ issue_id: "", short_id: "", rule_id: rule.id, effects: planAction(rule.do, input, {
+          : [{ issue_id: "", short_id: "", rule_id: rule.id, effects: planActions(rule.do, input, {
               id: "", short_id: "", title: "", column_id: null, container: "backlog",
               labels: [], external_state: null,
             }) }],
@@ -304,7 +318,7 @@ export const evaluateDelivery = (input: EvaluateInput): EvaluationPlan => {
         state: prLinkState(delivery),
       });
     }
-    if (rule !== null) effects.push(...planAction(rule.do, input, issue));
+    if (rule !== null) effects.push(...planActions(rule.do, input, issue));
     return {
       issue_id: issue.id,
       short_id: issue.short_id,

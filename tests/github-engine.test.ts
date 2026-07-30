@@ -218,7 +218,10 @@ describe("firstMatchingRule", () => {
   it("returns the lowest-priority match, not merely the first listed", () => {
     const shuffled = [...rules].reverse();
     const hit = firstMatchingRule(shuffled, "match", facts({ action: "closed", merged: true }));
-    expect(hit?.do).toEqual({ type: "transition_to_column", category: "done" });
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_merged" },
+      { type: "transition_to_column", category: "done" },
+    ]);
   });
 
   it("skips disabled rules", () => {
@@ -234,9 +237,12 @@ describe("firstMatchingRule", () => {
 describe("default preset ordering", () => {
   const rules = asRules(DEFAULT_PRESET_RULES);
 
-  it("a merged PR transitions to done", () => {
+  it("a merged PR sets pr_merged AND transitions to done", () => {
     const hit = firstMatchingRule(rules, "match", facts({ action: "closed", merged: true }));
-    expect(hit?.do).toEqual({ type: "transition_to_column", category: "done" });
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_merged" },
+      { type: "transition_to_column", category: "done" },
+    ]);
   });
 
   it("a closed-unmerged PR sets pr_closed and does NOT transition", () => {
@@ -273,8 +279,12 @@ describe("default preset ordering", () => {
   });
 
   it("status_only strips every transition", () => {
-    expect(DEFAULT_PRESET_RULES.some((r) => r.do.type === "transition_to_column")).toBe(true);
-    expect(STATUS_ONLY_PRESET_RULES.some((r) => r.do.type === "transition_to_column")).toBe(false);
+    const hasTransition = (r: { do: unknown }) => {
+      const actions = Array.isArray(r.do) ? r.do : [r.do];
+      return actions.some((a) => (a as { type: string }).type === "transition_to_column");
+    };
+    expect(DEFAULT_PRESET_RULES.some(hasTransition)).toBe(true);
+    expect(STATUS_ONLY_PRESET_RULES.some(hasTransition)).toBe(false);
   });
 
   it("off and custom seed nothing", () => {
