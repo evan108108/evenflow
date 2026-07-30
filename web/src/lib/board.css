@@ -1,6 +1,31 @@
 /* Board views: kanban columns, cards, issue sheet, modal, dnd affordances,
    and the butterfly. Same editorial tokens as theme.css. */
 
+/* ── generic form control baseline ──
+   Every form input in the app should read as the same object at rest.
+   Scoped rules (.profile-form, .modal, …) can still tighten specifics,
+   but no page should ever surface a bare browser-default password or
+   number field again. If you find a field looking stubby: it's an input
+   type that isn't listed here — add it. */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="url"],
+input[type="search"],
+input[type="tel"],
+textarea,
+select {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  box-sizing: border-box;
+}
+
 /* ── board shell ── */
 .board-page {
   max-width: 1440px;
@@ -706,6 +731,11 @@
 }
 
 .modal input[type="text"],
+.modal input[type="password"],
+.modal input[type="email"],
+.modal input[type="number"],
+.modal input[type="url"],
+.modal input[type="search"],
 .modal textarea,
 .modal select {
   width: 100%;
@@ -912,6 +942,11 @@
 }
 
 .profile-form input[type="text"],
+.profile-form input[type="password"],
+.profile-form input[type="email"],
+.profile-form input[type="number"],
+.profile-form input[type="url"],
+.profile-form input[type="search"],
 .profile-form input[type="file"],
 .profile-form textarea {
   display: block;
