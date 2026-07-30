@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_VERTICAL_MAX_PX,
   FORCE_VERTICAL_MAX_PX,
+  WIDE_VERTICAL_MIN_PX,
   effectiveKanbanLayout,
+  isWideVertical,
   resolveKanbanLayout,
 } from "./layout";
 
@@ -32,5 +34,21 @@ describe("effectiveKanbanLayout", () => {
 
   it("forces vertical rendering below the breakpoint without touching the preference", () => {
     expect(effectiveKanbanLayout("columns", FORCE_VERTICAL_MAX_PX - 1)).toBe("vertical");
+  });
+});
+
+describe("isWideVertical", () => {
+  it("puts the rail beside the stack at the breakpoint and above", () => {
+    expect(isWideVertical("vertical", WIDE_VERTICAL_MIN_PX)).toBe(true);
+    expect(isWideVertical("vertical", 1920)).toBe(true);
+  });
+
+  it("drops the rail below the stack under the breakpoint", () => {
+    expect(isWideVertical("vertical", WIDE_VERTICAL_MIN_PX - 1)).toBe(false);
+    expect(isWideVertical("vertical", 375)).toBe(false);
+  });
+
+  it("never applies to the columns layout — it already uses full width", () => {
+    expect(isWideVertical("columns", 1920)).toBe(false);
   });
 });

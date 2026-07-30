@@ -300,7 +300,11 @@
   padding: 0.6rem 0.6rem 0.9rem;
 }
 
-.kanban-column h3 {
+/* One header treatment for status columns and the vertical view's
+   Backlog / Icebox rail sections — they sit side by side, so they read as
+   one family: name left, count · points right. */
+.kanban-column h3,
+.rail-section > h3 {
   font-size: 1.02rem;
   padding: 0.3rem 0.4rem 0.6rem;
   display: flex;
@@ -308,7 +312,8 @@
   align-items: baseline;
 }
 
-.kanban-column h3 .count {
+.kanban-column h3 .count,
+.rail-section > h3 .count {
   font-size: 0.9rem;
   color: var(--color-ink-soft);
 }
@@ -2135,6 +2140,79 @@ input.sprint-name:focus {
 
 .kanban.layout-vertical .kanban-column-content {
   min-height: 3.2rem;
+}
+
+/* ── vertical Kanban: the Backlog + Icebox rail ── */
+/* Beside-vs-below is decided in JS (lib/layout isWideVertical toggles
+   `with-rail`), NOT by a media query — window.innerWidth and media-query
+   px disagree by the scrollbar width, and one breakpoint in one place
+   beats two that drift. Without the class this is a plain block: the
+   stack, then Backlog, then Icebox, all one column. */
+.vertical-split {
+  max-width: var(--measure);
+}
+
+.vertical-split.with-rail {
+  --rail-gap: 2rem;
+  display: grid;
+  /* ~60/40. Widened so the left stack keeps the same --measure reading
+     width it has with no rail — the rail is added beside it rather than
+     squeezing it. */
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--rail-gap);
+  align-items: start;
+  max-width: calc(var(--measure) / 0.6 + var(--rail-gap));
+}
+
+/* The grid track owns the width now. */
+.vertical-split.with-rail .kanban.layout-vertical {
+  max-width: none;
+}
+
+.kanban-rail > .list-section:last-child {
+  margin-bottom: 0;
+}
+
+/* The rail scrolls on its own so a long backlog never pushes the status
+   stack out of view. Sticky + viewport-height cap, so it stays put while
+   the left column scrolls past it. */
+.vertical-split.with-rail .kanban-rail {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
+  /* Breathing room so a card's hover lift-shadow isn't shorn by the
+     scroll container's edge; the top inset matches .kanban-column's
+     padding so the first rail section lines up with the first column. */
+  overflow-x: hidden;
+  padding: 0.5rem 0.4rem 0;
+  scrollbar-width: thin;
+}
+
+/* Collapsed (the Icebox at rest): a closed strip whose header stays a
+   live drop target — drag a card onto it to ice it without expanding. */
+.rail-section.collapsed {
+  padding-bottom: 0.2rem;
+}
+
+.rail-section.collapsed > h3 {
+  padding-bottom: 0.2rem;
+}
+
+.rail-collapse {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rail-caret {
+  font-size: 0.75rem;
+  color: var(--color-ink-soft);
+  margin-left: 0.4rem;
 }
 
 /* Icon-only layout toggle in the tabs-row. */

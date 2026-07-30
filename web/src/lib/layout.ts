@@ -13,6 +13,12 @@ export const LAYOUT_STORAGE_KEY = "evenflow:kanban-layout";
 export const AUTO_VERTICAL_MAX_PX = 640;
 /** Narrower than this → always RENDER vertical, preference untouched. */
 export const FORCE_VERTICAL_MAX_PX = 480;
+/**
+ * Vertical layout at this width or wider splits into two columns: the
+ * status stack on the left, a Backlog + Icebox rail on the right. Below
+ * it the same content renders as one stack (rail sections at the bottom).
+ */
+export const WIDE_VERTICAL_MIN_PX = 1024;
 
 /** The user's effective preference: stored value, else viewport default. */
 export const resolveKanbanLayout = (
@@ -28,3 +34,11 @@ export const effectiveKanbanLayout = (
   preference: KanbanLayout,
   viewportWidth: number,
 ): KanbanLayout => (viewportWidth < FORCE_VERTICAL_MAX_PX ? "vertical" : preference);
+
+/**
+ * Whether the vertical stack has room to put the Backlog + Icebox rail
+ * beside it. Takes the EFFECTIVE layout — the columns layout has its own
+ * full-width treatment and never gets a rail.
+ */
+export const isWideVertical = (layout: KanbanLayout, viewportWidth: number): boolean =>
+  layout === "vertical" && viewportWidth >= WIDE_VERTICAL_MIN_PX;
