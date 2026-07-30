@@ -23,6 +23,7 @@ import {
 } from "../authz";
 import { upsertMembership } from "../membership";
 import { parseBoardRow, parseInviteRow, parseOrgRow, type InviteShape } from "../shapes";
+import { realPubkeyOfMember } from "../nostr";
 import {
   BOARD_ROLES,
   INVITE_CODE_PREFIX,
@@ -300,12 +301,17 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       ) {
         return yield* new ForbiddenError({ reason: "invite-bound-to-other-email" });
       }
-      // Pubkey binding: only the exact identity the invite was pre-issued
-      // for can accept. The JWT's pubkey claim is authoritative; anonymous
-      // callers never get past requireCaller above, so pubkey is always set
-      // by the time we reach here.
-      if (invite.bind_to_pubkey !== null && pubkey !== invite.bind_to_pubkey) {
-        return yield* new ForbiddenError({ reason: "invite-bound-to-other-pubkey" });
+      // Pubkey binding: only the exact Nostr identity the invite was
+      // pre-issued for can accept. callerPubkey() returns the composite
+      // "nostr:<hex>" stand-in (see nostr.ts) — we compare the RAW curve
+      // point against bind_to_pubkey, which is stored in raw hex form.
+      // OAuth callers have no real pubkey (realPubkeyOfMember → null) and
+      // can never accept a pubkey-bound invite.
+      if (invite.bind_to_pubkey !== null) {
+        const realPub = realPubkeyOfMember(pubkey);
+        if (realPub === null || realPub !== invite.bind_to_pubkey) {
+          return yield* new ForbiddenError({ reason: "invite-bound-to-other-pubkey" });
+        }
       }
 
       // Single-use race: exactly one accept claims the row. RETURNING makes
