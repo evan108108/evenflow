@@ -3,9 +3,34 @@
 // API); ApiConfig exists so tests and previews can point elsewhere.
 // Every request auto-attaches Authorization: Bearer <jwt> from AuthManager
 // when a token is present.
+//
+// Stale-token auto-signout (EFB-10): if a request that carried a Bearer
+// token comes back 401 with a JWT-side or API-key failure reason, the
+// token is dead — clear it from AuthManager and reload the SPA so the
+// signed-in state doesn't linger with a half-broken UI (no PFP, empty
+// orgs, etc). Only fires for reasons the auth middleware emits for a
+// bad credential; per-resource 401s (should be 403/404 in this app)
+// pass through untouched.
 
 import { Context, Data, Effect, Layer } from "effect";
 import { AuthManager } from "./AuthManager";
+
+const BAD_TOKEN_REASONS = new Set([
+  "expired",
+  "malformed",
+  "bad-signature",
+  "bad-algorithm",
+  "bad-claims",
+  "no-signing-key",
+  "invalid-api-key",
+]);
+
+const looksLikeBadTokenBody = (parsed: unknown): boolean => {
+  if (parsed === null || typeof parsed !== "object") return false;
+  const p = parsed as { error?: unknown; reason?: unknown };
+  if (p.error !== "unauthorized") return false;
+  return typeof p.reason === "string" && BAD_TOKEN_REASONS.has(p.reason);
+};
 
 export class ApiError extends Data.TaggedError("ApiError")<{
   readonly reason: "network" | "http" | "json";
@@ -67,6 +92,18 @@ export const ApiClientLive: Layer.Layer<ApiClient, never, ApiConfig | AuthManage
         });
 
         if (!res.ok) {
+          // EFB-10: dead-credential auto-signout. Only when we DID send a
+          // Bearer AND the server flagged it as a bad token — anything else
+          // (403/404 posing as 401, unauthorized-anonymous-viewer on a
+          // private board, etc.) passes through as an ordinary ApiError.
+          if (res.status === 401 && jwt !== null && looksLikeBadTokenBody(parsed)) {
+            yield* auth.clear();
+            if (typeof window !== "undefined") {
+              // Full reload from the landing page — every in-flight page
+              // state, resource, and cached org list resets cleanly.
+              window.location.href = "/";
+            }
+          }
           return yield* new ApiError({ reason: "http", status: res.status, body: parsed });
         }
         return parsed as T;

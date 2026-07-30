@@ -91,6 +91,87 @@ describe("ApiClient", () => {
     }
   });
 
+  it("EFB-10: 401 with a bad-token reason clears AuthManager and reloads", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: "unauthorized", reason: "expired" }), { status: 401 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    // Trap window.location.href assignment so the test doesn't actually
+    // navigate. jsdom's window.location is writable via defineProperty.
+    const originalHref = window.location.href;
+    let navigated: string | null = null;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new Proxy(window.location, {
+        set(_target, prop, value) {
+          if (prop === "href") {
+            navigated = value as string;
+            return true;
+          }
+          return true;
+        },
+      }),
+    });
+
+    const auth = makeAuthManagerTest("tok-abc");
+    await Effect.runPromiseExit(
+      Effect.provide(
+        Effect.gen(function* () {
+          const client = yield* ApiClient;
+          return yield* client.get("/api/v0/session/bootstrap");
+        }),
+        Layer.provide(ApiClientLive, Layer.mergeAll(ApiConfigLive, auth.layer)),
+      ),
+    );
+    // Restore before assertions in case they throw.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { href: originalHref },
+    });
+
+    expect(navigated).toBe("/");
+    const stillHeld = await Effect.runPromise(
+      Effect.provide(
+        Effect.flatMap(AuthManager, (a) => a.get()),
+        auth.layer,
+      ),
+    );
+    expect(stillHeld).toBeNull();
+  });
+
+  it("EFB-10: 401 without a Bearer does NOT clear or reload", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ error: "unauthorized", reason: "expired" }), { status: 401 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    let navigated: string | null = null;
+    const originalHref = window.location.href;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: new Proxy(window.location, {
+        set(_target, prop, value) {
+          if (prop === "href") navigated = value as string;
+          return true;
+        },
+      }),
+    });
+
+    await Effect.runPromiseExit(
+      Effect.provide(
+        Effect.gen(function* () {
+          const client = yield* ApiClient;
+          return yield* client.get("/api/v0/boards");
+        }),
+        clientLayer(null),
+      ),
+    );
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { href: originalHref },
+    });
+    expect(navigated).toBeNull();
+  });
+
   it("POST sends a JSON body", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ board: { slug: "kb" } }), { status: 201 }),
