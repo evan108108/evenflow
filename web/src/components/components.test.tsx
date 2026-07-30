@@ -2,6 +2,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import type { Board, Issue } from "../lib/types";
 import { ISSUE_TYPES, type Column } from "../lib/columns";
 import type { DndHandle } from "../lib/dnd";
@@ -91,6 +92,32 @@ const mount = (component: () => unknown) => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const dispose = render(component as () => any, container);
+  return {
+    container,
+    cleanup: () => {
+      dispose();
+      container.remove();
+    },
+  };
+};
+
+/**
+ * IssueSheet renders IssueRef, which is a router <A> — mounting it bare
+ * throws "router primitives can be only used inside a Route". These three
+ * tests predate that link; wrap them in a MemoryRouter.
+ */
+const mountRouted = (component: () => unknown) => {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const history = createMemoryHistory();
+  const dispose = render(
+    (() => (
+      <MemoryRouter history={history}>
+        <Route path="/" component={component as never} />
+      </MemoryRouter>
+    )) as () => any,
+    container,
+  );
   return {
     container,
     cleanup: () => {
@@ -316,7 +343,7 @@ describe("NewIssueModal", () => {
 describe("IssueSheet", () => {
   it("renders the issue and closes via the X and the overlay", async () => {
     const onClose = vi.fn();
-    const { container, cleanup } = mount(() => (
+    const { container, cleanup } = mountRouted(() => (
       <IssueSheet
         issue={issue}
         board={board}
@@ -338,7 +365,7 @@ describe("IssueSheet", () => {
   it("has a Type row that patches through the store", async () => {
     const patchIssue = vi.fn(async () => null);
     const store = { ...storeStub, patchIssue } as unknown as BoardStore;
-    const { container, cleanup } = mount(() => (
+    const { container, cleanup } = mountRouted(() => (
       <IssueSheet
         issue={issue}
         board={board}
@@ -364,7 +391,7 @@ describe("IssueSheet", () => {
   it("status dropdown transitions by column, listing enabled columns only", async () => {
     const transition = vi.fn(async () => undefined);
     const store = { ...storeStub, transition } as unknown as BoardStore;
-    const { container, cleanup } = mount(() => (
+    const { container, cleanup } = mountRouted(() => (
       <IssueSheet
         issue={issue}
         board={board}

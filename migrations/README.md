@@ -38,5 +38,21 @@ any time, which is also why they carry no FOREIGN KEY constraints (events can
 arrive out of order, and a cache refresh must never depend on parent-row
 ordering).
 
-Only `webhookRoutes`, `webhookDeliveries`, and `sessionCache` hold state whose
-source of truth is D1 itself.
+Only `webhookRoutes`, `webhookDeliveries`, `sessionCache`, and the
+`githubWebhook*` tables hold state whose source of truth is D1 itself.
+
+## Two webhook families, opposite directions
+
+Mind the prefix — these are unrelated and must never be joined:
+
+* `webhookRoutes` / `webhookDeliveries` (0001) are **outbound**: Evenflow
+  calling someone else's URL.
+* `githubWebhookRules` / `githubWebhookAudit` / `githubWebhookDedup` (0016)
+  are **inbound**: GitHub calling us.
+
+The per-board GitHub webhook secret lives in
+`boardCache.github_webhook_secret_ciphertext`, AES-GCM sealed under the
+`EVENFLOW_WEBHOOK_SECRET` Worker secret. It is reversible on purpose —
+HMAC verification needs the shared secret back on every delivery, so it
+cannot be a write-only hash the way `apiKeys.key_hash` (0008) is. D1 never
+holds the plaintext.
