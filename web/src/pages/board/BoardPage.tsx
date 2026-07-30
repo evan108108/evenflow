@@ -17,6 +17,7 @@ import { doneNames } from "../../lib/columns";
 import {
   LAYOUT_STORAGE_KEY,
   effectiveKanbanLayout,
+  isWideVertical,
   resolveKanbanLayout,
   type KanbanLayout,
 } from "../../lib/layout";
@@ -117,6 +118,9 @@ export const BoardPage = () => {
   );
   const [viewportWidth, setViewportWidth] = createSignal(window.innerWidth);
   const kanbanLayout = () => effectiveKanbanLayout(layoutPref(), viewportWidth());
+  // Wide + vertical → the Backlog/Icebox rail sits beside the stack. The
+  // rail's markup renders either way; this only decides beside vs below.
+  const wideRail = () => isWideVertical(kanbanLayout(), viewportWidth());
   const toggleLayout = () => {
     const next: KanbanLayout = layoutPref() === "vertical" ? "columns" : "vertical";
     setLayoutPref(next);
@@ -430,6 +434,7 @@ export const BoardPage = () => {
                   onOpen={(id) => navigate(`${base()}/issues/${id}`)}
                   highlightSprintId={highlightSprintId()}
                   layout={kanbanLayout()}
+                  wideRail={wideRail()}
                 />
               </Show>
               <Show when={view() === "backlog"}>

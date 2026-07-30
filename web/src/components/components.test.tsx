@@ -548,7 +548,9 @@ describe("KanbanView vertical layout", () => {
     const zones = [...container.querySelectorAll("[data-dropzone^='transition:']")].map((el) =>
       el.getAttribute("data-dropzone"),
     );
-    expect(zones).toEqual(["transition:c1", "transition:c2", "transition:c3"]);
+    // Same drop zones as columns, enabled only — but reversed, so the
+    // stack reads Done-first top-to-bottom.
+    expect(zones).toEqual(["transition:c3", "transition:c2", "transition:c1"]);
     expect(container.querySelector("[data-dropzone^='card:']")).not.toBeNull();
     cleanup();
   });
@@ -559,6 +561,92 @@ describe("KanbanView vertical layout", () => {
     ));
     await flush();
     expect(container.querySelector(".kanban")!.classList.contains("layout-vertical")).toBe(false);
+    cleanup();
+  });
+});
+
+describe("KanbanView backlog/icebox rail (phase 21)", () => {
+  const queued: Issue = { ...issue, id: "i2", short_id: "KB-8", title: "Queued thought", container: "backlog", estimate: 3 };
+  const iced: Issue = { ...issue, id: "i3", short_id: "KB-9", title: "Iced thought", container: "icebox", estimate: null };
+  const railStore = {
+    ...storeStub,
+    board: () => board,
+    issues: () => [issue, queued, iced],
+    sprints: () => [],
+  } as unknown as BoardStore;
+
+  const mountRail = (wideRail: boolean) =>
+    mount(() => (
+      <KanbanView
+        store={railStore}
+        dnd={clickDnd}
+        onOpen={() => undefined}
+        layout="vertical"
+        wideRail={wideRail}
+      />
+    ));
+
+  it("wide vertical splits into stack + rail, with both container-move zones", async () => {
+    const { container, cleanup } = mountRail(true);
+    await flush();
+    const split = container.querySelector(".vertical-split")!;
+    expect(split.classList.contains("with-rail")).toBe(true);
+    const rail = container.querySelector(".kanban-rail")!;
+    const zones = [...rail.querySelectorAll("[data-dropzone]")].map((el) =>
+      el.getAttribute("data-dropzone"),
+    );
+    expect(zones).toEqual(["move:promote_to_backlog", "move:send_to_icebox"]);
+    cleanup();
+  });
+
+  it("the rail lists backlog issues with a count and points header", async () => {
+    const { container, cleanup } = mountRail(true);
+    await flush();
+    const backlogSection = container.querySelector("[data-dropzone='move:promote_to_backlog']")!;
+    expect(backlogSection.querySelector("h3")!.textContent).toContain("Backlog");
+    expect(backlogSection.querySelector("h3")!.textContent).toContain("3pts");
+    const titles = [...backlogSection.querySelectorAll(".issue-card .title")].map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual(["Queued thought"]);
+    cleanup();
+  });
+
+  it("the icebox starts collapsed — header live, cards hidden until clicked", async () => {
+    const { container, cleanup } = mountRail(true);
+    await flush();
+    const iceboxSection = container.querySelector("[data-dropzone='move:send_to_icebox']")!;
+    expect(iceboxSection.classList.contains("collapsed")).toBe(true);
+    // Still a drop target while closed, and the count is visible.
+    expect(iceboxSection.querySelector("h3")!.textContent).toContain("Icebox");
+    expect(iceboxSection.querySelector(".issue-card")).toBeNull();
+
+    const toggle = iceboxSection.querySelector<HTMLButtonElement>(".rail-collapse")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    toggle.click();
+    await flush();
+    expect(iceboxSection.classList.contains("collapsed")).toBe(false);
+    expect(iceboxSection.querySelector(".issue-card .title")!.textContent).toBe("Iced thought");
+    cleanup();
+  });
+
+  it("narrow vertical keeps the rail markup but drops the split class", async () => {
+    const { container, cleanup } = mountRail(false);
+    await flush();
+    const split = container.querySelector(".vertical-split")!;
+    expect(split.classList.contains("with-rail")).toBe(false);
+    // Same sections, they just flow below the stack.
+    expect(container.querySelectorAll(".kanban-rail .rail-section")).toHaveLength(2);
+    cleanup();
+  });
+
+  it("the columns layout gets no rail at all", async () => {
+    const { container, cleanup } = mount(() => (
+      <KanbanView store={railStore} dnd={clickDnd} onOpen={() => undefined} layout="columns" />
+    ));
+    await flush();
+    expect(container.querySelector(".vertical-split")).toBeNull();
+    expect(container.querySelector(".kanban-rail")).toBeNull();
     cleanup();
   });
 });
