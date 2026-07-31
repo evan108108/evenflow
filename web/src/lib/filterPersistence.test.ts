@@ -51,12 +51,18 @@ describe("parseFilters", () => {
       mineOnly: true,
       assignees: ["a"],
       labels: ["bug"],
+      sprintId: null,
     });
   });
 });
 
 describe("read/write round-trip", () => {
-  const filters: BoardFilters = { mineOnly: true, assignees: [SONA], labels: ["bug"] };
+  const filters: BoardFilters = {
+    mineOnly: true,
+    assignees: [SONA],
+    labels: ["bug"],
+    sprintId: null,
+  };
 
   it("restores what it stored", () => {
     writeFilters(BOARD, SONA, filters);
@@ -85,5 +91,39 @@ describe("read/write round-trip", () => {
   it("reads a corrupt entry as unfiltered rather than throwing", () => {
     window.localStorage.setItem(filterStorageKey(BOARD, SONA), "{not json");
     expect(readFilters(BOARD, SONA)).toEqual(EMPTY_FILTERS);
+  });
+});
+
+// EFB-45 lean (a): sprint became a filter dimension but deliberately NOT a
+// persisted one — it resets on reload exactly as the phase-21c scalar did.
+describe("sprint is never persisted", () => {
+  it("keeps sprintId out of the stored blob", () => {
+    writeFilters(BOARD, SONA, {
+      mineOnly: true,
+      assignees: [],
+      labels: [],
+      sprintId: "s1",
+    });
+    const raw = window.localStorage.getItem(filterStorageKey(BOARD, SONA));
+    expect(raw).not.toBeNull();
+    expect(raw).not.toContain("s1");
+    expect(raw).not.toContain("sprintId");
+  });
+
+  it("never restores a sprint, even from a hand-edited blob", () => {
+    window.localStorage.setItem(
+      filterStorageKey(BOARD, SONA),
+      JSON.stringify({ mineOnly: false, assignees: [], labels: ["bug"], sprintId: "s1" }),
+    );
+    expect(readFilters(BOARD, SONA).sprintId).toBeNull();
+    // ...while still restoring the dimensions that DO persist.
+    expect(readFilters(BOARD, SONA).labels).toEqual(["bug"]);
+  });
+
+  // A sprint selection alone must not create a storage entry: isEmpty weighs
+  // only the persisted dimensions, so this stays a no-trace board.
+  it("writes nothing when the sprint is the only thing set", () => {
+    writeFilters(BOARD, SONA, { mineOnly: false, assignees: [], labels: [], sprintId: "s1" });
+    expect(window.localStorage.getItem(filterStorageKey(BOARD, SONA))).toBeNull();
   });
 });

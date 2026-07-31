@@ -12,7 +12,13 @@ import type { Board, Issue } from "../../lib/types";
 import type { Column } from "../../lib/columns";
 import type { DndHandle } from "../../lib/dnd";
 import type { BoardStore } from "./store";
-import { EMPTY_FILTERS, UNASSIGNED, matchesFilters } from "../../lib/boardFilters";
+import {
+  EMPTY_FILTERS,
+  UNASSIGNED,
+  matchesFilters,
+  predicateFor,
+  type BoardFilters,
+} from "../../lib/boardFilters";
 import { FilterPicker } from "../../components/FilterPicker";
 import { BacklogView } from "./BacklogView";
 import { KanbanView } from "./KanbanView";
@@ -138,7 +144,7 @@ describe("KanbanView columns honour the filter", () => {
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        matchesFilters={mineOnly(SONA)}
+        matchesActive={mineOnly(SONA)}
       />
     ));
     await flush();
@@ -163,7 +169,8 @@ describe("the filter reaches the rail's Backlog and Icebox", () => {
         onOpen={() => undefined}
         layout="vertical"
         wideRail
-        matchesFilters={pred}
+        matchesActive={pred}
+        matchesAmbient={pred}
       />
     ));
 
@@ -237,17 +244,27 @@ describe("sprint filter and board filters compose", () => {
     theirs({ id: "i4", short_id: "KB-4", title: "Theirs off sprint", sprint_id: null }),
   ];
 
-  const kanban = (over: { sprint?: string | null; pred?: (i: Issue) => boolean }) =>
-    mount(() => (
+  // EFB-45: sprint and the other dimensions used to arrive as two separate
+  // props and this helper composed them by hand. They are one shape now, so
+  // the helper builds that shape and lets `predicateFor` compose — i.e. these
+  // cases now exercise the same code path BoardPage runs, not a stand-in.
+  // The assertions below are unchanged: the point is that they still hold.
+  const kanban = (over: { sprint?: string | null; mine?: boolean }) => {
+    const filters: BoardFilters = {
+      ...EMPTY_FILTERS,
+      sprintId: over.sprint ?? null,
+      mineOnly: over.mine === true,
+    };
+    return mount(() => (
       <KanbanView
         store={stub(issues, sprints)}
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId={over.sprint ?? null}
-        matchesFilters={over.pred}
+        matchesActive={predicateFor("active", filters, SONA)}
       />
     ));
+  };
 
   it("sprint filter alone keeps both owners' sprint cards", async () => {
     const { container, cleanup } = kanban({ sprint: "s1" });
@@ -257,14 +274,14 @@ describe("sprint filter and board filters compose", () => {
   });
 
   it("board filter alone keeps the viewer's cards on and off the sprint", async () => {
-    const { container, cleanup } = kanban({ pred: mineOnly(SONA) });
+    const { container, cleanup } = kanban({ mine: true });
     await flush();
     expect(titles(container).sort()).toEqual(["Mine in sprint", "Mine off sprint"]);
     cleanup();
   });
 
   it("together they intersect rather than override", async () => {
-    const { container, cleanup } = kanban({ sprint: "s1", pred: mineOnly(SONA) });
+    const { container, cleanup } = kanban({ sprint: "s1", mine: true });
     await flush();
     expect(titles(container)).toEqual(["Mine in sprint"]);
     cleanup();
