@@ -1061,6 +1061,13 @@ export const makeDbMock = (): DbMock => {
           const r = orgMembers.find((x) => x["org_id"] === params[0] && x["pubkey"] === params[1]);
           return (r ? { role: r["role"] } : null) as R | null;
         }
+        // EFB-38 isRosterMember — existence, not role. The boardMemberCache
+        // twin already exists further down; without this one the org variant
+        // falls through to "unexpected queryFirst" and surfaces as a 500.
+        if (sql.startsWith("SELECT pubkey FROM orgMemberCache WHERE org_id = ? AND pubkey = ?")) {
+          const r = orgMembers.find((x) => x["org_id"] === params[0] && x["pubkey"] === params[1]);
+          return (r ? { pubkey: r["pubkey"] } : null) as R | null;
+        }
         if (sql.startsWith("SELECT role FROM boardMemberCache WHERE board_id = ? AND pubkey = ?")) {
           const r = boardMembers.find((x) => x["board_id"] === params[0] && x["pubkey"] === params[1]);
           return (r ? { role: r["role"] } : null) as R | null;

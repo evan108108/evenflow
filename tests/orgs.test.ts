@@ -7,6 +7,7 @@ import {
   bearer,
   bearerFor,
   createBoard,
+  callerOrg,
   createIssue,
   jsonReq,
   makeHarness,
@@ -188,6 +189,11 @@ describe("DELETE /api/v0/orgs/:slug + transfer", () => {
     );
     expect(asAdmin.status).toBe(403);
 
+    // EFB-38 behaviour change: the target must already be an org member.
+    // This test used to transfer straight to pubkeyFor("next"), who was in no
+    // roster — it passed only because to_pubkey was unvalidated. Add first,
+    // then transfer, which is also the audit trail we want.
+    seedOrgMember(h, h.db.orgs[0]!["id"] as string, pubkeyFor("next"), "member");
     const res = await h.app.request(
       "/api/v0/orgs/acme/transfer",
       jsonReq("POST", { to_pubkey: pubkeyFor("next"), confirmation_slug: "acme" }),
@@ -386,5 +392,149 @@ describe("board access role matrix", () => {
       {},
     );
     expect(patch.status).toBe(403);
+  });
+});
+
+// ── EFB-38: identity references on membership write paths ─────────────────
+//
+// Same invariant as assignee_pubkey (see tests/issues.test.ts): a pubkey
+// FIELD that means "which person" is a reference with one written form, not
+// a free string. `validatePubkey` used to accept any string under 256 chars,
+// so `049b628c…` and `nostr:049b628c…` could both land in a roster as two
+// members for one key.
+//
+// These endpoints get NORMALIZATION ONLY, not a membership check — they
+// exist to add somebody who is not yet a member, so there is no roster to
+// validate against. `assertMember`-style checks belong at sites like
+// assignee, where the referent must already be present.
+//
+// The one exception is org transfer, which now requires the target to
+// already be a member: handing an org to a stranger in a single call is a
+// security hole, and add-then-transfer leaves a legible audit trail.
+describe("EFB-38 identity references on membership writes", () => {
+  const HEX = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+  const CANON = `nostr:${HEX}`;
+  const BAD_SHAPES = ["not a pubkey", "nostr:", ":abc", "deadbeef", "   "];
+
+  describe("POST /orgs/:slug/members", () => {
+    const add = (h: Harness, pubkey: unknown) =>
+      h.app.request("/api/v0/orgs/acme/members", jsonReq("POST", { pubkey, role: "member" }), {});
+    const roster = (h: Harness) => h.db.orgMembers.map((m) => m["pubkey"]);
+
+    it("normalizes raw hex to nostr: form", async () => {
+      const h = makeHarness();
+      await createTeam(h);
+      expect((await add(h, HEX)).status).toBe(201);
+      expect(roster(h)).toContain(CANON);
+      expect(roster(h)).not.toContain(HEX);
+    });
+
+    it("normalizes uppercase hex to lowercase", async () => {
+      const h = makeHarness();
+      await createTeam(h);
+      expect((await add(h, HEX.toUpperCase())).status).toBe(201);
+      expect(roster(h)).toContain(CANON);
+    });
+
+    it.each(BAD_SHAPES)("400s on unrecognized shape %j", async (v) => {
+      const h = makeHarness();
+      await createTeam(h);
+      expect((await add(h, v)).status).toBe(400);
+      expect(roster(h)).toEqual([CALLER]);
+    });
+
+    it("accepts an already-canonical ref and re-adding is idempotent", async () => {
+      const h = makeHarness();
+      await createTeam(h);
+      expect((await add(h, CANON)).status).toBe(201);
+      // Raw hex for the SAME key must land on the SAME row, not a second one.
+      // Counting only CANON rows would pass either way — pre-fix the raw form
+      // is stored verbatim as an extra row — so assert the whole roster.
+      expect((await add(h, HEX)).status).toBe(201);
+      expect(roster(h).sort()).toEqual([CALLER, CANON].sort());
+    });
+  });
+
+  describe("POST /orgs/:org/boards/:slug/members", () => {
+    // The board lives in the caller's personal org, addressed by that org's
+    // slug — same shape audiences.test.ts uses. Creating a team org here and
+    // pointing at /orgs/acme/boards/kb 404s, since createBoard doesn't put
+    // the board there.
+    const setup = async (h: Harness) => {
+      await createBoard(h);
+      return callerOrg(h)["slug"] as string;
+    };
+    const add = (h: Harness, orgSlug: string, pubkey: unknown) =>
+      h.app.request(
+        `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+        jsonReq("POST", { pubkey, role: "contributor" }),
+        {},
+      );
+    const roster = (h: Harness) => h.db.boardMembers.map((m) => m["pubkey"]);
+
+    it("normalizes raw hex to nostr: form", async () => {
+      const h = makeHarness();
+      const org = await setup(h);
+      expect((await add(h, org, HEX)).status).toBe(201);
+      expect(roster(h)).toContain(CANON);
+      expect(roster(h)).not.toContain(HEX);
+    });
+
+    it.each(BAD_SHAPES)("400s on unrecognized shape %j", async (v) => {
+      const h = makeHarness();
+      const org = await setup(h);
+      const before = roster(h).length;
+      expect((await add(h, org, v)).status).toBe(400);
+      expect(roster(h)).toHaveLength(before);
+    });
+
+    it("accepts an already-canonical ref and re-adding is idempotent", async () => {
+      const h = makeHarness();
+      const org = await setup(h);
+      const before = roster(h).length;
+      expect((await add(h, org, CANON)).status).toBe(201);
+      // Same key in raw form must not create a second row — assert the total,
+      // since counting CANON alone passes with or without the fix.
+      expect((await add(h, org, HEX)).status).toBe(201);
+      expect(roster(h)).toHaveLength(before + 1);
+      expect(roster(h)).toContain(CANON);
+    });
+  });
+
+  describe("POST /orgs/:slug/transfer", () => {
+    const transfer = (h: Harness, to_pubkey: unknown) =>
+      h.app.request(
+        "/api/v0/orgs/acme/transfer",
+        jsonReq("POST", { to_pubkey, confirmation_slug: "acme" }),
+        {},
+      );
+
+    // Behaviour CHANGE, deliberate: you may only hand an org to somebody who
+    // is already in it. Add-then-transfer instead of transfer-to-stranger.
+    it("400s transferring to a non-member", async () => {
+      const h = makeHarness();
+      await createTeam(h);
+      const res = await transfer(h, pubkeyFor("stranger"));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ reason: "not-a-member" });
+      const roles = Object.fromEntries(h.db.orgMembers.map((m) => [m["pubkey"], m["role"]]));
+      expect(roles[CALLER]).toBe("owner");
+    });
+
+    it("normalizes raw hex and transfers to that member", async () => {
+      const h = makeHarness();
+      await createTeam(h);
+      seedOrgMember(h, h.db.orgs[0]!["id"] as string, CANON, "member");
+      expect((await transfer(h, HEX)).status).toBe(200);
+      const roles = Object.fromEntries(h.db.orgMembers.map((m) => [m["pubkey"], m["role"]]));
+      expect(roles[CANON]).toBe("owner");
+      expect(roles[CALLER]).toBe("admin");
+    });
+
+    it.each(BAD_SHAPES)("400s on unrecognized shape %j", async (v) => {
+      const h = makeHarness();
+      await createTeam(h);
+      expect((await transfer(h, v)).status).toBe(400);
+    });
   });
 });
