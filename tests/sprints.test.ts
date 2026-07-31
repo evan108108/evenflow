@@ -352,6 +352,205 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(h.db.sprints[0]!["adds_mid_sprint"]).toBe(1);
   });
 
+  // ── EFB-17: container auto-promote on add-issue ────────────────────────
+  //
+  // The promote itself shipped in 1829699 (2026-07-30). It had NO test: a
+  // mutation run that deleted the whole promote block left all 759 tests
+  // green, which is why these exist. The behaviour under test is the
+  // symmetry with start-sprint — an issue joining an ALREADY-ACTIVE sprint
+  // has to land on the Kanban, or it silently joins and stays invisible,
+  // which is the bug Evan hit during the 2026-07-30 dogfood.
+  //
+  // Note `icebox`, not "iced" — CONTAINERS is ["icebox", "backlog", "active"]
+  // (src/shapes.ts:298).
+
+  /** Events emitted by one request, isolated from the running total. */
+  const emittedBy = async (h: Harness, run: () => unknown) => {
+    const before = h.emitter.events.length;
+    await run();
+    return h.emitter.events.slice(before).map((e) => e.event);
+  };
+
+  const startSprint = (h: Harness, sprintId: string) =>
+    h.app.request(`/api/v0/boards/kb/sprints/${sprintId}/start`, jsonReq("POST", {}), {});
+
+  it("add-issue to an ACTIVE sprint promotes a backlog issue and emits container_changed", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    await startSprint(h, sprint.id);
+    const issue = await createIssue(h, { title: "late arrival" });
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["container"]).toBe("backlog");
+
+    const events = await emittedBy(h, () => addIssue(h, sprint.id, issue.id));
+
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["container"]).toBe("active");
+    // The container move is audited like any other, so a tide replay can see it.
+    expect(
+      h.db.statusChanges.some(
+        (s) =>
+          s["issue_id"] === issue.id &&
+          s["from_container"] === "backlog" &&
+          s["to_container"] === "active",
+      ),
+    ).toBe(true);
+
+    // Pinning the SHAPE, not just the fact of an emit. One event carries the
+    // whole issue plus from/to, so no consumer is starved — see below for why
+    // the absence of a second event is the load-bearing half.
+    expect(events.map((e) => e.kind)).toEqual(["issue.container_changed"]);
+    expect(events[0]).toMatchObject({
+      kind: "issue.container_changed",
+      issue_id: issue.id,
+      payload: { from_container: "backlog", to_container: "active" },
+    });
+    expect((events[0]!.payload as { issue: { container: string } }).issue.container).toBe("active");
+  });
+
+  it("add-issue does NOT also emit issue.updated when it promotes", async () => {
+    // The deliberate choice, pinned so a refactor can't quietly double the
+    // emit: on the promote path `issue.container_changed` REPLACES
+    // `issue.updated` rather than following it. Consumers get one event
+    // carrying everything. If someone later decides both should fire, this
+    // test is where that decision has to be made on purpose.
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    await startSprint(h, sprint.id);
+    const issue = await createIssue(h, { title: "late arrival" });
+
+    const events = await emittedBy(h, () => addIssue(h, sprint.id, issue.id));
+
+    expect(events.filter((e) => e.kind === "issue.updated")).toEqual([]);
+  });
+
+  it("the single-event choice is specific to promoting add-issue, not systemic", async () => {
+    // Guards the inverse misreading — that container_changed generally
+    // supplants issue.updated. An ordinary mutation on an already-promoted
+    // issue still emits issue.updated.
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    await startSprint(h, sprint.id);
+    const issue = await createIssue(h, { title: "late arrival" });
+    await addIssue(h, sprint.id, issue.id);
+
+    const events = await emittedBy(h, () =>
+      h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { title: "renamed" }), {}),
+    );
+
+    expect(events.map((e) => e.kind)).toContain("issue.updated");
+  });
+
+  it("add-issue to an ACTIVE sprint leaves an ICEBOX issue in the icebox", async () => {
+    // Icing is an explicit "not now". Scooping an iced issue onto the Kanban
+    // because it happened to be added to a sprint would overrule the user.
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    await startSprint(h, sprint.id);
+    const issue = await createIssue(h, { title: "not now" });
+    const iced = await h.app.request(
+      `/api/v0/issues/${issue.id}/send_to_icebox`,
+      jsonReq("POST", {}),
+      {},
+    );
+    expect(iced.status).toBe(200);
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["container"]).toBe("icebox");
+
+    const events = await emittedBy(h, () => addIssue(h, sprint.id, issue.id));
+
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["container"]).toBe("icebox");
+    expect(events.map((e) => e.kind)).toEqual(["issue.updated"]);
+  });
+
+  // ── EFB-17: what the parseRouteBody migration added ─────────────────────
+  //
+  // add-issue / remove-issue were invisible to check:boundary until this
+  // ticket widened its registration regex — they register through a template
+  // literal inside a factory, which the old pattern could not match. Both
+  // read a body, so both were unvalidated and unreported at once.
+
+  it("add-issue rejects an unknown key rather than ignoring it", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "A" });
+
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      jsonReq("POST", { issue_id: issue.id, issue: "typo" }),
+      {},
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe("issue-unknown");
+  });
+
+  it("add-issue still answers issue_id for a missing or non-string value", async () => {
+    // Pre-migration behaviour, preserved exactly. `Schema.String` rather than
+    // NonEmptyString is deliberate: an empty id keeps reaching the lookup and
+    // answering 404, because changing a status code is its own ticket.
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+
+    const missing = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      jsonReq("POST", {}),
+      {},
+    );
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { reason: string }).reason).toBe("issue_id");
+
+    const wrongType = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      jsonReq("POST", { issue_id: 7 }),
+      {},
+    );
+    expect(wrongType.status).toBe(400);
+    expect(((await wrongType.json()) as { reason: string }).reason).toBe("issue_id");
+
+    const empty = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      jsonReq("POST", { issue_id: "" }),
+      {},
+    );
+    expect(empty.status).toBe(404);
+  });
+
+  it("remove-issue is migrated too — same factory, same guarantees", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "A" });
+    await addIssue(h, sprint.id, issue.id);
+
+    const res = await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
+      jsonReq("POST", { issue_id: issue.id, nope: 1 }),
+      {},
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe("nope-unknown");
+  });
+
+  it("add-issue to a PLANNING sprint leaves the container at backlog", async () => {
+    // Only an ACTIVE sprint promotes. A planning sprint is a list, not a
+    // commitment — its members belong on the Backlog until it starts.
+    const h = makeHarness();
+    await createBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "planned" });
+
+    const events = await emittedBy(h, () => addIssue(h, sprint.id, issue.id));
+
+    expect(h.db.sprints[0]!["status"]).toBe("planning");
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["container"]).toBe("backlog");
+    expect(events.map((e) => e.kind)).toEqual(["issue.updated"]);
+  });
+
   it("DELETE /sprints/:id (planning) clears members and drops the sprint", async () => {
     const h = makeHarness();
     await createBoard(h);

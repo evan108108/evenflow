@@ -261,7 +261,17 @@ export const templatesFor = (
   // Absent status_change_id means no statusChangeCache row was appended —
   // a column-only transition, where the issue event carries the state and
   // there is no status change to describe. Nothing to publish, not a fault.
-  if (event.kind === "issue.transitioned" || event.kind === "issue.container_changed") {
+  // EFB-56 added `issue.created`. Creation is not a "transition" in the
+  // intuitive sense, but it IS a status change — the null → first-column row is
+  // a real statusChangeCache entry — and it is the one every issue has. Adding
+  // the kind HERE rather than teaching each writer to publish is the whole
+  // shape of that fix: one gate, so a future event family that carries a
+  // status_change_id cannot be half-wired.
+  if (
+    event.kind === "issue.transitioned" ||
+    event.kind === "issue.container_changed" ||
+    event.kind === "issue.created"
+  ) {
     const statusChangeId = event.status_change_id;
     const issueId = event.issue_id;
     if (statusChangeId !== undefined && issueId !== undefined) {

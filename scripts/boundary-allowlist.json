@@ -209,6 +209,21 @@
       "reason": "Re-sends to the address already stored on the invite row."
     },
     {
+      "route": "POST /issues/:id/promote_to_active",
+      "file": "src/routes/issues.ts",
+      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
+    },
+    {
+      "route": "POST /issues/:id/promote_to_backlog",
+      "file": "src/routes/issues.ts",
+      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
+    },
+    {
+      "route": "POST /issues/:id/send_to_icebox",
+      "file": "src/routes/issues.ts",
+      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
+    },
+    {
       "route": "POST /boards/:slug/sprints/:id/start",
       "file": "src/routes/sprints.ts",
       "reason": "State transition addressed entirely by path params."

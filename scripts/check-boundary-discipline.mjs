@@ -55,9 +55,32 @@ const MAX_SUNSET_HORIZON_DAYS = 180;
 const args = new Set(process.argv.slice(2));
 const jsonOut = args.has("--json");
 
-/** Registration: `<router>.<verb>("<path>", <handler...`  */
+/**
+ * Registration: `<router>.<verb>("<path>", <handler...` — or the same with a
+ * template literal for the path.
+ *
+ * EFB-17: the first form of this pattern accepted ONLY a double-quoted
+ * literal, which silently excluded `sprints.post(\`…/${verb}\`, …)` — a
+ * factory registering `add-issue` and `remove-issue`, both of which read a
+ * body through `readJsonBody` with a hand-rolled typeof check. Two
+ * body-reading routes were therefore invisible to the ratchet: not migrated,
+ * not allowlisted, not reported. The tool said "47 handlers scanned, 0
+ * problems" and meant "47 of the 49 registration sites I know how to see".
+ *
+ * That is this file's own meta-lesson recurring (see the bottom of
+ * docs/BOUNDARY_DISCIPLINE.md): a detector's silence is ambiguous, and the
+ * pattern list is an implicit contract — here, over how a route may be
+ * REGISTERED rather than how its body is read.
+ *
+ * A template path keeps its `${…}` verbatim in the reported id, because the
+ * substitution is not resolvable without an AST walk and inventing a
+ * concrete-looking route name would be a worse lie than an honest one.
+ * Registrations whose path is a bare identifier (`issues.post(path, …)`) are
+ * STILL invisible; those three are declared in the allowlist's `noBody`
+ * section instead, and a declaration-based enumeration is filed as follow-up.
+ */
 const REGISTRATION = new RegExp(
-  String.raw`\b([A-Za-z_$][\w$]*)\.(${VERBS.join("|")})\(\s*"([^"]+)"\s*,`,
+  String.raw`\b([A-Za-z_$][\w$]*)\.(${VERBS.join("|")})\(\s*(?:"([^"]+)"|\x60([^\x60]+)\x60)\s*,`,
   "g",
 );
 
@@ -189,7 +212,8 @@ function scanFile(absPath, relPath) {
   REGISTRATION.lastIndex = 0;
   let m;
   while ((m = REGISTRATION.exec(src)) !== null) {
-    const [, , verb, routePath] = m;
+    const [, , verb, quotedPath, templatePath] = m;
+    const routePath = quotedPath ?? templatePath;
     const openIdx = src.indexOf("(", m.index);
     const span = balancedSpan(src, openIdx);
     const line = src.slice(0, m.index).split("\n").length;

@@ -333,6 +333,71 @@ describe("AttachmentsPanel", () => {
     cleanup();
   });
 
+  // EFB-57. The gate is `!== "public"`, not `=== "private"`, so the legacy
+  // case below is the one that matters: a board payload predating phase 16
+  // carries no `visibility`, and an equality check would silently hide the
+  // notice exactly where nobody has told the user anything.
+  it("shows the attachment-privacy notice on a private board", () => {
+    const { container, cleanup } = mount(() => (
+      <AttachmentsPanel
+        attachments={[]}
+        readOnly={false}
+        boardVisibility="private"
+        onUpload={async () => null}
+        onSetCover={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    ));
+    const note = container.querySelector(".attachment-privacy-note");
+    expect(note).not.toBeNull();
+    expect(note!.querySelector("a")!.getAttribute("href")).toBe("/docs#attachment-privacy");
+    cleanup();
+  });
+
+  it("omits the notice on a public board — nothing is being kept from anyone", () => {
+    const { container, cleanup } = mount(() => (
+      <AttachmentsPanel
+        attachments={[]}
+        readOnly={false}
+        boardVisibility="public"
+        onUpload={async () => null}
+        onSetCover={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    ));
+    expect(container.querySelector(".attachment-privacy-note")).toBeNull();
+    cleanup();
+  });
+
+  it("shows the notice when visibility is absent, rather than assuming public", () => {
+    const { container, cleanup } = mount(() => (
+      <AttachmentsPanel
+        attachments={[]}
+        readOnly={false}
+        onUpload={async () => null}
+        onSetCover={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    ));
+    expect(container.querySelector(".attachment-privacy-note")).not.toBeNull();
+    cleanup();
+  });
+
+  it("read-only viewers get no notice — they cannot upload anything to warn about", () => {
+    const { container, cleanup } = mount(() => (
+      <AttachmentsPanel
+        attachments={[attachment()]}
+        readOnly={true}
+        boardVisibility="private"
+        onUpload={async () => null}
+        onSetCover={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    ));
+    expect(container.querySelector(".attachment-privacy-note")).toBeNull();
+    cleanup();
+  });
+
   it("surfaces the actionable upload rejection with its settings link", async () => {
     const onUpload = vi.fn(async () => ({
       message: "This file is 6.3MB — Evenflow's default storage caps at 5.0MB per file. Set up your own bucket to upload larger files.",

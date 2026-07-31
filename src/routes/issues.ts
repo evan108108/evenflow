@@ -45,6 +45,7 @@ import {
   type Container,
   type IssueShape,
 } from "../shapes";
+import { insertStatusChange, type StatusChangeWrite } from "../lib/status-change";
 import {
   DEFAULT_ISSUE_TYPE,
   ISSUE_TYPES,
@@ -354,17 +355,11 @@ const fetchIssue = (ref: string, pubkey: string | null, minRole: string) =>
     return { issue, board };
   });
 
-interface StatusChangeWrite {
-  readonly issue_id: string;
-  readonly board_id: string;
-  readonly actor_pubkey: string;
-  readonly from_status: string | null;
-  readonly to_status: string | null;
-  readonly from_container: string | null;
-  readonly to_container: string | null;
-  readonly container_at_completion: string | null;
-  readonly occurred_at_ms: number;
-}
+// StatusChangeWrite + insertStatusChange moved to src/lib/status-change.ts
+// (EFB-56). They were duplicated here and in src/github/execute.ts, and the
+// two copies had drifted: this one returned the row id, that one discarded it,
+// which is why github-driven transitions never reached the substrate. See that
+// file's header for why one writer is the fix rather than two publish calls.
 
 /**
  * Write the status-change audit row and RETURN ITS ID (EFB-33).
@@ -375,27 +370,7 @@ interface StatusChangeWrite {
  * against. Returning it is the whole unlock — callers thread it onto the
  * board event, and the publish path stamps `statusChangeCache` with it.
  */
-const insertStatusChange = (w: StatusChangeWrite) =>
-  Effect.gen(function* () {
-    const db = yield* Db;
-    const statusChangeId = crypto.randomUUID();
-    yield* db.execute(
-      "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        statusChangeId,
-        w.issue_id,
-        w.board_id,
-        w.actor_pubkey,
-        w.from_status,
-        w.to_status,
-        w.from_container,
-        w.to_container,
-        w.container_at_completion,
-        w.occurred_at_ms,
-      ],
-    );
-    return statusChangeId;
-  });
+// (implementation now lives in src/lib/status-change.ts — imported above)
 
 /** completed_at_ms follows the done-category edge: set on arrival, cleared on exit. */
 const nextCompletedAt = (
@@ -684,7 +659,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           issue.completed_at_ms,
         ],
       );
-      yield* insertStatusChange({
+      // EFB-56: keep the id. Creation writes a real null → first-column status
+      // row, but this call used to discard what it returned, so `issue.created`
+      // referenced nothing and the publish path had no 30553 to fan out. The
+      // substrate's audit trail therefore began at an issue's FIRST TRANSITION
+      // rather than at its creation — the one status change every issue has was
+      // the one never published.
+      const statusChangeId = yield* insertStatusChange({
         issue_id: id,
         board_id: board.id,
         actor_pubkey: pubkey,
@@ -704,8 +685,23 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         kind: "issue.created",
         board_id: board.id,
         issue_id: id,
+        // Top level, matching `issue.transitioned` post-EFB-33 — a private
+        // board's payload arrives encrypted, so anything the publish path must
+        // read has to live on the envelope.
+        status_change_id: statusChangeId,
         at_ms: now,
-        payload: { issue },
+        // The status fields ride the payload for the same reason they do on a
+        // transition: nothing in the issue row records who acted, and
+        // `buildKanbanStatusChange` needs the from/to pair. Additive keys — SSE
+        // consumers that only read `issue` are unaffected.
+        payload: {
+          issue,
+          actor_pubkey: pubkey,
+          from_status: null,
+          to_status: column.name,
+          from_container: null,
+          to_container: container,
+        },
       });
       return { issue };
     });

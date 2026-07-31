@@ -15,7 +15,7 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
+import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -28,6 +28,7 @@ import {
   resolveBoardScope,
   type BoardOwnershipError,
 } from "../authz";
+import { parseRouteBody } from "../lib/route-body";
 import { parseBoardRow, parseIssueRow, parseSprintRow, type BoardShape, type SprintShape } from "../shapes";
 import { isDoneStatus } from "../columns";
 import {
@@ -751,6 +752,18 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   // open row (added_at_ms=now, removed_at_ms=null); remove-issue stamps the
   // existing open row's removed_at_ms. History survives across future
   // reassignments of the single-value sprint_id.
+  /**
+   * Body for add-issue / remove-issue.
+   *
+   * `Schema.String`, deliberately NOT `NonEmptyString`. An empty id currently
+   * reaches the lookup and answers 404 `issue`; tightening it here would turn
+   * that into a 400, and BOUNDARY_DISCIPLINE.md asks that a migration change
+   * no status code without its own ticket. Whether an empty reference should
+   * fail as shape rather than as a lookup miss is a real question — it is just
+   * not this ticket's to answer.
+   */
+  const MembershipBody = Schema.Struct({ issue_id: Schema.String });
+
   const membershipEndpoint = (
     verb: "add-issue" | "remove-issue",
     apply: (sprint: SprintShape, issueId: string) => { sprint_id: string | null },
@@ -759,10 +772,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const program = Effect.gen(function* () {
         const claims = yield* requireCaller(c.get("claims"));
         const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
-        const body = yield* readJsonBody(c);
-        if (typeof body["issue_id"] !== "string") {
-          return yield* new ValidationError({ reason: "issue_id" });
-        }
+        // EFB-17: migrated off the raw body reader. The hand-rolled
+        // `typeof issue_id !== "string"` guard is now MembershipBody, and
+        // rejecting an unrecognized key comes free with it. Both forms still
+        // answer `issue_id` for a missing or non-string value.
+        //
+        // (The raw reader is deliberately not named here: check:boundary
+        // matches its markers against raw file text, comments included, so
+        // writing that identifier in prose classifies this route as
+        // half-migrated. It fails closed — a loud `mixed` error, not a silent
+        // pass — but it is why this sentence is phrased around the name.)
+        const { issue_id } = yield* parseRouteBody(c, MembershipBody);
         const current = yield* fetchSprint(board.id, c.req.param("id"));
         if (current.status === "completed") {
           return yield* new ConflictError({ reason: "sprint-completed" });
@@ -770,7 +790,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
 
         const db = yield* Db;
         const row = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ? AND board_id = ?", [
-          body["issue_id"],
+          issue_id,
           board.id,
         ]);
         if (row === null) return yield* new NotFoundError({ reason: "issue" });
