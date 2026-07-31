@@ -21,9 +21,15 @@ import {
   type KanbanLayout,
 } from "../../lib/layout";
 import { boardViewOf, issuePath, viewPath } from "../../lib/boardView";
+import {
+  EMPTY_FILTERS,
+  hasActiveFilters,
+  matchesFilters,
+  type BoardFilters,
+} from "../../lib/boardFilters";
 import { issuesInColumn } from "../../lib/order";
 import { sprintCountdown } from "../../lib/sprints";
-import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
+import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
 import { TideBadge } from "../../components/TideBadge";
@@ -60,6 +66,17 @@ export const BoardPage = () => {
   // when an active sprint exists (Linear posture: "here's the current
   // sprint's board"). Users toggle off with the chip to see everything.
   const [sprintFilterOff, setSprintFilterOff] = createSignal(false);
+  // EFB-44 — board filters, applied as one predicate the views run over
+  // already-loaded issues. Deliberately separate from the sprint chip
+  // above: that one stays a scalar prop, and unifying the two mechanisms
+  // is a follow-up rather than a change to shipped phase-21c behaviour.
+  const [filters, setFilters] = createSignal<BoardFilters>(EMPTY_FILTERS);
+  const filterPredicate = createMemo(() => {
+    const active = filters();
+    const viewer = callerPubkey();
+    if (!hasActiveFilters(active)) return undefined;
+    return (issue: Issue) => matchesFilters(issue, active, viewer);
+  });
   // Bumped whenever something that could move the tide lands; TideBadge
   // refetches on the change rather than recomputing client-side.
   const [tideVersion, setTideVersion] = createSignal(0);
@@ -404,6 +421,27 @@ export const BoardPage = () => {
                 />
               </div>
 
+              {/* EFB-44 filter chips. Hidden entirely when signed out — the
+                  only filter so far is viewer-relative, so there is nothing
+                  to offer an anonymous reader. */}
+              <Show when={callerPubkey() !== null}>
+                <div class="filter-chips">
+                  <button
+                    class="filter-chip"
+                    classList={{ on: filters().mineOnly }}
+                    aria-pressed={filters().mineOnly}
+                    title={
+                      filters().mineOnly
+                        ? "Showing only issues assigned to you. Click to show everyone's."
+                        : "Showing everyone's issues. Click to show only yours."
+                    }
+                    onClick={() => setFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
+                  >
+                    Show my tickets
+                  </button>
+                </div>
+              </Show>
+
               <Show when={store.lastError()}>
                 <p class="muted" role="alert">
                   The current pushed back: {store.lastError()}
@@ -429,10 +467,16 @@ export const BoardPage = () => {
                   }
                   layout={kanbanLayout()}
                   wideRail={wideRail()}
+                  matchesFilters={filterPredicate()}
                 />
               </Show>
               <Show when={view() === "backlog"}>
-                <BacklogView store={store} dnd={dnd} onOpen={(id) => navigate(openPath(id))} />
+                <BacklogView
+                  store={store}
+                  dnd={dnd}
+                  onOpen={(id) => navigate(openPath(id))}
+                  matchesFilters={filterPredicate()}
+                />
               </Show>
               <Show when={view() === "icebox"}>
                 <IceboxView store={store} dnd={dnd} onOpen={(id) => navigate(openPath(id))} />

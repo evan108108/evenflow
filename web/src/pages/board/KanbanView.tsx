@@ -50,6 +50,9 @@ const StatusStack = (props: {
    *  Done column from growing indefinitely for kanban-only teams. */
   doneWindowMs?: number | null | undefined;
   layout?: "columns" | "vertical" | undefined;
+  /** EFB-44 board filters. Absent = no filtering. Applied alongside — not
+   *  instead of — filterSprintId; the two narrow independently. */
+  matchesFilters?: ((issue: Issue) => boolean) | undefined;
 }) => {
   const active = () => {
     let rows = props.store.issues().filter((i) => i.container === "active");
@@ -57,7 +60,8 @@ const StatusStack = (props: {
       const sid = props.filterSprintId;
       rows = rows.filter((i) => i.sprint_id === sid);
     }
-    return rows;
+    const pred = props.matchesFilters;
+    return pred === undefined ? rows : rows.filter(pred);
   };
   // Vertical stack reads top-to-bottom, so we flip the column order — Done
   // on top, walk backwards to Todo at the bottom. Reads like "here's what's
@@ -228,17 +232,19 @@ const KanbanRail = (props: {
   store: BoardStore;
   dnd: DndHandle;
   onOpen: (id: string) => void;
+  /** EFB-44 board filters. Absent = no filtering. */
+  matchesFilters?: ((issue: Issue) => boolean) | undefined;
 }) => {
+  const keep = (rows: Issue[]) => {
+    const pred = props.matchesFilters;
+    return pred === undefined ? rows : rows.filter(pred);
+  };
   const backlog = () =>
-    props.store
-      .issues()
-      .filter((i) => i.container === "backlog")
-      .sort(byBoardOrder);
+    keep(props.store.issues().filter((i) => i.container === "backlog")).sort(byBoardOrder);
   const iced = () =>
-    props.store
-      .issues()
-      .filter((i) => i.container === "icebox")
-      .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+    keep(props.store.issues().filter((i) => i.container === "icebox")).sort(
+      (a, b) => b.updated_at_ms - a.updated_at_ms,
+    );
 
   return (
     <aside class="kanban-rail">
@@ -282,6 +288,8 @@ export const KanbanView = (props: {
   /** Vertical layout only: the viewport is wide enough to put the rail
    *  beside the stack instead of below it (lib/layout isWideVertical). */
   wideRail?: boolean;
+  /** EFB-44 board filters. Absent = no filtering. */
+  matchesFilters?: ((issue: Issue) => boolean) | undefined;
 }) => (
   <Show
     when={props.layout === "vertical"}
@@ -294,6 +302,7 @@ export const KanbanView = (props: {
         filterSprintId={props.filterSprintId}
         doneWindowMs={props.doneWindowMs}
         layout={props.layout}
+        matchesFilters={props.matchesFilters}
       />
     }
   >
@@ -306,8 +315,14 @@ export const KanbanView = (props: {
         filterSprintId={props.filterSprintId}
         doneWindowMs={props.doneWindowMs}
         layout="vertical"
+        matchesFilters={props.matchesFilters}
       />
-      <KanbanRail store={props.store} dnd={props.dnd} onOpen={props.onOpen} />
+      <KanbanRail
+        store={props.store}
+        dnd={props.dnd}
+        onOpen={props.onOpen}
+        matchesFilters={props.matchesFilters}
+      />
     </div>
   </Show>
 );
