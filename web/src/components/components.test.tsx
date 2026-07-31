@@ -429,6 +429,117 @@ describe("IssueSheet", () => {
     expect(transition).toHaveBeenCalledWith(issue, board.columns[2]);
     cleanup();
   });
+
+  // EFB-27 — the sheet can assign to and unassign from any sprint.
+  describe("sprint dropdown", () => {
+    const sprints = [
+      { id: "s1", board_id: "b1", name: "Sprint 1", goal: null, status: "active" as const,
+        started_at_ms: 500, completed_at_ms: null, created_at_ms: 1 },
+      { id: "s2", board_id: "b1", name: "Sprint 2", goal: null, status: "planning" as const,
+        started_at_ms: null, completed_at_ms: null, created_at_ms: 2 },
+    ];
+
+    const sheet = (over: Record<string, unknown>, onIssue: Partial<Issue> = {}) => {
+      const store = { ...storeStub, sprints: () => sprints, ...over } as unknown as BoardStore;
+      return mountRouted(() => (
+        <IssueSheet
+          issue={{ ...issue, ...onIssue }}
+          board={board}
+          store={store}
+          callerPubkey={"test:0"}
+          commentsVersion={() => 0}
+          onClose={() => undefined}
+        />
+      ));
+    };
+
+    const sprintRow = (container: HTMLElement) =>
+      [...container.querySelectorAll(".sheet-row")].find((r) =>
+        r.querySelector(".key")?.textContent === "Sprint",
+      )!;
+
+    it("lists None plus every sprint newest-first, marking the current one", async () => {
+      const { container, cleanup } = sheet({});
+      await flush();
+      const select = sprintRow(container).querySelector("select")!;
+      expect([...select.options].map((o) => o.textContent)).toEqual([
+        "— None —",
+        "Sprint 2 · planning",
+        "Sprint 1 · current",
+      ]);
+      cleanup();
+    });
+
+    it("shows the issue's current sprint as the selected value", async () => {
+      const { container, cleanup } = sheet({}, { sprint_id: "s1" });
+      await flush();
+      expect(sprintRow(container).querySelector("select")!.value).toBe("s1");
+      cleanup();
+    });
+
+    it("assigning an unassigned issue adds it to the chosen sprint", async () => {
+      const addIssueToSprint = vi.fn(async () => undefined);
+      const { container, cleanup } = sheet({ addIssueToSprint });
+      await flush();
+      const select = sprintRow(container).querySelector("select")!;
+      select.value = "s1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(addIssueToSprint).toHaveBeenCalledWith(expect.objectContaining({ id: "i1" }), "s1");
+      cleanup();
+    });
+
+    it("choosing None removes the issue from its sprint", async () => {
+      const removeIssueFromSprint = vi.fn(async () => undefined);
+      const { container, cleanup } = sheet({ removeIssueFromSprint }, { sprint_id: "s1" });
+      await flush();
+      const select = sprintRow(container).querySelector("select")!;
+      select.value = "";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(removeIssueFromSprint).toHaveBeenCalledWith(expect.objectContaining({ id: "i1" }));
+      cleanup();
+    });
+
+    it("moving between sprints adds to the target — the server handles the move", async () => {
+      const addIssueToSprint = vi.fn(async () => undefined);
+      const { container, cleanup } = sheet({ addIssueToSprint }, { sprint_id: "s1" });
+      await flush();
+      const select = sprintRow(container).querySelector("select")!;
+      select.value = "s2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      expect(addIssueToSprint).toHaveBeenCalledWith(expect.objectContaining({ id: "i1" }), "s2");
+      cleanup();
+    });
+
+    // The sprint list loads separately from the issue; without the escape
+    // hatch the select would snap to "— None —" and read as unassigned.
+    it("keeps an unknown sprint selectable so the value round-trips", async () => {
+      const { container, cleanup } = sheet({ sprints: () => [] }, { sprint_id: "gone" });
+      await flush();
+      const select = sprintRow(container).querySelector("select")!;
+      expect(select.value).toBe("gone");
+      expect([...select.options].map((o) => o.textContent)).toEqual(["— None —", "Unknown sprint"]);
+      cleanup();
+    });
+
+    it("is read-only text when the caller isn't signed in", async () => {
+      const store = { ...storeStub, sprints: () => sprints } as unknown as BoardStore;
+      const { container, cleanup } = mountRouted(() => (
+        <IssueSheet
+          issue={{ ...issue, sprint_id: "s1" }}
+          board={board}
+          store={store}
+          callerPubkey={null}
+          commentsVersion={() => 0}
+          onClose={() => undefined}
+        />
+      ));
+      await flush();
+      const row = sprintRow(container);
+      expect(row.querySelector("select")).toBeNull();
+      expect(row.textContent).toContain("Sprint 1 · current");
+      cleanup();
+    });
+  });
 });
 
 describe("BacklogView sprints (phase 20)", () => {

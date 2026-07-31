@@ -12,6 +12,7 @@ import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
 import { formatBytes, isImageContentType, type Attachment } from "../lib/attachments";
+import { sprintOptions } from "../lib/sprints";
 import type { BoardStore } from "../pages/board/store";
 import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
 import { PendingAttachments } from "./PendingAttachments";
@@ -391,6 +392,53 @@ export const IssueSheet = (props: {
               );
             })()}
           </Show>
+        </div>
+
+        <div class="sheet-row">
+          <span class="key">Sprint</span>
+          {(() => {
+            const options = () => sprintOptions(props.store.sprints?.() ?? []);
+            // sprint_id is optional on Issue, so it arrives as undefined on
+            // payloads predating sprints — normalise before comparing.
+            const sprintId = () => props.issue.sprint_id ?? null;
+            const labelFor = (id: string) =>
+              options().find((o) => o.id === id)?.label ?? "Unknown sprint";
+            // Adding to a sprint auto-promotes the container server-side
+            // (phase 21b symmetry) — don't move it here as well.
+            const choose = (value: string) =>
+              value === ""
+                ? props.store.removeIssueFromSprint(props.issue)
+                : props.store.addIssueToSprint(props.issue, value);
+            return (
+              <Show
+                when={!readOnly()}
+                fallback={
+                  <Show when={sprintId() !== null} fallback={<span class="muted">—</span>}>
+                    <span>{labelFor(sprintId()!)}</span>
+                  </Show>
+                }
+              >
+                <select
+                  value={sprintId() ?? ""}
+                  onChange={(e) => void choose(e.currentTarget.value)}
+                >
+                  <option value="">— None —</option>
+                  <For each={options()}>
+                    {(o) => <option value={o.id}>{o.label}</option>}
+                  </For>
+                  {/* The sprint list is fetched separately from the issue, so
+                      a stale or not-yet-loaded list would otherwise silently
+                      reset the select to "— None —". Keep the current value
+                      selectable so it round-trips. */}
+                  <Show
+                    when={sprintId() !== null && !options().some((o) => o.id === sprintId())}
+                  >
+                    <option value={sprintId()!}>{labelFor(sprintId()!)}</option>
+                  </Show>
+                </select>
+              </Show>
+            );
+          })()}
         </div>
 
         <div class="sheet-row">

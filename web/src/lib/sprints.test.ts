@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { FALLBACK_SPRINT_DAYS, effectiveSprintDays, sprintCountdown } from "./sprints";
+import {
+  FALLBACK_SPRINT_DAYS,
+  currentSprint,
+  effectiveSprintDays,
+  sprintCountdown,
+  sprintOptions,
+} from "./sprints";
+import type { SprintStatus } from "./types";
 
 const DAY = 86_400_000;
+
+const sprint = (
+  id: string,
+  status: SprintStatus,
+  created_at_ms: number,
+  started_at_ms: number | null = null,
+) => ({ id, name: `Sprint ${id}`, status, created_at_ms, started_at_ms });
 
 describe("effectiveSprintDays", () => {
   it("prefers the sprint override, then the board default, then the fallback", () => {
@@ -38,5 +52,63 @@ describe("sprintCountdown", () => {
     expect(
       sprintCountdown({ planned_days: 7, started_at_ms: start }, 14, start + 30 * DAY),
     ).toEqual({ daysLeft: 0, overdue: true });
+  });
+});
+
+describe("currentSprint", () => {
+  it("is null when nothing is active", () => {
+    expect(currentSprint([])).toBeNull();
+    expect(currentSprint([sprint("a", "planning", 1), sprint("b", "completed", 2)])).toBeNull();
+  });
+
+  it("picks the most recently started active sprint", () => {
+    const chosen = currentSprint([
+      sprint("old", "active", 1, 100),
+      sprint("new", "active", 2, 500),
+      sprint("planning", "planning", 3),
+    ]);
+    expect(chosen?.id).toBe("new");
+  });
+
+  it("does not mutate the caller's array", () => {
+    const list = [sprint("a", "active", 1, 100), sprint("b", "active", 2, 500)];
+    currentSprint(list);
+    expect(list.map((s) => s.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("sprintOptions", () => {
+  it("lists every sprint newest-created first", () => {
+    const opts = sprintOptions([
+      sprint("oldest", "completed", 1),
+      sprint("newest", "planning", 3),
+      sprint("middle", "planning", 2),
+    ]);
+    expect(opts.map((o) => o.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+
+  it("labels each sprint with its status, and the current one as current", () => {
+    const opts = sprintOptions([
+      sprint("running", "active", 2, 500),
+      sprint("next", "planning", 1),
+      sprint("done", "completed", 0),
+    ]);
+    expect(opts.map((o) => o.label)).toEqual([
+      "Sprint running · current",
+      "Sprint next · planning",
+      "Sprint done · completed",
+    ]);
+  });
+
+  // Only one sprint can be "the current one"; a second active sprint is
+  // still active, and saying so is what makes the distinction useful.
+  it("marks only the current sprint when several are active", () => {
+    const opts = sprintOptions([sprint("a", "active", 2, 100), sprint("b", "active", 1, 500)]);
+    expect(opts.map((o) => o.label)).toEqual(["Sprint a · active", "Sprint b · current"]);
+  });
+
+  it("has no None entry — that option is static in the markup", () => {
+    expect(sprintOptions([sprint("a", "planning", 1)]).map((o) => o.id)).toEqual(["a"]);
+    expect(sprintOptions([])).toEqual([]);
   });
 });
