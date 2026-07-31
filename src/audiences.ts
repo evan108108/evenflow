@@ -326,6 +326,33 @@ export const grantMemberOnJoin = (board: BoardShape, memberPubkey: string) =>
   Effect.gen(function* () {
     const keys = yield* loadEpochKeys(board.id, board.audience_epoch);
     const issued = yield* issueGrantsForMember(board, memberPubkey, keys);
+
+    // EFB-36: republish the 30520 with the CURRENT roster. Without this the
+    // gateway's member set stays frozen at whatever it was when the board was
+    // flipped private — flipBoardPrivate and rotateBoardAudience both refresh
+    // the declaration, this path did not — so every member added afterwards
+    // (and every new ephemeral session key) held a D1 grant the wrap
+    // validator had never heard of.
+    //
+    // The consequence was total, not partial: runPublishWraps pre-flights
+    // every wrap against the declaration and fail-fasts 400 on the first
+    // non-member recipient, deliberately, so one unknown recipient rejected
+    // the whole fan-out. The dogfood board had 6 grant recipients against a
+    // 2-member declaration and had never landed a single encrypted tide.
+    //
+    // Publishes the FULL recipient set, not the `issued` delta: passing only
+    // the new grants would drop everyone already in the declaration and break
+    // wraps for them instead — the same bug pointed the other way. Reading
+    // grantRecipients here means the declaration is built from the very table
+    // the wrap fan-out enumerates, so the two agree by construction.
+    //
+    // Unconditional rather than gated on `issued.length > 0`: a join that
+    // grants nothing new (the member already held a grant) is exactly the
+    // case where an already-stale declaration would otherwise never heal.
+    // Member-add is rare and the post is best-effort, so the extra call is
+    // cheap insurance.
+    yield* publishDeclaration(board, keys, yield* grantRecipients(board.id, keys.epoch));
+
     for (const recipient of issued) {
       const db = yield* Db;
       const row = yield* db.queryFirst<{ grant_ciphertext: string }>(
