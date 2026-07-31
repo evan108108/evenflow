@@ -29,7 +29,7 @@ import {
   upsertMembership,
 } from "../membership";
 import { parseBoardRow, parseMemberRow, parseOrgRow, type OrgShape } from "../shapes";
-import { canonicalizeIdentityRef, isNpub, isRosterMember } from "../lib/identity";
+import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
 import {
   BOARD_ROLES,
   ORG_ROLES,
@@ -115,7 +115,31 @@ const validateAvatarUrl = (v: unknown) =>
  * transfer handler below.
  */
 const validatePubkey = (v: unknown) => {
-  if (isNpub(v)) return Effect.fail(new ValidationError({ reason: "pubkey-npub-unsupported" }));
+  // EFB-41 removed the `isNpub` early-reject: bech32 now decodes in
+  // canonicalizeIdentityRef, so an npub is a supported spelling rather than a
+  // recognized-but-refused one. An npub that fails its checksum falls through
+  // to the generic `pubkey` reason, which is correct — it is malformed input,
+  // not an unsupported feature.
+  const ref = canonicalizeIdentityRef(v);
+  return ref === null ? Effect.fail(new ValidationError({ reason: "pubkey" })) : Effect.succeed(ref);
+};
+
+/**
+ * Normalize a `:pubkey` ROUTE param (EFB-42).
+ *
+ * Same shape rule as `validatePubkey`, different failure meaning, which is
+ * why it is named separately rather than reusing that function at the call
+ * sites: a body pubkey names somebody to ADD, a route pubkey names somebody
+ * to LOOK UP. The lookup then runs against a roster that stores canonical
+ * refs, so passing the param through raw made `…/members/049b628c…` miss a
+ * member stored as `nostr:049b628c…` and 404 — the member existed, the URL
+ * spelled them differently.
+ *
+ * 400 rather than 404 on a shape failure, deliberately: "you sent junk" and
+ * "no such member" are different answers, and collapsing them would make a
+ * typo indistinguishable from a removed teammate.
+ */
+const validatePubkeyParam = (v: string | undefined) => {
   const ref = canonicalizeIdentityRef(v);
   return ref === null ? Effect.fail(new ValidationError({ reason: "pubkey" })) : Effect.succeed(ref);
 };
@@ -478,7 +502,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
       const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "admin");
-      const targetPubkey = c.req.param("pubkey");
+      const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
       const role = yield* validateOrgRole(body["role"]);
 
       const db = yield* Db;
@@ -523,7 +547,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
       const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "admin");
-      const targetPubkey = c.req.param("pubkey");
+      const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
 
       const db = yield* Db;
       const current = yield* db.queryFirst<{ role: string }>(
@@ -657,7 +681,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "admin",
       );
-      const targetPubkey = c.req.param("pubkey");
+      const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
       const role = yield* validateBoardRole(body["role"]);
       const db = yield* Db;
       const current = yield* db.queryFirst(
@@ -691,7 +715,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "admin",
       );
-      const targetPubkey = c.req.param("pubkey");
+      const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
       // Rotate FIRST: if the epoch bump fails, the removal fails with it
       // and stays retryable — a removed member must never keep a live key.
       if (board.encryption_active) {

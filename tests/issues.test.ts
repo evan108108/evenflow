@@ -747,12 +747,53 @@ describe("EFB-38 assignee_pubkey validation", () => {
       expect(storedAssignee(h, issue.id)).toBe(CANON);
     });
 
-    it("400s on npub1 bech32, which is not supported yet", async () => {
+    // EFB-41. This block previously asserted "400s on npub1, not supported
+    // yet" — and it kept passing after npub support landed, because the
+    // sample it used contains an illegal bech32 letter ("i") and so never
+    // reached the decoder at all. It was certifying the reject for the wrong
+    // reason. Replaced with the three cases that actually pin the behaviour.
+    const NPUB_MEMBER = "npub1qjdk9rzwrr2kycnlmyjda2xadl5c6nwnp98askjnmpxq75sek0pqr3fl3a"; // = HEX
+    const NPUB_STRANGER = "npub1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygse4sl3h";
+
+    it("assigns via npub, storing the same canonical ref as the hex spelling", async () => {
       const h = makeHarness();
       await boardWithNostrMember(h);
       const issue = await createIssue(h);
 
-      const res = await patchAssignee(h, issue.id, "npub1qy352eufi7lxs4h8lpelw9r4vtvrhtnfvxhc4xzn3nlrxq0zj9nqmcqvr7");
+      const res = await patchAssignee(h, issue.id, NPUB_MEMBER);
+      expect(res.status).toBe(200);
+      expect(storedAssignee(h, issue.id)).toBe(CANON);
+    });
+
+    // The roster check governs, not the spelling: decoding an npub must not
+    // become a way to assign work to somebody who is not on the board.
+    it("400s not-a-member on a valid npub outside the roster", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const issue = await createIssue(h);
+
+      const res = await patchAssignee(h, issue.id, NPUB_STRANGER);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ reason: "not-a-member" });
+      expect(storedAssignee(h, issue.id)).toBeNull();
+    });
+
+    // Malformed bech32 and non-npub TLVs both 400. The nsec case is the
+    // security one: a pasted PRIVATE key must not decode to its public half
+    // and quietly succeed. Note the note1 sample carries the same 32 bytes
+    // as NPUB_MEMBER, so it would resolve to a real member if the decoder
+    // were not gated on type.
+    it.each([
+      ["illegal bech32 letter", "npub1qy352eufi7lxs4h8lpelw9r4vtvrhtnfvxhc4xzn3nlrxq0zj9nqmcqvr7"],
+      ["bad checksum", "npub1qy352euf7lxs4h8lpelw9r4vtvrhtnfvxhc4xzn3nlrxq0zj9nqmcqvr7"],
+      ["nsec (private key)", "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5"],
+      ["note1 of a real member's bytes", "note1qjdk9rzwrr2kycnlmyjda2xadl5c6nwnp98askjnmpxq75sek0pqjm2zg4"],
+    ])("400s on %s", async (_label, v) => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const issue = await createIssue(h);
+
+      const res = await patchAssignee(h, issue.id, v);
       expect(res.status).toBe(400);
       expect(storedAssignee(h, issue.id)).toBeNull();
     });

@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
-import { canonicalizeIdentityRef, isNpub, isRosterMember } from "../lib/identity";
+import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -184,11 +184,11 @@ const validateAssignee = (
 ): Effect.Effect<string | null, ValidationError, Db> =>
   Effect.gen(function* () {
     if (v === null) return null;
-    // Recognized but unsupported — say so rather than falling through to the
-    // generic shape error, so the caller knows it's a missing feature.
-    if (isNpub(v)) {
-      return yield* new ValidationError({ reason: "assignee_pubkey-npub-unsupported" });
-    }
+    // EFB-41 removed the `isNpub` early-reject: bech32 decodes in
+    // canonicalizeIdentityRef now, so an npub for somebody on the roster is a
+    // valid assign. A bad-checksum npub falls through to `assignee_pubkey`,
+    // and a well-formed npub for a non-member still hits `not-a-member` —
+    // the roster check below is what makes that safe, not the shape gate.
     const ref = canonicalizeIdentityRef(v);
     if (ref === null) return yield* new ValidationError({ reason: "assignee_pubkey" });
     if (!(yield* isRosterMember("boardMemberCache", board.id, ref))) {
