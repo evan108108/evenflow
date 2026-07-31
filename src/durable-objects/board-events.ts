@@ -57,6 +57,22 @@ export interface BoardEvent {
    * encrypted path falls back to issue_id → comment_id → board_id.
    */
   readonly entity_id?: string;
+  /**
+   * The `statusChangeCache` row this event appended, when it appended one
+   * (EFB-33). It is what the 30553 KanbanStatusChange keys on — the row id is
+   * that event's `d` tag — so without it there is nothing to sign against,
+   * which is exactly why EFB-24 shipped four of five kinds.
+   *
+   * ABSENT IS A NORMAL STATE, not a missing field. A transition that changes
+   * only the column IDENTITY and not the status NAME writes no audit row: the
+   * issue event still carries the new state, there is simply no status change
+   * to describe. Treat absence as "nothing to publish", never as a fault.
+   *
+   * Top level rather than inside `payload` for the same reason as sprint_id:
+   * a private board's payload arrives encrypted, and the envelope is all an
+   * un-granted client can read.
+   */
+  readonly status_change_id?: string;
   readonly at_ms: number;
   readonly payload: unknown;
 }

@@ -540,6 +540,16 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { substrate_event_id });
           return;
         }
+        // EFB-33: the 30553 stamps here. Absent this the mock throws
+        // "unexpected execute", which is how the missing handler announced
+        // itself — a public-board transition 500'd while the private-board
+        // one passed, because only the public path reaches a stamp.
+        if (sql.startsWith("UPDATE statusChangeCache SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = statusChanges.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { substrate_event_id });
+          return;
+        }
         if (sql.startsWith("UPDATE commentCache SET substrate_event_id = ?")) {
           const [substrate_event_id, id] = params;
           const row = comments.find((r) => r["id"] === id);
