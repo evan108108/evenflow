@@ -93,3 +93,67 @@ export const insertStatusChange = (w: StatusChangeWrite): Effect.Effect<string, 
     );
     return statusChangeId;
   }) as Effect.Effect<string, never, Db>;
+
+/** Columns in the INSERT above. The batch writer sizes its chunks off this. */
+const STATUS_CHANGE_COLUMNS = 10;
+
+/**
+ * D1 accepts at most 100 bound parameters per statement — verified against the
+ * binding (101 fails with "too many SQL variables") and matching Cloudflare's
+ * documented limit.
+ */
+const MAX_BOUND_PARAMS = 100;
+
+const ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMS / STATUS_CHANGE_COLUMNS);
+
+/**
+ * Write MANY status-change rows, batched (EFB-15).
+ *
+ * Lives here rather than in the CSV import route, and that placement is the
+ * whole point of this module: a bulk import writing its own INSERT would be a
+ * second writer of `statusChangeCache` — precisely the structure this file was
+ * created to delete, and the reason EFB-33's fix reached only half the codebase.
+ * A caller with a thousand rows still gets one writer.
+ *
+ * It takes the same `StatusChangeWrite` struct for the same reason the singular
+ * form does: four adjacent `string | null` fields transpose silently, and a
+ * from/to swap would write a backwards audit row. Batching changes how many
+ * rows go per statement, never how a row is described.
+ *
+ * RETURNS NOTHING, unlike `insertStatusChange`, and that difference is
+ * deliberate rather than an oversight of the id-is-load-bearing rule above. The
+ * ids matter because callers thread them onto a board event as
+ * `status_change_id` for the 30553 publish. An import publishes NO per-issue
+ * substrate events at all — see the guard in lib/kanban/publish.ts — so there is
+ * nothing to thread them onto. Returning ids no caller can use would imply a
+ * publish path that does not exist.
+ */
+export const insertStatusChanges = (
+  writes: ReadonlyArray<StatusChangeWrite>,
+): Effect.Effect<void, never, Db> =>
+  Effect.gen(function* () {
+    if (writes.length === 0) return;
+    const db = yield* Db;
+    for (let offset = 0; offset < writes.length; offset += ROWS_PER_STATEMENT) {
+      const part = writes.slice(offset, offset + ROWS_PER_STATEMENT);
+      const tuple = `(${Array.from({ length: STATUS_CHANGE_COLUMNS }, () => "?").join(",")})`;
+      yield* db.execute(
+        `INSERT INTO statusChangeCache
+           (id, issue_id, board_id, actor_pubkey, from_status, to_status,
+            from_container, to_container, container_at_completion, occurred_at_ms)
+         VALUES ${part.map(() => tuple).join(",")}`,
+        part.flatMap((w) => [
+          crypto.randomUUID(),
+          w.issue_id,
+          w.board_id,
+          w.actor_pubkey,
+          w.from_status,
+          w.to_status,
+          w.from_container,
+          w.to_container,
+          w.container_at_completion,
+          w.occurred_at_ms,
+        ]),
+      );
+    }
+  }) as Effect.Effect<void, never, Db>;

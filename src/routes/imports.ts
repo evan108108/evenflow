@@ -30,7 +30,10 @@
 //
 //   * short ids are claimed as ONE contiguous block, in one statement
 //   * issues INSERT multi-row, chunked to stay under 100 params
-//   * status changes likewise
+//   * status changes likewise, through `insertStatusChanges` — the batch form
+//     lives in EFB-56's lib/status-change.ts rather than here, because that
+//     module is THE writer of statusChangeCache and a bulk path with its own
+//     INSERT would re-create the second writer EFB-56 deleted
 //   * the duplicate pre-check reads in chunked IN() batches
 //
 // which puts a 1000-row import at roughly 360 statements rather than 3000.
@@ -74,6 +77,7 @@ import {
 import { DEFAULT_ISSUE_TYPE, enabledColumns, type Column } from "../columns";
 import { derivePrefix, uniquePrefix } from "../slug";
 import { POSITION_STEP } from "./issues";
+import { insertStatusChanges } from "../lib/status-change";
 import type { BoardShape } from "../shapes";
 
 /** D1's hard ceiling on bound parameters in one statement. See the header. */
@@ -81,11 +85,8 @@ const MAX_BOUND_PARAMS = 100;
 
 /** Columns in the issueCache INSERT below — keep in lockstep with it. */
 const ISSUE_INSERT_COLUMNS = 21;
-/** Columns in the statusChangeCache INSERT below — keep in lockstep with it. */
-const STATUS_CHANGE_INSERT_COLUMNS = 10;
 
 const ISSUE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMS / ISSUE_INSERT_COLUMNS);
-const STATUS_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMS / STATUS_CHANGE_INSERT_COLUMNS);
 /** One parameter is spent on board_id, so the IN() list gets the rest. */
 const DEDUP_LOOKUP_CHUNK = MAX_BOUND_PARAMS - 1;
 
@@ -480,48 +481,39 @@ export const makeImportsRouter = (layerFor?: LayerFor) => {
             }
           }
 
-          // Status-change rows for everything that landed. See the header for
-          // why these are written in full while board events are not.
-          const statusParams = (p: (typeof numbered)[number]) => [
-            crypto.randomUUID(),
-            p.id,
-            board.id,
-            caller,
-            null, // from_status — a created issue came from nowhere
-            p.column.name,
-            null, // from_container
-            p.container,
-            p.completedAtMs === null ? null : p.container,
-            p.createdAtMs,
-          ];
-          for (const part of chunk(landed, STATUS_ROWS_PER_STATEMENT)) {
-            yield* db
-              .execute(
-                `INSERT INTO statusChangeCache
-                   (id, issue_id, board_id, actor_pubkey, from_status, to_status,
-                    from_container, to_container, container_at_completion, occurred_at_ms)
-                 VALUES ${Array.from({ length: part.length }, () => `(${Array.from({ length: STATUS_CHANGE_INSERT_COLUMNS }, () => "?").join(",")})`).join(",")}`,
-                part.flatMap(statusParams),
-              )
-              // Audit rows must never turn a committed import into an error.
-              // The issues are already in; losing a tide fact is the cheaper
-              // failure, and it is logged rather than swallowed silently.
-              .pipe(
-                Effect.catchAll((e) =>
-                  Effect.sync(() => {
-                    console.log(
-                      JSON.stringify({
-                        warn: "import-status-change-failed",
-                        import_id: importId,
-                        board_id: board.id,
-                        rows: part.length,
-                        error: String(e),
-                      }),
-                    );
+          // Status-change rows for everything that landed, through EFB-56's
+          // single writer. See this file's header for why they are written in
+          // full while per-issue board events are not.
+          yield* insertStatusChanges(
+            landed.map((p) => ({
+              issue_id: p.id,
+              board_id: board.id,
+              actor_pubkey: caller,
+              from_status: null, // a created issue came from nowhere
+              to_status: p.column.name,
+              from_container: null,
+              to_container: p.container,
+              container_at_completion: p.completedAtMs === null ? null : p.container,
+              occurred_at_ms: p.createdAtMs,
+            })),
+          ).pipe(
+            // Audit rows must never turn a committed import into an error. The
+            // issues are already in; losing a tide fact is the cheaper failure,
+            // and it is logged rather than swallowed silently.
+            Effect.catchAllDefect((e) =>
+              Effect.sync(() => {
+                console.log(
+                  JSON.stringify({
+                    warn: "import-status-change-failed",
+                    import_id: importId,
+                    board_id: board.id,
+                    rows: landed.length,
+                    error: String(e),
                   }),
-                ),
-              );
-          }
+                );
+              }),
+            ),
+          );
 
           created = landed.map((p) => ({
             row: p.row,
@@ -689,5 +681,5 @@ export const makeImportsRouter = (layerFor?: LayerFor) => {
 };
 
 /** Exported for tests — the resolution rules that need no database. */
-export { resolveStatusColumn, chunk, ISSUE_ROWS_PER_STATEMENT, STATUS_ROWS_PER_STATEMENT };
+export { resolveStatusColumn, chunk, ISSUE_ROWS_PER_STATEMENT };
 export type { PlannedIssue, BoardShape };
