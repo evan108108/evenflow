@@ -21,6 +21,7 @@ import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
 import {
   IdentityRefFromInput,
   ImmutableField,
+  NonEmptyString,
   parseRouteBody,
   requireAnyOf,
 } from "../lib/route-body";
@@ -279,6 +280,27 @@ const PatchIssueBody = Schema.Struct({
   position: ImmutableField,
   sprint_id: ImmutableField,
 }).pipe(Schema.filter(requireAnyOf(PATCHABLE)));
+
+/**
+ * POST /issues/:id/duplicate-of.
+ *
+ * Shape only, and there is deliberately very little of it: `null` clears the
+ * pointer, a non-empty string names the target. Everything that makes this
+ * endpoint interesting — does the target exist, is it on THIS board, would the
+ * pointer close a cycle — needs the database and the resolved issue, so it
+ * stays in the handler as named authorization steps answering
+ * `duplicate-target-not-found`, `duplicate-target-other-board`, and
+ * `circular_duplicate`.
+ *
+ * Required, not optional: a missing key already answered
+ * `duplicate_of_issue_id` before the migration (`body["…"]` was `undefined`,
+ * which is neither `null` nor a string), and it still does. `null` and absent
+ * are different requests here — one unmarks, the other is malformed — so
+ * collapsing them into `Schema.optional` would accept a body that says nothing.
+ */
+const PostDuplicateOfBody = Schema.Struct({
+  duplicate_of_issue_id: Schema.NullOr(NonEmptyString),
+});
 
 /**
  * The half of the old `validateAssignee` that a schema cannot do.
@@ -1110,17 +1132,16 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
-      const raw = body["duplicate_of_issue_id"];
-      if (raw !== null && typeof raw !== "string") {
-        return yield* new ValidationError({ reason: "duplicate_of_issue_id" });
-      }
+      // EFB-60: the hand-rolled `typeof raw !== "string"` guard is now
+      // PostDuplicateOfBody, and rejecting a key we don't recognize comes free
+      // with it. Both still answer `duplicate_of_issue_id` for a bad value.
+      const { duplicate_of_issue_id: targetRef } = yield* parseRouteBody(c, PostDuplicateOfBody);
       const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
       const db = yield* Db;
       const audit = yield* AuditLog;
 
       // ── un-mark ──────────────────────────────────────────────────────────
-      if (raw === null) {
+      if (targetRef === null) {
         if (issue.duplicate_of_issue_id === null) return { issue };
         const now = yield* Clock.currentTimeMillis;
         yield* db.execute(
@@ -1154,10 +1175,10 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       // THIS board anyway. Short ids are per-board vocabulary (see
       // /move-to-board, which mints a fresh one), so a cross-board pointer
       // could not render as "→ EFB-7" without lying about which board's #7.
-      const targetShortId = asShortId(raw);
+      const targetShortId = asShortId(targetRef);
       const targetRow =
         targetShortId === null
-          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [raw])
+          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [targetRef])
           : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [targetShortId]);
       if (targetRow === null) {
         return yield* new ValidationError({ reason: "duplicate-target-not-found" });
