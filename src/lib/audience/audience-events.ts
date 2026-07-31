@@ -13,6 +13,7 @@
 // `actions/util.ts`'s `buildSignedRumor` since it's tightly coupled to
 // gift-wrap + room context.
 
+import type { Provenance } from "../route-body";
 import { blake3ContentTag } from "./blake3-tag";
 
 export const FA_CONTEXT_V0 = "https://4a4.ai/ns/v0";
@@ -473,7 +474,19 @@ export interface BuildKanbanCommentInput {
   commentId: string;
   issueId: string;
   boardId: string;
-  authorPubkey: string;
+  /**
+   * WHO WROTE THE COMMENT (EFB-58) — the second and last actor slot among these
+   * builders. `buildKanbanBoard` and `buildKanbanSprint` carry no pubkey at all,
+   * and `buildKanbanIssue.assigneePubkey` is a REFERENCE (the owner of the work)
+   * rather than an actor, so migrating it would widen the type without adding
+   * safety. Two is the whole set, not a partial migration.
+   *
+   * Unlike a status change, authorship is a property of the row and not of the
+   * request doing the publishing: a comment republished by a backfill still has
+   * its original author, so the `source` here describes where THIS build got the
+   * identity, which for a stored comment is `user.explicit`.
+   */
+  author: Provenance;
   body: string;
   bodyFormat: string;
   inReplyTo?: string | null;
@@ -486,7 +499,7 @@ export function buildKanbanComment(input: BuildKanbanCommentInput): EventTemplat
     "@context": FA_CONTEXT_V0,
     "@type": "KanbanComment",
     issue_id: input.issueId,
-    author_pubkey: input.authorPubkey,
+    author_pubkey: input.author.pubkey,
     body: input.body,
     body_format: input.bodyFormat,
     in_reply_to: input.inReplyTo ?? null,
@@ -519,7 +532,22 @@ export interface BuildKanbanStatusChangeInput {
   statusChangeId: string;
   issueId: string;
   boardId: string;
-  actorPubkey: string;
+  /**
+   * WHO MOVED THE CARD, as a Provenance rather than a bare pubkey (EFB-58).
+   *
+   * This is the slot EFB-33 nearly got wrong: the event carries no actor of its
+   * own, the first draft reached for `issue.assignee_pubkey` — a DIFFERENT
+   * person, the owner of the work rather than the mover of the card — and
+   * TypeScript had nothing to say because both are `string`. All 676 tests
+   * passed. It would have shipped false attribution on a signed public event.
+   *
+   * `Provenance` closes that by making the semantic role a required field: a
+   * caller must write `source` to construct one, and `{source: "route.caller"}`
+   * next to an assignee lookup is a visible contradiction rather than an
+   * invisible one. Only `.pubkey` reaches the wire, so the event is
+   * byte-identical to the pre-EFB-58 one.
+   */
+  actor: Provenance;
   fromStatus?: string | null;
   toStatus?: string | null;
   fromContainer?: string | null;
@@ -533,7 +561,7 @@ export function buildKanbanStatusChange(input: BuildKanbanStatusChangeInput): Ev
     "@context": FA_CONTEXT_V0,
     "@type": "KanbanStatusChange",
     issue_id: input.issueId,
-    actor_pubkey: input.actorPubkey,
+    actor_pubkey: input.actor.pubkey,
     from_status: input.fromStatus ?? null,
     to_status: input.toStatus ?? null,
     from_container: input.fromContainer ?? null,

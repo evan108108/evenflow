@@ -202,7 +202,7 @@ describe("buildKanbanComment", () => {
     commentId: "comment-1",
     issueId: ISSUE,
     boardId: BOARD,
-    authorPubkey: "049b628c",
+    author: { source: "user.explicit", pubkey: "049b628c" },
     body: "a comment",
     bodyFormat: "markdown",
     inReplyTo: null,
@@ -221,6 +221,23 @@ describe("buildKanbanComment", () => {
       deleted: false,
     });
   });
+
+  // EFB-58, same guard as the 30553's. The author slot is the other place a
+  // plausible-looking pubkey from the wrong person could be substituted.
+  it("rejects a bare-string author at compile time", () => {
+    const issue = { assignee_pubkey: "049b-somebody-else" };
+    const bare = () =>
+      buildKanbanComment({
+        commentId: "comment-1",
+        issueId: ISSUE,
+        boardId: BOARD,
+        // @ts-expect-error — a bare pubkey string is not a Provenance.
+        author: issue.assignee_pubkey,
+        body: "a comment",
+        bodyFormat: "markdown",
+      });
+    expect(bare).toBeTypeOf("function");
+  });
 });
 
 describe("buildKanbanStatusChange", () => {
@@ -228,7 +245,7 @@ describe("buildKanbanStatusChange", () => {
     statusChangeId: "sc-1",
     issueId: ISSUE,
     boardId: BOARD,
-    actorPubkey: "049b628c",
+    actor: { source: "route.caller", pubkey: "049b628c" },
     fromStatus: "Todo",
     toStatus: "In Progress",
     fromContainer: "backlog",
@@ -251,6 +268,71 @@ describe("buildKanbanStatusChange", () => {
       to_status: "In Progress",
       occurred_at_ms: 1_760_000_000_000,
     });
+  });
+
+  // EFB-58. Provenance is a compile-time device: only `.pubkey` reaches the
+  // wire, so a 30553 built through it must be byte-identical to the one the
+  // pre-EFB-58 builder emitted. If this drifts, every golden event the gateway
+  // pins cross-repo drifts with it.
+  it("renders actor_pubkey from .pubkey and adds nothing to the wire", () => {
+    expect(JSON.parse(ev.content).actor_pubkey).toBe("049b628c");
+    expect(ev.tags.some((t) => t[0]?.startsWith("fa:provenance"))).toBe(false);
+    expect(ev.tags.map((t) => t[0])).toEqual([
+      "d",
+      "fa:context",
+      "alt",
+      "blake3",
+      "fa:board",
+      "fa:issue",
+    ]);
+  });
+
+  // The regression guard for the near-miss itself.
+  //
+  // These assert a COMPILE error, not a runtime one — `@ts-expect-error` fails
+  // the build if the line below it type-checks, so each one is a live claim
+  // that the substitution EFB-33 nearly shipped is still impossible. They are
+  // deliberately never executed: the type check IS the assertion, and calling
+  // them would only prove the runtime tolerates garbage, which is the property
+  // we do not care about.
+  it("rejects the EFB-33 substitution at compile time", () => {
+    const issue = { assignee_pubkey: "049b-somebody-else" };
+
+    const bareString = () =>
+      buildKanbanStatusChange({
+        statusChangeId: "sc-1",
+        issueId: ISSUE,
+        boardId: BOARD,
+        // @ts-expect-error — a bare pubkey string is not a Provenance. This is
+        // the exact line EFB-33's first draft wrote, and it compiled.
+        actor: issue.assignee_pubkey,
+        occurredAtMs: 1,
+      });
+
+    const missingSource = () =>
+      buildKanbanStatusChange({
+        statusChangeId: "sc-1",
+        issueId: ISSUE,
+        boardId: BOARD,
+        // @ts-expect-error — a pubkey without a `source` is not a Provenance.
+        // Naming the semantic role is the requirement, not carrying a string.
+        actor: { pubkey: issue.assignee_pubkey },
+        occurredAtMs: 1,
+      });
+
+    const oldFieldName = () =>
+      buildKanbanStatusChange({
+        statusChangeId: "sc-1",
+        issueId: ISSUE,
+        boardId: BOARD,
+        // @ts-expect-error — `actorPubkey` is gone. The rename is what turns
+        // an un-migrated callsite into a MISSING-FIELD error rather than a
+        // silently-still-compiling one.
+        actorPubkey: issue.assignee_pubkey,
+        occurredAtMs: 1,
+      });
+
+    expect([bareString, missingSource, oldFieldName]).toHaveLength(3);
   });
 });
 

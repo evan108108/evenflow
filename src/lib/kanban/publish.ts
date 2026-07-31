@@ -20,6 +20,7 @@ import { Db, type DbError } from "../../effects";
 import type { BoardEvent } from "../../durable-objects/BoardDO";
 import type { BoardShape } from "../../shapes";
 import { __signEvent } from "../audience/nip17";
+import { ProvenanceFromStoredActor, ProvenanceFromSystem, type Provenance } from "../route-body";
 import {
   buildKanbanBoard,
   buildKanbanComment,
@@ -141,11 +142,19 @@ export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate
     if (commentId === undefined || issueId === undefined) return null;
     // comment.deleted carries { comment_id, issue_id } only.
     const comment = payload["comment"] as Record<string, unknown> | undefined;
+    // Authorship is read off the stored comment, not off whoever triggered this
+    // publish — a tombstone or a backfill republishes someone else's comment and
+    // must keep attributing it to them (EFB-58). A deleted comment carries no
+    // row, hence no author to attribute.
+    const author = comment?.["author_pubkey"];
     return buildKanbanComment({
       commentId,
       issueId,
       boardId: board.id,
-      authorPubkey: (comment?.["author_pubkey"] as string) ?? "",
+      author:
+        typeof author === "string" && author !== ""
+          ? ProvenanceFromStoredActor(author)
+          : ProvenanceFromSystem(),
       body: (comment?.["body"] as string) ?? "",
       bodyFormat: (comment?.["body_format"] as string) ?? "markdown",
       inReplyTo: (comment?.["in_reply_to"] as string | null) ?? null,
@@ -238,15 +247,32 @@ export const templatesFor = (
     const issueId = event.issue_id;
     if (statusChangeId !== undefined && issueId !== undefined) {
       const payload = (event.payload ?? {}) as Record<string, unknown>;
+      // The actor is who performed the transition — NOT the issue's assignee,
+      // who is usually somebody else. It is carried explicitly on the payload
+      // because nothing in the issue row records it.
+      //
+      // NOT `route.caller`, though the route did originally record this pubkey
+      // from its JWT caller. This publisher runs off the board-event queue after
+      // the D1 row is committed; there is no live caller in scope here, and
+      // `source` names what THIS build knows about the pubkey rather than the
+      // pipeline it once travelled. Asserting a caller we cannot see would be a
+      // plausible-but-false attribution — the exact failure EFB-58 exists to
+      // stop, re-committed in the fix for it.
+      //
+      // An absent actor means none was recorded, which is the empty
+      // `audit.system` case. Both render the pubkey the pre-EFB-58 builder
+      // emitted, so the wire event is unchanged either way.
+      const recordedActor = payload["actor_pubkey"];
+      const actor: Provenance =
+        typeof recordedActor === "string" && recordedActor !== ""
+          ? ProvenanceFromStoredActor(recordedActor)
+          : ProvenanceFromSystem();
       items.push({
         template: buildKanbanStatusChange({
           statusChangeId,
           issueId,
           boardId: board.id,
-          // The actor is who performed the transition — NOT the issue's
-          // assignee, who is usually somebody else. It is carried explicitly
-          // on the payload because nothing in the issue row records it.
-          actorPubkey: (payload["actor_pubkey"] as string | null) ?? "",
+          actor,
           fromStatus: (payload["from_status"] as string | null) ?? null,
           toStatus: (payload["to_status"] as string | null) ?? null,
           fromContainer: (payload["from_container"] as string | null) ?? null,

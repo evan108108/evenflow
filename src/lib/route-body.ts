@@ -14,6 +14,8 @@
 
 import { Effect, ParseResult, Schema } from "effect";
 import type { Context } from "hono";
+import { callerPubkey } from "../authz";
+import type { Claims } from "../effects";
 import type { AppHonoEnv } from "../http";
 import { ValidationError } from "../routes/errors";
 import { canonicalizeIdentityRef } from "./identity";
@@ -175,6 +177,58 @@ export const Provenance = Schema.Struct({
   pubkey: IdentityRefFromInput,
 }).annotations({ identifier: "Provenance" });
 export type Provenance = Schema.Schema.Type<typeof Provenance>;
+
+/**
+ * This request's JWT-authenticated caller is the actor.
+ *
+ * Takes `Claims` rather than a pubkey string on purpose: the only way to
+ * construct a `route.caller` provenance is to hold the claims, so there is no
+ * spelling of this call that quietly accepts some OTHER person's pubkey. That
+ * is the property EFB-33 needed and `string` could not provide.
+ *
+ * Derivation goes through `callerPubkey` rather than re-forming
+ * `provider:oauth_id` here — one definition of what a caller's pubkey IS, so
+ * the KMS backfill that replaces it has one place to change.
+ */
+export const ProvenanceFromCaller = (claims: Claims): Provenance => ({
+  source: "route.caller",
+  pubkey: callerPubkey(claims),
+});
+
+/**
+ * No human actor — the server generated this event.
+ *
+ * Tombstones and backfills have no one to attribute, and the honest wire value
+ * for "nobody" is the empty pubkey these builders already emitted when the
+ * envelope carried no actor. Taking no argument is the point: a system event
+ * that could be handed a pubkey would eventually be handed the wrong one.
+ */
+export const ProvenanceFromSystem = (): Provenance => ({
+  source: "audit.system",
+  pubkey: "",
+});
+
+/**
+ * The server is re-emitting an identity it read off a stored row.
+ *
+ * Also `audit.system` — no live human is calling — but carrying the stored
+ * pubkey rather than the empty one, because the fact being re-attested is
+ * someone else's. A backfill republishing a year-old comment must still name
+ * its original author.
+ *
+ * This is the honest constructor for a publisher: it takes a bare string, which
+ * looks like the very thing EFB-58 set out to delete, and the distinction is
+ * that the STRING is not the safety here — the NAME is. A caller writing
+ * `ProvenanceFromStoredActor(issue.assignee_pubkey)` has written something that
+ * reads false on the page, where `actorPubkey: issue.assignee_pubkey` read fine.
+ * Use it only where the value genuinely comes from a stored row; where claims
+ * are in scope, `ProvenanceFromCaller` is strictly stronger and takes no string
+ * at all.
+ */
+export const ProvenanceFromStoredActor = (pubkey: string): Provenance => ({
+  source: "audit.system",
+  pubkey,
+});
 
 /** A v4 UUID as this codebase mints them (`crypto.randomUUID`). */
 export const Uuid = Schema.String.pipe(
