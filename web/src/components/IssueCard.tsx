@@ -59,14 +59,26 @@ const CardMeta = (props: { issue: Issue }) => (
         );
       }}
     </Show>
+    {/* Estimate and assignee always occupy their slot, filled or not (EFB-37),
+        so cards in a column keep one shape and the eye can scan height. The
+        placeholders are aria-hidden: "no estimate" is already conveyed by the
+        absence of a value, and reading out an em dash adds noise, not
+        information. Priority and labels are NOT padded this way — they are
+        genuinely optional attributes rather than fields every issue has. */}
     <div class="chips">
-      <Show when={props.issue.estimate !== null}>
+      <Show
+        when={props.issue.estimate !== null}
+        fallback={<span class="chip estimate figure is-placeholder" aria-hidden="true">—</span>}
+      >
         <span class="chip estimate figure">{props.issue.estimate}</span>
       </Show>
       <Show when={props.issue.priority !== null}>
         <span class="chip priority">P{props.issue.priority}</span>
       </Show>
-      <Show when={props.issue.assignee_pubkey !== null}>
+      <Show
+        when={props.issue.assignee_pubkey !== null}
+        fallback={<span class="assignee-avatar is-placeholder" aria-hidden="true" />}
+      >
         <AssigneeAvatar pubkey={props.issue.assignee_pubkey as string} />
       </Show>
       <For each={props.issue.labels}>{(label) => <span class="chip">{label}</span>}</For>

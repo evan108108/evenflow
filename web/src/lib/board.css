@@ -495,6 +495,38 @@ select:disabled {
   border-color: rgba(23, 35, 59, 0.35);
 }
 
+/* ── EFB-37: empty-field placeholders ──
+   A card keeps the same shape whether or not estimate and assignee are set,
+   so a column scans at a steady vertical rhythm instead of jittering card to
+   card. Both placeholders say "this field exists and is empty" — they are
+   deliberately NOT interactive and carry no hover, cursor or focus
+   affordance, because clicking them does nothing. */
+.chip.is-placeholder {
+  color: var(--color-ink-placeholder);
+  border-color: var(--color-ink-faint);
+}
+
+/* .chip.estimate sets color: var(--color-ink); this needs the extra class to
+   outrank it. */
+.chip.estimate.is-placeholder {
+  color: var(--color-ink-placeholder);
+}
+
+/* Same footprint as AssigneeAvatar's inline 20px circle, dashed to read as an
+   absent slot rather than an unloaded avatar. Sizing is duplicated here
+   because that component styles itself inline and inline wins over classes —
+   keep the two in step. */
+.assignee-avatar.is-placeholder {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px dashed var(--color-ink-placeholder);
+  background: transparent;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 /* ── list sections (backlog / icebox) ── */
 .list-section {
   border-radius: var(--radius-chamfer);
@@ -1509,6 +1541,22 @@ select:disabled {
 
 .issue-cover .cover-overlay .chip {
   border-color: rgba(245, 242, 236, 0.5);
+}
+
+/* EFB-37: placeholders inside the cover overlay. This is not decoration — the
+   `.issue-cover .cover-overlay .chip` rule above is three classes and would
+   outrank the two-class `.chip.is-placeholder`, painting placeholders at FULL
+   cream, i.e. exactly as loud as real data. Restate them here at four classes
+   so "quiet" survives the overlay, muted against cream rather than ink since
+   that is what the surrounding text is. */
+.issue-cover .cover-overlay .chip.is-placeholder,
+.issue-cover .cover-overlay .chip.estimate.is-placeholder {
+  color: var(--color-cream-placeholder);
+  border-color: rgba(245, 242, 236, 0.28);
+}
+
+.issue-cover .cover-overlay .assignee-avatar.is-placeholder {
+  border-color: var(--color-cream-placeholder);
 }
 
 .issue-cover .cover-overlay .card-ref-row {

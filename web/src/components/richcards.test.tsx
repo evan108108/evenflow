@@ -214,6 +214,65 @@ describe("IssueCard covers", () => {
   });
 });
 
+// EFB-37 — the estimate and assignee slots are occupied whether or not the
+// fields are set, so a column of cards keeps one shape and scans evenly.
+describe("IssueCard empty-field placeholders", () => {
+  it("fills both slots when estimate and assignee are null", () => {
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={issue} dnd={clickDnd} onOpen={vi.fn()} />
+    ));
+    const chips = container.querySelector(".chips")!;
+    const estimate = chips.querySelector(".chip.estimate.is-placeholder")!;
+    expect(estimate).not.toBeNull();
+    expect(estimate.textContent).toBe("—");
+    expect(chips.querySelector(".assignee-avatar.is-placeholder")).not.toBeNull();
+    cleanup();
+  });
+
+  it("shows real values instead of placeholders once the fields are set", () => {
+    const filled: Issue = { ...issue, estimate: 5, assignee_pubkey: "npub-abc" };
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={filled} dnd={clickDnd} onOpen={vi.fn()} />
+    ));
+    const chips = container.querySelector(".chips")!;
+    expect(chips.querySelector(".is-placeholder")).toBeNull();
+    expect(chips.querySelector(".chip.estimate")!.textContent).toBe("5");
+    expect(chips.querySelector(".assignee-avatar")).not.toBeNull();
+    cleanup();
+  });
+
+  // The ticket's explicit non-goal: these signal "empty", they are not
+  // controls. Nothing should invite a click or announce an em dash.
+  it("keeps placeholders inert and out of the accessibility tree", () => {
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={issue} dnd={clickDnd} onOpen={vi.fn()} />
+    ));
+    for (const sel of [".chip.estimate.is-placeholder", ".assignee-avatar.is-placeholder"]) {
+      const el = container.querySelector(sel)!;
+      expect(el.getAttribute("aria-hidden")).toBe("true");
+      expect(el.tagName).toBe("SPAN");
+      expect(el.hasAttribute("href")).toBe(false);
+      expect(el.hasAttribute("tabindex")).toBe(false);
+      expect(el.getAttribute("role")).toBeNull();
+    }
+    cleanup();
+  });
+
+  // CardMeta is shared by the plain, thumbnail and cover-overlay paths, so
+  // one change covers every surface — this pins the overlay case, which is
+  // the one with its own colour rules.
+  it("carries the placeholders into the cover overlay too", () => {
+    const covered: Issue = { ...issue, cover_url: "https://blossom.test/cover" };
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={covered} dnd={clickDnd} onOpen={vi.fn()} />
+    ));
+    const overlay = container.querySelector(".cover-overlay")!;
+    expect(overlay.querySelector(".chip.estimate.is-placeholder")).not.toBeNull();
+    expect(overlay.querySelector(".assignee-avatar.is-placeholder")).not.toBeNull();
+    cleanup();
+  });
+});
+
 describe("AttachmentsPanel", () => {
   it("editable mode: star sets cover, delete deletes, upload button present", () => {
     const onSetCover = vi.fn();
