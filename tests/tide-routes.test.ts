@@ -9,7 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Effect, Layer } from "effect";
 import { Db, DbError, type DbService } from "../src/effects";
 import type { IssueShape, SprintShape } from "../src/shapes";
-import { bearer, createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
+import {
+  bearer,
+  createBoard,
+  createIssue,
+  createPublicBoard,
+  jsonReq,
+  makeHarness,
+  type Harness,
+} from "./harness";
 import { DAY_MS, type TideDay, type TideDirection } from "../src/lib/tide/compute";
 import { rollForwardClosedDay } from "../src/lib/tide/snapshot";
 
@@ -184,7 +192,9 @@ describe("GET /api/v0/boards/:slug/tide — kanban-only", () => {
 describe("tide roll-forward", () => {
   it("closes out yesterday on the first read of a new day, once", async () => {
     const h = makeHarness();
-    await createBoard(h);
+    // Explicitly public — the substrate_event_id assertion below only holds
+    // for a board that may publish, and createBoard makes a PRIVATE one.
+    await createPublicBoard(h);
     const sprint = await createSprint(h);
     const a = await createIssue(h, { title: "A" });
     await addIssue(h, sprint.id, a.id);

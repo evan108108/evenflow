@@ -138,10 +138,28 @@ export const jsonReq = (method: string, body?: unknown, token?: string) => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 
-export const createBoard = async (h: Harness, slug = "kb") => {
-  const res = await h.app.request("/api/v0/boards", jsonReq("POST", { slug, title: "Board" }), {});
+export const createBoard = async (
+  h: Harness,
+  slug = "kb",
+  overrides?: Record<string, unknown>,
+) => {
+  const res = await h.app.request(
+    "/api/v0/boards",
+    jsonReq("POST", { slug, title: "Board", ...overrides }),
+    {},
+  );
   expect(res.status).toBe(201);
 };
+
+/**
+ * A board that actually publishes to the substrate. Boards are born PRIVATE
+ * with no audience (boards.ts), and that state is not "public" — it just
+ * happens to have `encryption_active === false`. Any test asserting a
+ * plaintext publish must opt in explicitly, or it is testing a private board
+ * and proving the opposite of what its name says.
+ */
+export const createPublicBoard = (h: Harness, slug = "kb") =>
+  createBoard(h, slug, { visibility: "public" });
 
 export const createIssue = async (
   h: Harness,

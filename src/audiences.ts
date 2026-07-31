@@ -38,6 +38,7 @@ import { blake3ContentTag } from "./lib/audience/blake3-tag";
 import { openScalarFromServer, type ServerAudienceKeys } from "./lib/audience-store";
 import { realPubkeyOfMember } from "./nostr";
 import type { BoardEvent } from "./durable-objects/BoardDO";
+import { publishPlaintextEvent, publishesPlaintext } from "./lib/kanban/publish";
 
 const bytesToHexLocal = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -579,5 +580,37 @@ export const emitSecureBoardEvent = (
         ? yield* secureBoardEvent(board, event)
         : { event, substrate_event_id: null };
     yield* emitBoardEvent(board_id, secured.event);
+
+    // EFB-24: the public counterpart of the wrap above. Gated on
+    // `publishesPlaintext`, NOT on `!encryption_active` — see that function
+    // for why the difference matters (a board can be private with no
+    // audience, and that state's negation is not "public").
+    //
+    // Forked as a daemon so gateway latency never lands in the request path:
+    // callers get their response as soon as D1 and SSE are done. The trade is
+    // that a Worker isolate torn down early can kill the fiber mid-flight,
+    // which costs a substrate event and leaves substrate_event_id NULL —
+    // already the documented meaning of that column. Reaching ctx.waitUntil
+    // from here would mean threading the Hono ExecutionContext through every
+    // one of the 22 call sites, for a best-effort publish.
+    if (board !== null && publishesPlaintext(board)) {
+      yield* Effect.forkDaemon(
+        publishPlaintextEvent(board, event).pipe(
+          Effect.catchAll((e) =>
+            Effect.sync(() => {
+              console.log(
+                JSON.stringify({
+                  warn: "kanban-publish-failed",
+                  board_id,
+                  kind: event.kind,
+                  error: String(e),
+                }),
+              );
+              return null;
+            }),
+          ),
+        ),
+      );
+    }
     return secured.substrate_event_id;
   });
