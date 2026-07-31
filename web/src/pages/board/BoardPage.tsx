@@ -29,10 +29,11 @@ import {
   type BoardFilters,
 } from "../../lib/boardFilters";
 import { readFilters, writeFilters } from "../../lib/filterPersistence";
+import { readDoneWindowLifted, writeDoneWindowLifted } from "../../lib/doneWindowPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
 import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
 import { issuesInColumn } from "../../lib/order";
-import { sprintCountdown } from "../../lib/sprints";
+import { activeSprintFilterId, sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
@@ -45,6 +46,10 @@ import { IceboxView } from "./IceboxView";
 
 const LOADING_LINES = ["Finding the rhythm…", "Catching the current…", "Following the thread…"];
 const BUTTERFLY_FLIGHT_MS = 1_700;
+const DAY_MS = 86_400_000;
+/** Mirrors the `done_window_days` column default (migration 0018) for boards
+ *  cached before it landed, and matches the server-side tide fallback. */
+const FALLBACK_DONE_WINDOW_DAYS = 14;
 
 export const BoardPage = () => {
   // Two addressing modes: canonical /@{handle}/{board_slug} (org-scoped API)
@@ -99,6 +104,28 @@ export const BoardPage = () => {
     const boardId = store.board()?.id;
     const viewer = callerPubkey();
     setFilters(boardId === undefined ? EMPTY_FILTERS : readFilters(boardId, viewer));
+  });
+  // EFB-31 — the Done column is windowed to the board's `done_window_days` in
+  // kanban-mode (KanbanView.inColumn), which is what keeps it from growing
+  // unbounded. This lifts that window for the current viewer. Its own storage
+  // key rather than a BoardFilters member: it widens where filters narrow, and
+  // filterPersistence would delete a lift-only state as "empty". See
+  // lib/doneWindowPersistence.ts.
+  const [doneWindowLifted, setDoneWindowLifted] = createSignal(false);
+  // Persist on mutation, not via an effect over the signal — same reasoning as
+  // applyFilters: an effect would also fire when the key changes on sign-in/out
+  // and write the outgoing viewer's state into the incoming viewer's slot.
+  const toggleDoneWindow = () =>
+    setDoneWindowLifted((lifted) => {
+      const next = !lifted;
+      const boardId = store.board()?.id;
+      if (boardId !== undefined) writeDoneWindowLifted(boardId, callerPubkey(), next);
+      return next;
+    });
+  createEffect(() => {
+    const boardId = store.board()?.id;
+    const viewer = callerPubkey();
+    setDoneWindowLifted(boardId === undefined ? false : readDoneWindowLifted(boardId, viewer));
   });
   const toggleIn = (key: "assignees" | "labels") => (value: string) =>
     applyFilters((f) => ({
@@ -315,6 +342,20 @@ export const BoardPage = () => {
   });
   /** Sprint the tide should read, or null for the board's kanban-only tide. */
   const tideSprint = createMemo(() => (sprintFilterOff() ? null : activeSprint()));
+  /** Sprint the views narrow to, or null. Shared so the Done-window chip's
+   *  visibility and KanbanView's prop can never disagree about kanban-mode. */
+  const sprintFilterId = createMemo(() => activeSprintFilterId(activeSprint(), sprintFilterOff()));
+  const doneWindowDays = () => store.board()?.done_window_days ?? FALLBACK_DONE_WINDOW_DAYS;
+  /** The window KanbanView applies, or null when lifted — null disables it. */
+  const doneWindowMs = createMemo(() =>
+    doneWindowLifted() ? null : doneWindowDays() * DAY_MS,
+  );
+  /** The chip only appears where the window actually bites: the kanban view,
+   *  in kanban-mode (no sprint narrowing), with a window configured. Anywhere
+   *  else it would advertise a control that changes nothing. */
+  const showDoneWindowChip = createMemo(
+    () => view() === "kanban" && sprintFilterId() === null && doneWindowDays() > 0,
+  );
   const countdownFor = (sprint: { planned_days?: number | null; started_at_ms: number | null }) =>
     sprintCountdown(sprint, store.board()?.default_sprint_days, Date.now());
 
@@ -477,40 +518,65 @@ export const BoardPage = () => {
                 />
               </div>
 
-              {/* EFB-44 filter chips. Hidden entirely when signed out — the
-                  only filter so far is viewer-relative, so there is nothing
-                  to offer an anonymous reader. */}
-              <Show when={callerPubkey() !== null}>
+              {/* The chip row carries two families now: EFB-44's viewer-relative
+                  filters, which stay hidden when signed out, and EFB-31's
+                  Done-window chip, which does not — the window it lifts applies
+                  to anonymous readers too, so the row itself has to survive a
+                  signed-out viewer even when the EFB-44 half is empty. */}
+              <Show when={callerPubkey() !== null || showDoneWindowChip()}>
                 <div class="filter-chips">
-                  <button
-                    class="filter-chip"
-                    classList={{ on: filters().mineOnly }}
-                    aria-pressed={filters().mineOnly}
-                    title={
-                      filters().mineOnly
-                        ? "Showing only issues assigned to you. Click to show everyone's."
-                        : "Showing everyone's issues. Click to show only yours."
-                    }
-                    onClick={() => applyFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
-                  >
-                    Show my tickets
-                  </button>
-                  <FilterPicker
-                    label="Assignee"
-                    options={assigneeOptions()}
-                    selected={filters().assignees}
-                    onToggle={toggleIn("assignees")}
-                    onClear={clearIn("assignees")}
-                    emptyLine="Nobody to filter by yet."
-                  />
-                  <FilterPicker
-                    label="Label"
-                    options={labelOptions()}
-                    selected={filters().labels}
-                    onToggle={toggleIn("labels")}
-                    onClear={clearIn("labels")}
-                    emptyLine="No labels on this board yet."
-                  />
+                  <Show when={callerPubkey() !== null}>
+                    <button
+                      class="filter-chip"
+                      classList={{ on: filters().mineOnly }}
+                      aria-pressed={filters().mineOnly}
+                      title={
+                        filters().mineOnly
+                          ? "Showing only issues assigned to you. Click to show everyone's."
+                          : "Showing everyone's issues. Click to show only yours."
+                      }
+                      onClick={() => applyFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
+                    >
+                      Show my tickets
+                    </button>
+                    <FilterPicker
+                      label="Assignee"
+                      options={assigneeOptions()}
+                      selected={filters().assignees}
+                      onToggle={toggleIn("assignees")}
+                      onClear={clearIn("assignees")}
+                      emptyLine="Nobody to filter by yet."
+                    />
+                    <FilterPicker
+                      label="Label"
+                      options={labelOptions()}
+                      selected={filters().labels}
+                      onToggle={toggleIn("labels")}
+                      onClear={clearIn("labels")}
+                      emptyLine="No labels on this board yet."
+                    />
+                  </Show>
+                  {/* EFB-31 — Done-window chip. `on` follows the row's existing
+                      vocabulary (a constraint is in force), and `lifted` reads
+                      brighter to say the view is deliberately wider than
+                      default. Both states are marked: an unmarked chip would
+                      leave "why is Done short?" unanswered, which is the
+                      confusion the ticket is really about. */}
+                  <Show when={showDoneWindowChip()}>
+                    <button
+                      class="filter-chip"
+                      classList={{ on: !doneWindowLifted(), lifted: doneWindowLifted() }}
+                      aria-pressed={doneWindowLifted()}
+                      title={
+                        doneWindowLifted()
+                          ? "Showing every done card. Click to show only the recent ones."
+                          : `Showing done cards from the last ${doneWindowDays()} days. Click to show all.`
+                      }
+                      onClick={toggleDoneWindow}
+                    >
+                      Done · {doneWindowLifted() ? "all" : `${doneWindowDays()}d`}
+                    </button>
+                  </Show>
                 </div>
               </Show>
 
@@ -531,12 +597,8 @@ export const BoardPage = () => {
                   dnd={dnd}
                   onOpen={(id) => navigate(openPath(id))}
                   highlightSprintId={highlightSprintId()}
-                  filterSprintId={
-                    activeSprint() !== undefined && !sprintFilterOff() ? activeSprint()!.id : null
-                  }
-                  doneWindowMs={
-                    ((store.board()?.done_window_days ?? 14) * 86_400_000)
-                  }
+                  filterSprintId={sprintFilterId()}
+                  doneWindowMs={doneWindowMs()}
                   layout={kanbanLayout()}
                   wideRail={wideRail()}
                   matchesFilters={filterPredicate()}

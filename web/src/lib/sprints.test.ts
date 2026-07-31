@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FALLBACK_SPRINT_DAYS,
+  activeSprintFilterId,
   currentSprint,
   effectiveSprintDays,
   sprintCountdown,
@@ -110,5 +111,31 @@ describe("sprintOptions", () => {
   it("has no None entry — that option is static in the markup", () => {
     expect(sprintOptions([sprint("a", "planning", 1)]).map((o) => o.id)).toEqual(["a"]);
     expect(sprintOptions([])).toEqual([]);
+  });
+});
+
+describe("activeSprintFilterId", () => {
+  const SPRINT = { id: "s1" };
+
+  it("narrows to the active sprint when the chip is on", () => {
+    expect(activeSprintFilterId(SPRINT, false)).toBe("s1");
+  });
+
+  it("shows everything when the chip is toggled off", () => {
+    expect(activeSprintFilterId(SPRINT, true)).toBeNull();
+  });
+
+  // The regression this helper exists for. The inline form it replaced tested
+  // `activeSprint() !== undefined`, but the sprint accessors return NULL for a
+  // board with no active sprint — so the guard passed and `.id` was read off
+  // null. Kanban-mode boards are precisely the no-sprint ones, so this is the
+  // path EFB-31's Done window runs on.
+  it("returns null for a board with no active sprint instead of throwing", () => {
+    expect(activeSprintFilterId(null, false)).toBeNull();
+    expect(activeSprintFilterId(null, true)).toBeNull();
+  });
+
+  it("tolerates undefined as well as null", () => {
+    expect(activeSprintFilterId(undefined, false)).toBeNull();
   });
 });
