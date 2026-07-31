@@ -251,13 +251,23 @@ interface StatusChangeWrite {
   readonly occurred_at_ms: number;
 }
 
+/**
+ * Write the status-change audit row and RETURN ITS ID (EFB-33).
+ *
+ * The id used to be generated inline and thrown away, which is precisely why
+ * EFB-24 could not publish a 30553: the substrate event keys on this row (it
+ * is the `d` tag), so with the id discarded there was nothing to sign
+ * against. Returning it is the whole unlock — callers thread it onto the
+ * board event, and the publish path stamps `statusChangeCache` with it.
+ */
 const insertStatusChange = (w: StatusChangeWrite) =>
   Effect.gen(function* () {
     const db = yield* Db;
+    const statusChangeId = crypto.randomUUID();
     yield* db.execute(
       "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
-        crypto.randomUUID(),
+        statusChangeId,
         w.issue_id,
         w.board_id,
         w.actor_pubkey,
@@ -269,6 +279,7 @@ const insertStatusChange = (w: StatusChangeWrite) =>
         w.occurred_at_ms,
       ],
     );
+    return statusChangeId;
   });
 
 /** completed_at_ms follows the done-category edge: set on arrival, cleared on exit. */
@@ -288,10 +299,25 @@ const nextCompletedAt = (
  * (column_id identity + status name mirror), maintain completed_at_ms,
  * write the audit row. No-op when unchanged — though a legacy row missing
  * its column_id still writes once, to heal the reference.
+ *
+ * EFB-33: returns `{ issue, statusChangeId }`, where statusChangeId is NULL
+ * whenever no audit row was written. That is a normal outcome, not a fault —
+ * this function moves a column whenever the column IDENTITY changes, but only
+ * records a status change when the status NAME does. The legacy-heal case in
+ * the paragraph above is exactly that: same name, missing column_id, so the
+ * row updates and nothing is appended to statusChangeCache. Callers must
+ * treat null as "there is no row to publish", never as a missing id.
  */
-const applyStatusChange = (issue: IssueShape, to: Column, board: BoardShape, actor: string) =>
+const applyStatusChange = (
+  issue: IssueShape,
+  to: Column,
+  board: BoardShape,
+  actor: string,
+): Effect.Effect<{ issue: IssueShape; statusChangeId: string | null }, DbError, Db> =>
   Effect.gen(function* () {
-    if (to.id === issue.column_id && to.name === issue.status) return issue;
+    if (to.id === issue.column_id && to.name === issue.status) {
+      return { issue, statusChangeId: null };
+    }
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
     const toDone = to.category === "done";
@@ -300,39 +326,54 @@ const applyStatusChange = (issue: IssueShape, to: Column, board: BoardShape, act
       "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
       [to.name, to.id, now, completed, issue.id],
     );
-    if (to.name !== issue.status) {
-      yield* insertStatusChange({
-        issue_id: issue.id,
-        board_id: issue.board_id,
-        actor_pubkey: actor,
-        from_status: issue.status,
-        to_status: to.name,
-        from_container: null,
-        to_container: null,
-        container_at_completion: toDone ? issue.container : null,
-        occurred_at_ms: now,
-      });
-    }
+    const statusChangeId =
+      to.name !== issue.status
+        ? yield* insertStatusChange({
+            issue_id: issue.id,
+            board_id: issue.board_id,
+            actor_pubkey: actor,
+            from_status: issue.status,
+            to_status: to.name,
+            from_container: null,
+            to_container: null,
+            container_at_completion: toDone ? issue.container : null,
+            occurred_at_ms: now,
+          })
+        : null;
     return {
-      ...issue,
-      status: to.name,
-      column_id: to.id,
-      updated_at_ms: now,
-      completed_at_ms: completed,
+      issue: {
+        ...issue,
+        status: to.name,
+        column_id: to.id,
+        updated_at_ms: now,
+        completed_at_ms: completed,
+      },
+      statusChangeId,
     };
   });
 
-/** Move an issue between containers. Idempotent: same-container is a no-op. */
-const applyContainerMove = (issue: IssueShape, to: Container, actor: string) =>
+/**
+ * Move an issue between containers. Idempotent: same-container is a no-op.
+ *
+ * EFB-33: same `{ issue, statusChangeId }` shape as applyStatusChange. Here
+ * the null case is only the idempotent early return — once past it the insert
+ * is unconditional — but the shape is shared so both wrappers read the same
+ * way at their call sites.
+ */
+const applyContainerMove = (
+  issue: IssueShape,
+  to: Container,
+  actor: string,
+): Effect.Effect<{ issue: IssueShape; statusChangeId: string | null }, DbError, Db> =>
   Effect.gen(function* () {
-    if (to === issue.container) return issue;
+    if (to === issue.container) return { issue, statusChangeId: null };
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
     yield* db.execute(
       "UPDATE issueCache SET container = ?, updated_at_ms = ? WHERE id = ?",
       [to, now, issue.id],
     );
-    yield* insertStatusChange({
+    const statusChangeId = yield* insertStatusChange({
       issue_id: issue.id,
       board_id: issue.board_id,
       actor_pubkey: actor,
@@ -343,7 +384,7 @@ const applyContainerMove = (issue: IssueShape, to: Container, actor: string) =>
       container_at_completion: null,
       occurred_at_ms: now,
     });
-    return { ...issue, container: to, updated_at_ms: now };
+    return { issue: { ...issue, container: to, updated_at_ms: now }, statusChangeId };
   });
 
 export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
@@ -880,7 +921,12 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       } else {
         to = yield* validateStatus(board.columns, body["to"] ?? body["to_status"]);
       }
-      const updated = yield* applyStatusChange(issue, to, board, pubkey);
+      const { issue: updated, statusChangeId } = yield* applyStatusChange(
+        issue,
+        to,
+        board,
+        pubkey,
+      );
       const audit = yield* AuditLog;
       yield* audit.record({
         event_type: "issue_transitioned",
@@ -888,12 +934,26 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         details: { issue: issue.id, to_status: to.name },
       });
       if (updated.status !== issue.status || updated.column_id !== issue.column_id) {
+        // status_change_id is undefined for a column-only move: the column
+        // identity changed but the status NAME did not, so no statusChangeCache
+        // row was written. The issue event still carries the new state; there is
+        // simply no 30553 to publish. See applyStatusChange.
         yield* emitSecureBoardEvent(issue.board_id, {
           kind: "issue.transitioned",
           board_id: issue.board_id,
           issue_id: issue.id,
           at_ms: updated.updated_at_ms,
-          payload: { issue: updated, from_status: issue.status, to_status: to.name },
+          ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+          // actor_pubkey is WHO MOVED THE CARD, which is not recoverable from
+          // the issue: assignee_pubkey is who owns the work, a different
+          // person most of the time. The 30553 attributes the change, so it
+          // needs the actor the statusChangeCache row was written with.
+          payload: {
+            issue: updated,
+            actor_pubkey: pubkey,
+            from_status: issue.status,
+            to_status: to.name,
+          },
         });
       }
       return { issue: updated };
@@ -1148,7 +1208,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         const claims = yield* requireCaller(c.get("claims"));
         const pubkey = callerPubkey(claims);
         const { issue } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
-        const updated = yield* applyContainerMove(issue, to, pubkey);
+        const { issue: updated, statusChangeId } = yield* applyContainerMove(issue, to, pubkey);
         const audit = yield* AuditLog;
         yield* audit.record({
           event_type: event,
@@ -1161,7 +1221,13 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
             board_id: issue.board_id,
             issue_id: issue.id,
             at_ms: updated.updated_at_ms,
-            payload: { issue: updated, from_container: issue.container, to_container: to },
+            ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+            payload: {
+              issue: updated,
+              actor_pubkey: pubkey,
+              from_container: issue.container,
+              to_container: to,
+            },
           });
         }
         return { issue: updated };

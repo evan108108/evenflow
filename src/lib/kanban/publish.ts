@@ -25,6 +25,7 @@ import {
   buildKanbanComment,
   buildKanbanIssue,
   buildKanbanSprint,
+  buildKanbanStatusChange,
   type EventTemplate,
 } from "../audience/audience-events";
 
@@ -60,17 +61,13 @@ export const publishesPlaintext = (board: BoardShape | null): boolean =>
   board !== null && board.visibility === "public";
 
 /**
- * The substrate event a board event becomes, or null when this family has no
- * plaintext kind yet.
+ * The PRIMARY substrate event a board event becomes, or null when this family
+ * has no plaintext kind yet.
  *
- * Returns at most one template per board event. `issue.transitioned` should
- * arguably ALSO emit a 30553 KanbanStatusChange, but statusChangeCache's row
- * id is generated inside `insertStatusChange` and never reaches the board
- * event, so there is nothing to key that event on. Threading it out would
- * change the return type of applyStatusChange/applyContainerChange and every
- * caller including github/execute.ts. Tracked as a follow-up; the shape here
- * (one board event → its substrate template) is what makes adding it later a
- * local change.
+ * One board event may now produce more than one substrate event — see
+ * `templatesFor`, which is what the publisher actually consumes. This function
+ * remains the single-template mapping for the four families that have exactly
+ * one, and is kept exported because the tests pin it directly.
  */
 export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate | null => {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -199,6 +196,69 @@ export const stampTargetOf = (
   return null;
 };
 
+/** One substrate event to publish, paired with the row that records where it landed. */
+export interface PublishItem {
+  readonly template: EventTemplate;
+  readonly stamp: { readonly table: string; readonly id: string } | null;
+}
+
+/**
+ * Every substrate event a board event becomes, in publish order.
+ *
+ * EFB-24 mapped one board event to at most one template, and `stampTargetOf`
+ * derives its target from the EVENT — a shape that structurally cannot express
+ * two destinations. That held only because every family it served had exactly
+ * one. EFB-33 is the N=2 case: a transition on a public board is BOTH the
+ * issue's new state (30551, stamping issueCache) AND the change itself (30553,
+ * stamping statusChangeCache). Pairing each template with its own stamp target
+ * is what the domain actually looks like once a second one exists.
+ *
+ * The four shipped families return a single-element array here, built from the
+ * same `templateFor` + `stampTargetOf` they already used, so their behavior is
+ * unchanged by construction rather than by inspection — which is what lets the
+ * existing kanban-publish tests keep covering them without modification.
+ */
+export const templatesFor = (
+  board: BoardShape,
+  event: BoardEvent,
+): ReadonlyArray<PublishItem> => {
+  const items: PublishItem[] = [];
+
+  const primary = templateFor(board, event);
+  if (primary !== null) items.push({ template: primary, stamp: stampTargetOf(event) });
+
+  // The 30553 rides alongside the issue event rather than replacing it.
+  // Absent status_change_id means no statusChangeCache row was appended —
+  // a column-only transition, where the issue event carries the state and
+  // there is no status change to describe. Nothing to publish, not a fault.
+  if (event.kind === "issue.transitioned" || event.kind === "issue.container_changed") {
+    const statusChangeId = event.status_change_id;
+    const issueId = event.issue_id;
+    if (statusChangeId !== undefined && issueId !== undefined) {
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      items.push({
+        template: buildKanbanStatusChange({
+          statusChangeId,
+          issueId,
+          boardId: board.id,
+          // The actor is who performed the transition — NOT the issue's
+          // assignee, who is usually somebody else. It is carried explicitly
+          // on the payload because nothing in the issue row records it.
+          actorPubkey: (payload["actor_pubkey"] as string | null) ?? "",
+          fromStatus: (payload["from_status"] as string | null) ?? null,
+          toStatus: (payload["to_status"] as string | null) ?? null,
+          fromContainer: (payload["from_container"] as string | null) ?? null,
+          toContainer: (payload["to_container"] as string | null) ?? null,
+          occurredAtMs: event.at_ms,
+        }),
+        stamp: { table: "statusChangeCache", id: statusChangeId },
+      });
+    }
+  }
+
+  return items;
+};
+
 /**
  * Build, sign, publish and stamp. Never fails: every failure mode — no key
  * configured, unmapped event family, gateway down — leaves the cache row's
@@ -207,14 +267,19 @@ export const stampTargetOf = (
  * The stamp is skipped for a deleted entity: the row is already gone (issue
  * and sprint deletes remove it), so the UPDATE would touch nothing. The
  * tombstone still goes to the substrate, which is the point.
+ *
+ * Returns the PRIMARY event's id (EFB-33), so callers that recorded one id
+ * before the fan-out keep seeing the same value. Additional events are
+ * published and stamped, never returned — a caller wanting the 30553's id
+ * should read substrate_event_id off the statusChangeCache row.
  */
 export const publishPlaintextEvent = (
   board: BoardShape,
   event: BoardEvent,
 ): Effect.Effect<string | null, DbError, Db | Audience> =>
   Effect.gen(function* () {
-    const template = templateFor(board, event);
-    if (template === null) return null;
+    const items = templatesFor(board, event);
+    if (items.length === 0) return null;
 
     const audience = yield* Audience;
     const keys = audience.kanbanKeys();
@@ -230,20 +295,26 @@ export const publishPlaintextEvent = (
       return null;
     }
 
-    const signed = __signEvent({ ...template, pubkey: keys.pubkeyHex }, keys.privkey);
-    const posted = yield* bestEffortAudience(
-      `kanban:${event.kind}:${board.id}`,
-      audience.rawPost(KANBAN_PLAINTEXT_PATH, { event: signed }, keys.privkey),
-    );
-    if (posted === null) return null;
+    let primaryId: string | null = null;
+    for (const [index, item] of items.entries()) {
+      const signed = __signEvent({ ...item.template, pubkey: keys.pubkeyHex }, keys.privkey);
+      const posted = yield* bestEffortAudience(
+        `kanban:${event.kind}:${board.id}:${item.template.kind}`,
+        audience.rawPost(KANBAN_PLAINTEXT_PATH, { event: signed }, keys.privkey),
+      );
+      // Best-effort per item, deliberately: a gateway failure on the 30553
+      // must not un-publish the 30551 that already landed. Each row's
+      // substrate_event_id independently records whether its own event made it.
+      if (posted === null) continue;
 
-    const target = stampTargetOf(event);
-    if (target !== null && !event.kind.endsWith(".deleted")) {
-      const db = yield* Db;
-      yield* db.execute(`UPDATE ${target.table} SET substrate_event_id = ? WHERE id = ?`, [
-        signed.id,
-        target.id,
-      ]);
+      if (item.stamp !== null && !event.kind.endsWith(".deleted")) {
+        const db = yield* Db;
+        yield* db.execute(`UPDATE ${item.stamp.table} SET substrate_event_id = ? WHERE id = ?`, [
+          signed.id,
+          item.stamp.id,
+        ]);
+      }
+      if (index === 0) primaryId = signed.id;
     }
-    return signed.id;
+    return primaryId;
   });

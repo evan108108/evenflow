@@ -21,6 +21,8 @@ import {
   createPublicBoard,
   jsonReq,
   makeHarness,
+  seedBoardMember,
+  CALLER,
   type Harness,
 } from "./harness";
 import { generateEpochKeypair } from "../src/lib/audience/audience-keys";
@@ -218,5 +220,174 @@ describe("tide publish — EFB-22 gate fix", () => {
     await settle();
 
     expect(h.audience.calls.filter((c) => c.path.includes("kanban_tide"))).toHaveLength(0);
+  });
+});
+
+// EFB-33: the fifth kind. EFB-24 shipped four of five because the
+// statusChangeCache row id was generated inside insertStatusChange and thrown
+// away — and a 30553 keys on that id (it is the `d` tag), so there was
+// nothing to sign against. Threading it out is the whole ticket.
+describe("EFB-33 — 30553 KanbanStatusChange", () => {
+  const eventsOf = (h: Harness) =>
+    plaintextPosts(h).map(
+      (p) => (p.body as { event: { id: string; kind: number; tags: string[][]; content: string } }).event,
+    );
+  const kindsOf = (h: Harness) => eventsOf(h).map((e) => e.kind);
+  const transition = (h: Harness, id: string, to: string) =>
+    h.app.request(`/api/v0/issues/${id}/transition`, jsonReq("POST", { to }), {});
+
+  it("publishes a 30553 on a public-board transition and stamps statusChangeCache", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h, { title: "Ship it" });
+    await settle();
+
+    const res = await transition(h, issue.id, "In Progress");
+    expect(res.status).toBe(200);
+    await settle();
+
+    const change = eventsOf(h).find((e) => e.kind === 30553);
+    expect(change).toBeDefined();
+
+    // The `d` tag is the statusChangeCache row id — that identity is the
+    // reason this kind needed the threading at all.
+    const row = h.db.statusChanges.find((r) => r["to_status"] === "In Progress")!;
+    expect(row).toBeDefined();
+    expect(change!.tags.find((t) => t[0] === "d")?.[1]).toBe(row["id"]);
+    expect(row["substrate_event_id"]).toBe(change!.id);
+  });
+
+  // The fan-out is the point of the templatesFor change: a transition is BOTH
+  // the issue's new state and the change record. Publishing one INSTEAD of the
+  // other is the regression this pins.
+  it("publishes the 30551 alongside it, not instead of it", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h);
+    await settle();
+    const before = plaintextPosts(h).length;
+
+    await transition(h, issue.id, "In Progress");
+    await settle();
+
+    const emitted = eventsOf(h).slice(before);
+    expect(emitted.map((e) => e.kind).sort()).toEqual([30551, 30553]);
+
+    // and BOTH rows got stamped, with different event ids.
+    // NB: creating an issue ALSO writes a statusChangeCache row (null → first
+    // column), so select the transition's row by to_status rather than by
+    // issue_id — the first match would be the creation row, which publishes no
+    // 30553 and would make this look like a stamping failure.
+    const issueRow = h.db.issues.find((r) => r["id"] === issue.id)!;
+    const changeRow = h.db.statusChanges.find((r) => r["to_status"] === "In Progress")!;
+    expect(issueRow["substrate_event_id"]).toBe(emitted.find((e) => e.kind === 30551)!.id);
+    expect(changeRow["substrate_event_id"]).toBe(emitted.find((e) => e.kind === 30553)!.id);
+    expect(issueRow["substrate_event_id"]).not.toBe(changeRow["substrate_event_id"]);
+  });
+
+  // Attribution. actor_pubkey is WHO MOVED THE CARD; assignee_pubkey is who
+  // owns the work. Reading the assignee here would publish a signed, public
+  // event attributing the change to the wrong person — and it would typecheck.
+  it("attributes the change to the actor, not the assignee", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const stranger = "nostr:1111111111111111111111111111111111111111111111111111111111111111";
+    const issue = await createIssue(h);
+    seedBoardMember(h, h.db.boards[0]!["id"] as string, stranger, "contributor");
+    await h.app.request(
+      `/api/v0/issues/${issue.id}`,
+      jsonReq("PATCH", { assignee_pubkey: stranger }),
+      {},
+    );
+    await settle();
+
+    await transition(h, issue.id, "In Progress");
+    await settle();
+
+    const change = eventsOf(h).find((e) => e.kind === 30553)!;
+    const content = JSON.parse(change.content) as { actor_pubkey: string };
+    expect(content.actor_pubkey).toBe(CALLER);
+    expect(content.actor_pubkey).not.toBe(stranger);
+  });
+
+  it("publishes a 30553 for a container move", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h);
+    await settle();
+
+    await h.app.request(`/api/v0/issues/${issue.id}/send_to_icebox`, jsonReq("POST", {}), {});
+    await settle();
+
+    const change = eventsOf(h).find((e) => e.kind === 30553)!;
+    expect(change).toBeDefined();
+    const content = JSON.parse(change.content) as {
+      from_container: string;
+      to_container: string;
+    };
+    expect(content.to_container).toBe("icebox");
+  });
+
+  // A no-op transition writes no statusChangeCache row and emits no event.
+  // Nothing to publish is not the same as something failing to publish.
+  it("publishes no 30553 when the transition is a no-op", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h);
+    await settle();
+    const before = plaintextPosts(h).length;
+
+    await transition(h, issue.id, issue.status);
+    await settle();
+
+    expect(kindsOf(h).slice(before)).not.toContain(30553);
+  });
+
+  // THE REGRESSION GUARD, and the one that matters most: a private board must
+  // never put a status change on a public relay in cleartext.
+  it("publishes NOTHING in plaintext when the board is private", async () => {
+    const h = makeHarness();
+    await createBoard(h); // born private, no audience
+    const issue = await createIssue(h, { title: "Confidential" });
+    await transition(h, issue.id, "In Progress");
+    await settle();
+
+    expect(plaintextPosts(h)).toHaveLength(0);
+    const changeRow = h.db.statusChanges.find((r) => r["issue_id"] === issue.id);
+    expect(changeRow?.["substrate_event_id"] ?? null).toBeNull();
+  });
+
+  it("keeps a private board with an audience on the encrypted path", async () => {
+    const h = makeHarness();
+    const session = generateEpochKeypair();
+    await registerKey(h, session.pub);
+    await createBoard(h);
+    expect(
+      (await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {}))
+        .status,
+    ).toBe(200);
+    const issue = await createIssue(h, { title: "Secret" });
+    await transition(h, issue.id, "In Progress");
+    await settle();
+
+    expect(h.audience.calls.some((c) => c.path.includes("publish-wraps"))).toBe(true);
+    expect(plaintextPosts(h)).toHaveLength(0);
+  });
+
+  // Best-effort is per item: a gateway failure on one must not un-publish or
+  // un-stamp the other.
+  it("leaves both substrate ids NULL when the gateway is down", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h);
+    await settle();
+    h.audience.flags.failPosts = true;
+
+    const res = await transition(h, issue.id, "In Progress");
+    expect(res.status).toBe(200); // the mutation does not care
+    await settle();
+
+    const changeRow = h.db.statusChanges.find((r) => r["issue_id"] === issue.id)!;
+    expect(changeRow["substrate_event_id"] ?? null).toBeNull();
   });
 });
