@@ -34,6 +34,13 @@ const SprintSection = (props: {
   onStart: () => void;
   onDelete: () => void;
   defaultDays: number;
+  /**
+   * EFB-47 — signed-out viewer on a public board. Name / days / goal are
+   * DATA, so they stay visible and go `readonly` rather than disappearing;
+   * Delete and Start are pure actions with nothing to read, so they are
+   * removed outright.
+   */
+  readOnly: boolean;
 }) => {
   const points = () => props.issues.reduce((sum, i) => sum + (i.estimate ?? 0), 0);
   const zone = sprintZone(props.sprint.id);
@@ -49,6 +56,7 @@ const SprintSection = (props: {
           class="sprint-name serif"
           value={props.sprint.name}
           aria-label="Sprint name"
+          readOnly={props.readOnly}
           onChange={(e) => {
             const name = e.currentTarget.value.trim();
             if (name !== "" && name !== props.sprint.name) props.onRename(name);
@@ -72,6 +80,7 @@ const SprintSection = (props: {
             placeholder={String(props.defaultDays)}
             value={props.sprint.planned_days ?? ""}
             aria-label="Sprint length in days"
+            readOnly={props.readOnly}
             onChange={(e) => {
               const raw = e.currentTarget.value.trim();
               if (raw === "") {
@@ -86,27 +95,30 @@ const SprintSection = (props: {
           d
         </label>
         <div class="spacer" />
-        <button
-          class="btn btn-small btn-quiet"
-          title="Delete this planning sprint — its issues go back to Unassigned Backlog"
-          onClick={() => {
-            const n = props.issues.length;
-            if (n === 0 || window.confirm(`Delete "${props.sprint.name}"? Its ${n} issue${n === 1 ? "" : "s"} will move back to the Backlog.`)) {
-              props.onDelete();
-            }
-          }}
-        >
-          Delete
-        </button>
-        <button class="btn btn-small" onClick={props.onStart}>
-          Start sprint
-        </button>
+        <Show when={!props.readOnly}>
+          <button
+            class="btn btn-small btn-quiet"
+            title="Delete this planning sprint — its issues go back to Unassigned Backlog"
+            onClick={() => {
+              const n = props.issues.length;
+              if (n === 0 || window.confirm(`Delete "${props.sprint.name}"? Its ${n} issue${n === 1 ? "" : "s"} will move back to the Backlog.`)) {
+                props.onDelete();
+              }
+            }}
+          >
+            Delete
+          </button>
+          <button class="btn btn-small" onClick={props.onStart}>
+            Start sprint
+          </button>
+        </Show>
       </div>
       <input
         class="sprint-goal"
         value={props.sprint.goal ?? ""}
         placeholder="What's this sprint for?"
         aria-label="Sprint goal"
+        readOnly={props.readOnly}
         onChange={(e) => {
           const goal = e.currentTarget.value.trim();
           if (goal !== (props.sprint.goal ?? "")) props.onGoal(goal === "" ? null : goal);
@@ -130,6 +142,8 @@ export const BacklogView = (props: {
   onOpen: (id: string) => void;
   /** EFB-44 board filters. Absent = no filtering. */
   matchesFilters?: ((issue: Issue) => boolean) | undefined;
+  /** EFB-47 — signed-out viewer: read everything, mutate nothing. */
+  readOnly?: boolean | undefined;
 }) => {
   const keep = (rows: Issue[]) => {
     const pred = props.matchesFilters;
@@ -186,6 +200,7 @@ export const BacklogView = (props: {
                 onDays={(days) => void props.store.patchSprint(sprint.id, { planned_days: days })}
                 onStart={() => void props.store.startSprint(sprint.id)}
                 onDelete={() => void props.store.deleteSprint(sprint.id)}
+                readOnly={props.readOnly === true}
                 defaultDays={defaultDays()}
               />
             )}
@@ -200,9 +215,11 @@ export const BacklogView = (props: {
       >
         <h2>
           Backlog <span class="count figure muted">{unassigned().length}</span>
-          <button class="btn btn-small sprint-new" onClick={newSprint}>
-            + New sprint
-          </button>
+          <Show when={props.readOnly !== true}>
+            <button class="btn btn-small sprint-new" onClick={newSprint}>
+              + New sprint
+            </button>
+          </Show>
         </h2>
         <Show
           when={unassigned().length > 0}
