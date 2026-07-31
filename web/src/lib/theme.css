@@ -8,6 +8,13 @@
   --color-ink-soft: rgba(23, 35, 59, 0.68);
   --color-ink-faint: rgba(23, 35, 59, 0.14);
   --color-paper-raised: #fbf9f5;
+  /* Empty-field placeholders on cards (EFB-37). Quieter than ink-soft so a
+     placeholder never competes with real data, but well above ink-faint,
+     which is a border weight and disappears as text. The cream variant is
+     the same idea against the cover-overlay gradient, where the surrounding
+     text is cream rather than ink. */
+  --color-ink-placeholder: rgba(23, 35, 59, 0.32);
+  --color-cream-placeholder: rgba(245, 242, 236, 0.55);
 
   --font-serif: "Bodoni Moda Variable", "Bodoni Moda", "Fraunces", Georgia, serif;
   --font-sans: "DM Sans Variable", "DM Sans", "Söhne Breit", -apple-system, sans-serif;

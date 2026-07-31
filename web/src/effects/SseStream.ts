@@ -12,23 +12,55 @@
 import { Chunk, Context, Data, Effect, Layer, Option, Schedule, Stream } from "effect";
 import { AuthManager } from "./AuthManager";
 import { ApiConfig } from "./ApiClient";
+// Type-only: erased at build time, so this never pulls Worker code into the
+// web bundle. board-events.ts is import-free precisely so this resolves.
+import type { BoardEventKind as WorkerBoardEventKind } from "../../../src/durable-objects/board-events";
 
-/** Mirror of the Worker's BoardEvent (src/durable-objects/BoardDO.ts). */
+/**
+ * Mirror of the Worker's BoardEvent kind union (src/durable-objects/board-events.ts).
+ *
+ * The mirror is kept rather than importing the Worker's `BoardEvent` wholesale
+ * because the client's envelope is deliberately narrower — it carries only the
+ * fields this app reads. What must NOT diverge is the `kind` union, and
+ * `_AssertKindsInSync` below makes divergence a tsc error instead of the silent
+ * drift that accumulated through EFB-22 and EFB-24 (8 kinds went unmirrored,
+ * unnoticed, because BoardPage dispatches by prefix with a silent
+ * fall-through). Widen the Worker union and this file goes red. See EFB-34.
+ */
 export interface BoardEvent {
-  readonly kind:
-    | "issue.created"
-    | "issue.updated"
-    | "issue.transitioned"
-    | "issue.container_changed"
-    | "issue.deleted"
-    | "comment.created"
-    | "comment.deleted";
+  readonly kind: BoardEventKind;
   readonly board_id: string;
   readonly issue_id?: string;
   readonly comment_id?: string;
   readonly at_ms: number;
   readonly payload: unknown;
 }
+
+type BoardEventKind =
+  | "issue.created"
+  | "issue.updated"
+  | "issue.transitioned"
+  | "issue.container_changed"
+  | "issue.deleted"
+  | "comment.created"
+  | "comment.deleted"
+  | "board.created"
+  | "board.updated"
+  | "sprint.created"
+  | "sprint.updated"
+  | "sprint.started"
+  | "sprint.completed"
+  | "sprint.deleted"
+  | "sprint.tide.updated";
+
+// Invariant (bidirectional): the mirror above and the Worker's canonical union
+// must be the same set. `Equal` compares via conditional-type identity rather
+// than mutual assignability, so a MISSING member and an EXTRA member both fail
+// — plain `extends` would let the mirror silently narrow.
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Assert<T extends true> = T;
+type _AssertKindsInSync = Assert<Equal<BoardEventKind, WorkerBoardEventKind>>;
 
 export class SseError extends Data.TaggedError("SseError")<{
   readonly reason: "connect" | "http" | "read";

@@ -846,12 +846,9 @@ export const makeDbMock = (): DbMock => {
           else notificationConfigs.push(next);
           return;
         }
-        if (sql.startsWith("UPDATE issueCache SET sprint_id = ?, updated_at_ms = ? WHERE id = ?")) {
-          const [sprint_id, updated_at_ms, id] = params;
-          const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { sprint_id, updated_at_ms });
-          return;
-        }
+        // (An exact duplicate of the sprint_id handler sat here and was
+        // unreachable — the copy above at the phase-21a block always won.
+        // Removed in EFB-35; dbMock-dispatch.test.ts now fails on any repeat.)
         if (sql.startsWith("DELETE FROM githubWebhookRules WHERE board_id = ?")) {
           for (let i = githubRules.length - 1; i >= 0; i--) {
             if (githubRules[i]?.["board_id"] === params[0]) githubRules.splice(i, 1);
@@ -930,6 +927,15 @@ export const makeDbMock = (): DbMock => {
           Object.assign(row, { used_by, used_at_ms });
           return { id: row["id"] } as R;
         }
+        // The board-scoped lookup MUST precede the bare short_id one below:
+        // it shares that prefix, so registered after it the board_id filter
+        // never ran and attachments.ts:205 was answered by a query that
+        // matched on short_id alone — a cross-board hit would have passed.
+        // (Found by dbMock-dispatch.test.ts, EFB-35.)
+        if (sql.startsWith("SELECT * FROM issueCache WHERE short_id = ? AND board_id = ?")) {
+          const r = issues.find((x) => x["short_id"] === params[0] && x["board_id"] === params[1]);
+          return (r ? { ...r } : null) as R | null;
+        }
         if (sql.startsWith("SELECT * FROM issueCache WHERE short_id = ?")) {
           const r = issues.find((x) => x["short_id"] === params[0]);
           return (r ? { ...r } : null) as R | null;
@@ -965,10 +971,8 @@ export const makeDbMock = (): DbMock => {
           const r = issues.find((x) => x["id"] === params[0] && x["board_id"] === params[1]);
           return (r ? { ...r } : null) as R | null;
         }
-        if (sql.startsWith("SELECT * FROM issueCache WHERE short_id = ? AND board_id = ?")) {
-          const r = issues.find((x) => x["short_id"] === params[0] && x["board_id"] === params[1]);
-          return (r ? { ...r } : null) as R | null;
-        }
+        // (The short_id + board_id handler was here, below the bare short_id
+        // guard that shadowed it. Hoisted above that guard in EFB-35.)
         if (sql.startsWith("SELECT id, revoked_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?")) {
           const r = apiKeys.find((x) => x["id"] === params[0] && x["pubkey"] === params[1]);
           return (r ? { id: r["id"], revoked_at_ms: r["revoked_at_ms"] } : null) as R | null;
