@@ -14,6 +14,7 @@ import { Clock, Effect } from "effect";
 import { Db, type DbError } from "../effects";
 import type { Column } from "../columns";
 import { columnById } from "../columns";
+import { insertStatusChange } from "../lib/status-change";
 import type { EvaluationPlan, PlannedEffect } from "./engine";
 
 export const WEBHOOK_ACTOR_FALLBACK = "github:webhook";
@@ -38,35 +39,15 @@ interface ExecuteInput {
   readonly statusByIssue: ReadonlyMap<string, { status: string; container: string }>;
 }
 
-const insertStatusChange = (
-  issueId: string,
-  boardId: string,
-  actor: string,
-  fromStatus: string | null,
-  toStatus: string | null,
-  fromContainer: string | null,
-  toContainer: string | null,
-  containerAtCompletion: string | null,
-  now: number,
-) =>
-  Effect.gen(function* () {
-    const db = yield* Db;
-    yield* db.execute(
-      "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        crypto.randomUUID(),
-        issueId,
-        boardId,
-        actor,
-        fromStatus,
-        toStatus,
-        fromContainer,
-        toContainer,
-        containerAtCompletion,
-        now,
-      ],
-    );
-  });
+// insertStatusChange moved to src/lib/status-change.ts (EFB-56).
+//
+// The version that lived here took nine positional arguments and DISCARDED the
+// generated row id. That single difference from the issues.ts copy is why
+// github-driven transitions never appeared on the substrate: the 30553 keys on
+// the statusChangeCache row id, so a discarded id left nothing to publish
+// against. This path was not un-wired — it was still running the bug EFB-33
+// fixed everywhere else. The shared helper returns the id; the callers below
+// now keep it.
 
 const applyEffect = (
   effect: PlannedEffect,
@@ -118,17 +99,17 @@ const applyEffect = (
             [effect.column_name, effect.column_id, now, issueId],
           );
         }
-        yield* insertStatusChange(
-          issueId,
-          input.boardId,
-          input.actor,
-          prev?.status ?? null,
-          effect.column_name,
-          null,
-          null,
-          toDone ? (prev?.container ?? null) : null,
-          now,
-        );
+        yield* insertStatusChange({
+          issue_id: issueId,
+          board_id: input.boardId,
+          actor_pubkey: input.actor,
+          from_status: prev?.status ?? null,
+          to_status: effect.column_name,
+          from_container: null,
+          to_container: null,
+          container_at_completion: toDone ? (prev?.container ?? null) : null,
+          occurred_at_ms: now,
+        });
         return done("set_column", effect.column_name);
       }
 
@@ -139,17 +120,17 @@ const applyEffect = (
           now,
           issueId,
         ]);
-        yield* insertStatusChange(
-          issueId,
-          input.boardId,
-          input.actor,
-          null,
-          null,
-          prev?.container ?? null,
-          effect.container,
-          null,
-          now,
-        );
+        yield* insertStatusChange({
+          issue_id: issueId,
+          board_id: input.boardId,
+          actor_pubkey: input.actor,
+          from_status: null,
+          to_status: null,
+          from_container: prev?.container ?? null,
+          to_container: effect.container,
+          container_at_completion: null,
+          occurred_at_ms: now,
+        });
         return done("set_container", effect.container);
       }
 
