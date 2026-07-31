@@ -128,7 +128,13 @@ export const BacklogView = (props: {
   store: BoardStore;
   dnd: DndHandle;
   onOpen: (id: string) => void;
+  /** EFB-44 board filters. Absent = no filtering. */
+  matchesFilters?: ((issue: Issue) => boolean) | undefined;
 }) => {
+  const keep = (rows: Issue[]) => {
+    const pred = props.matchesFilters;
+    return pred === undefined ? rows : rows.filter(pred);
+  };
   const planningSprints = () => props.store.sprints().filter((s) => s.status === "planning");
   // Unassigned Backlog: container=backlog AND not in any planning sprint. An
   // active sprint's members already left the backlog container when their
@@ -137,16 +143,23 @@ export const BacklogView = (props: {
   // handler in 21b.
   const planningSprintIds = () => new Set(planningSprints().map((s) => s.id));
   const inSprint = (sprint: Sprint) =>
-    props.store.issues().filter((i) => i.sprint_id === sprint.id && i.container === "backlog");
+    keep(
+      props.store.issues().filter((i) => i.sprint_id === sprint.id && i.container === "backlog"),
+    );
   const unassigned = () =>
-    props.store
-      .issues()
-      .filter(
-        (i) =>
-          i.container === "backlog" &&
-          (i.sprint_id === null || !planningSprintIds().has(i.sprint_id)),
-      )
-      .sort(byBoardOrder);
+    keep(
+      props.store
+        .issues()
+        .filter(
+          // `== null` not `=== null`: sprint_id is optional, so a pre-phase-20
+          // cached row reads undefined and would otherwise reach Set.has()
+          // untyped. Same rows either way — this is the tsc fix, not a
+          // behaviour change.
+          (i) =>
+            i.container === "backlog" &&
+            (i.sprint_id == null || !planningSprintIds().has(i.sprint_id)),
+        ),
+    ).sort(byBoardOrder);
 
   const backlogZone = moveZone("promote_to_backlog");
   const iceboxZone = moveZone("send_to_icebox");

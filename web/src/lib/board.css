@@ -2299,6 +2299,105 @@ input.sprint-name:focus {
   background: rgba(23, 35, 59, 0.06);
 }
 
+/* ── EFB-44 board filters ──
+   Own class rather than reusing .sprint-badge: the two read as one family
+   today, but the sprint chip is a single toggle and this row grows pickers,
+   so they need to be themeable apart. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0.2rem;
+}
+
+.filter-chip {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  padding: 0.35rem 1rem;
+  border: 1.5px solid var(--color-ink-faint);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.filter-chip:hover {
+  border-color: rgba(23, 35, 59, 0.4);
+  color: var(--color-ink);
+}
+
+.filter-chip.on {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  background: rgba(23, 35, 59, 0.06);
+}
+
+.filter-picker {
+  position: relative;
+  display: inline-block;
+}
+
+.filter-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.4rem);
+  min-width: 13rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  background: var(--color-cream);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  box-shadow: 0 12px 28px rgba(23, 35, 59, 0.14);
+  padding: 0.3rem 0;
+  z-index: 80;
+}
+
+.filter-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.filter-menu-item:hover {
+  background: rgba(23, 35, 59, 0.05);
+}
+
+.filter-menu-item input {
+  cursor: pointer;
+}
+
+.filter-menu-empty {
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+}
+
+.filter-menu-clear {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.9rem;
+  margin-top: 0.2rem;
+  border: none;
+  border-top: 1px solid var(--color-ink-faint);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+
+.filter-menu-clear:hover {
+  color: var(--color-ink);
+}
+
 /* Spotlighted cards while the badge is on — subtle, not shouty. */
 .issue-card.sprint-spotlight {
   border-color: rgba(23, 35, 59, 0.55);
