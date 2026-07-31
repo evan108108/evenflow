@@ -356,3 +356,122 @@ describe("POST /api/v0/profile/picture", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// EFB-51: profileCache is keyed by the canonical ref every write path stores
+// (EFB-38), so a read that passes the URL through raw misses the row. One
+// person, three spellings — hex, npub, canonical — and before this only the
+// third resolved.
+describe("EFB-51 :pubkey normalization on profile reads", () => {
+  const HEX = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+  const CANON = `nostr:${HEX}`;
+  const NPUB = "npub1qjdk9rzwrr2kycnlmyjda2xadl5c6nwnp98askjnmpxq75sek0pqr3fl3a";
+  // Same 32 bytes as NPUB, different prefix — resolves to a real identity if
+  // a type gate is ever dropped (the EFB-41 dangerous-test pattern).
+  const NOTE1 = "note1qjdk9rzwrr2kycnlmyjda2xadl5c6nwnp98askjnmpxq75sek0pqjm2zg4";
+
+  /** Seed 4a so the canonical ref has a profile to find. */
+  const seed = (h: ReturnType<typeof makeHarness>) =>
+    h.fourA.profiles.set(CANON, {
+      event_id: "evt-sona",
+      fields: { display_name: "Sona" },
+      updated_at_ms: 500,
+    });
+
+  const nameFrom = async (res: Response) =>
+    ((await res.json()) as { profile: Row }).profile["display_name"];
+
+  describe("GET /profile/:pubkey", () => {
+    // Baseline. Without it the two below can't distinguish "normalization
+    // works" from "this route resolves anything".
+    it("resolves the canonical ref", async () => {
+      const h = makeHarness();
+      seed(h);
+      const res = await h.app.request(`/api/v0/profile/${CANON}`, { headers: bearer }, {});
+      expect(res.status).toBe(200);
+      expect(await nameFrom(res)).toBe("Sona");
+    });
+
+    it.each([
+      ["raw hex", HEX],
+      ["npub", NPUB],
+    ])("resolves the %s spelling onto the same profile", async (_label, spelling) => {
+      const h = makeHarness();
+      seed(h);
+      const res = await h.app.request(`/api/v0/profile/${spelling}`, { headers: bearer }, {});
+      expect(res.status).toBe(200);
+      expect(await nameFrom(res)).toBe("Sona");
+    });
+
+    // 400, not 404: a typo must not be reported as an absent person. note1
+    // and nsec1 are here because canonicalizeIdentityRef must refuse every
+    // non-npub bech32 type, not merely fail to understand them.
+    it.each([
+      ["not a pubkey", "not-a-pubkey"],
+      ["short hex", "deadbeef"],
+      ["bare provider", "nostr:"],
+      ["bad-checksum npub", "npub1qy352euf7lxs4h8lpelw9r4vtvrhtnfvxhc4xzn3nlrxq0zj9nqmcqvr7"],
+      ["note1 carrying a real member's bytes", NOTE1],
+      ["nsec (private key)", "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5"],
+    ])("400s reason=pubkey on %s", async (_label, bad) => {
+      const h = makeHarness();
+      seed(h);
+      const res = await h.app.request(`/api/v0/profile/${bad}`, { headers: bearer }, {});
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ reason: "pubkey" });
+    });
+  });
+
+  describe("GET /profile?pubkeys= bulk", () => {
+    it("resolves hex and npub spellings onto the canonical profile", async () => {
+      const h = makeHarness();
+      seed(h);
+      for (const spelling of [HEX, NPUB]) {
+        const res = await h.app.request(
+          `/api/v0/profile?pubkeys=${spelling}`,
+          { headers: bearer },
+          {},
+        );
+        expect(res.status).toBe(200);
+        const { profiles } = (await res.json()) as { profiles: Row[] };
+        expect(profiles).toHaveLength(1);
+        expect(profiles[0]!["display_name"]).toBe("Sona");
+      }
+    });
+
+    // The reason normalization runs BEFORE the Set: three spellings of one
+    // key are one person, and must come back as one profile, not three.
+    it("collapses every spelling of one key into a single entry", async () => {
+      const h = makeHarness();
+      seed(h);
+      const res = await h.app.request(
+        `/api/v0/profile?pubkeys=${HEX},${NPUB},${CANON}`,
+        { headers: bearer },
+        {},
+      );
+      expect(res.status).toBe(200);
+      const { profiles } = (await res.json()) as { profiles: Row[] };
+      expect(profiles).toHaveLength(1);
+      expect(profiles[0]!["pubkey"]).toBe(CANON);
+    });
+
+    // DELIBERATE ASYMMETRY, pinned so nobody "fixes" it into consistency:
+    // the bulk endpoint tolerates malformed input where the single-pubkey
+    // routes 400. This is the chip-rendering path — one stale id must not
+    // fail a whole board's avatars, so junk resolves to an empty profile
+    // exactly as it did before EFB-51.
+    it("tolerates a malformed entry instead of failing the batch", async () => {
+      const h = makeHarness();
+      seed(h);
+      const res = await h.app.request(
+        `/api/v0/profile?pubkeys=${HEX},not-a-pubkey`,
+        { headers: bearer },
+        {},
+      );
+      expect(res.status).toBe(200);
+      const { profiles } = (await res.json()) as { profiles: Row[] };
+      expect(profiles).toHaveLength(2);
+      expect(profiles.find((p) => p["pubkey"] === CANON)!["display_name"]).toBe("Sona");
+      expect(profiles.find((p) => p["pubkey"] === "not-a-pubkey")!["display_name"]).toBeNull();
+    });
+  });
+});
