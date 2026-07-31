@@ -534,7 +534,26 @@ export const makeDbMock = (): DbMock => {
           if (row) row["position"] = params[0];
           return;
         }
-        if (sql.startsWith("UPDATE issueCache SET container = ?")) {
+        // EFB-17: the container-only form MUST precede the container +
+        // updated_at_ms form, and both must be spelled out rather than left to
+        // one bare `container = ?` prefix.
+        //
+        // The single guard that used to live here matched both statements but
+        // destructured three params. `UPDATE issueCache SET container = ?
+        // WHERE id = ?` (sprints.ts add-issue auto-promote) binds only two, so
+        // `id` landed in `updated_at_ms`, `id` came out undefined, the row
+        // lookup missed, and the write vanished — no error, no failing test.
+        // The promote shipped in 1829699 and was UNOBSERVABLE from any test
+        // for that reason: a mutation run deleting the whole promote block
+        // left all 759 tests green. Exactly the EFB-35 shape, in the same file
+        // the "must precede" comments below warn about.
+        if (sql.startsWith("UPDATE issueCache SET container = ? WHERE id = ?")) {
+          const [container, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { container });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET container = ?, updated_at_ms = ? WHERE id = ?")) {
           const [container, updated_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
           if (row) Object.assign(row, { container, updated_at_ms });
