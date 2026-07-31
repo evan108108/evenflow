@@ -14,6 +14,7 @@ import { makeFeedRouter } from "./routes/feed";
 import { makeInvitesRouter } from "./routes/invites";
 import { makeKeysRouter } from "./routes/keys";
 import { makeIssuesRouter } from "./routes/issues";
+import { makeImportsRouter } from "./routes/imports";
 import { makeWebhooksRouter } from "./routes/webhooks";
 import { makeMcpRouter } from "./routes/mcp";
 import { makeOrgsRouter } from "./routes/orgs";
@@ -84,6 +85,11 @@ app.route("/api/v0", makeGithubRouter());
 // canonical org-scoped namespace at /api/v0/orgs/:org_slug. Handlers branch
 // on the org_slug param via resolveBoardScope.
 app.route("/api/v0", makeBoardsRouter());
+// EFB-15 — before the issues router. Nothing in it currently matches
+// /boards/:slug/issues/bulk, but the day someone adds /boards/:slug/issues/:id
+// there, a bulk POST would start resolving to it with `bulk` as the id. Mount
+// order is the cheap guard; the same precedence reasoning as the orgs router.
+app.route("/api/v0", makeImportsRouter());
 app.route("/api/v0", makeIssuesRouter());
 app.route("/api/v0", makeSprintsRouter());
 app.route("/api/v0", makeCommentsRouter());
@@ -91,6 +97,7 @@ app.route("/api/v0", makeFeedRouter());
 app.route("/api/v0", makeAttachmentsRouter());
 app.route("/api/v0", makeWebhooksRouter());
 app.route("/api/v0/orgs/:org_slug", makeBoardsRouter());
+app.route("/api/v0/orgs/:org_slug", makeImportsRouter());
 app.route("/api/v0/orgs/:org_slug", makeIssuesRouter());
 app.route("/api/v0/orgs/:org_slug", makeSprintsRouter());
 app.route("/api/v0/orgs/:org_slug", makeCommentsRouter());

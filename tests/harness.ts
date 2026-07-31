@@ -36,6 +36,7 @@ import { makeFeedRouter } from "../src/routes/feed";
 import { makeInvitesRouter } from "../src/routes/invites";
 import { makeKeysRouter } from "../src/routes/keys";
 import { makeIssuesRouter } from "../src/routes/issues";
+import { makeImportsRouter } from "../src/routes/imports";
 import { makeMcpRouter } from "../src/routes/mcp";
 import { makeOrgsRouter } from "../src/routes/orgs";
 import { makeSessionRouter } from "../src/routes/session";
@@ -106,6 +107,8 @@ export const makeHarness = () => {
   app.route("/api/v0", makeNotificationsRouter(() => layer));
   app.route("/api/v0", makeGithubRouter(() => layer));
   app.route("/api/v0", makeBoardsRouter(() => layer));
+  // Before the issues router, mirroring index.ts — see the note there.
+  app.route("/api/v0", makeImportsRouter(() => layer));
   app.route("/api/v0", makeIssuesRouter(() => layer));
   app.route("/api/v0", makeSprintsRouter(() => layer));
   app.route("/api/v0", makeCommentsRouter(() => layer));
