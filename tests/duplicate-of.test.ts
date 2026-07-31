@@ -233,6 +233,58 @@ describe("POST /api/v0/issues/:id/duplicate-of", () => {
       expect(await reasonOf(res)).toBe("duplicate_of_issue_id");
     });
 
+    // ── EFB-60: what the parseRouteBody migration added ───────────────────
+    //
+    // The three above were already true before the migration — the handler
+    // hand-checked the value's type. These are the invariants the schema
+    // brings that no amount of handler diligence had: a key we don't
+    // recognize, and a body that omits the one key we require.
+    it("400s an unknown key rather than silently ignoring it", async () => {
+      const h = makeHarness();
+      await createBoard(h);
+      const dupe = await createIssue(h, { title: "Filed twice" });
+
+      const res = await h.app.request(
+        `/api/v0/issues/${dupe.id}/duplicate-of`,
+        jsonReq("POST", { duplicate_of_issue_id: null, titl: "typo" }),
+        {},
+      );
+
+      expect(res.status).toBe(400);
+      expect(await reasonOf(res)).toBe("titl-unknown");
+    });
+
+    it("400s a missing duplicate_of_issue_id, naming the field", async () => {
+      // `null` unmarks and absent is malformed — the two are different
+      // requests, so an empty body must not be read as "clear the pointer".
+      const h = makeHarness();
+      await createBoard(h);
+      const dupe = await createIssue(h, { title: "Filed twice" });
+
+      const res = await h.app.request(
+        `/api/v0/issues/${dupe.id}/duplicate-of`,
+        jsonReq("POST", {}),
+        {},
+      );
+
+      expect(res.status).toBe(400);
+      expect(await reasonOf(res)).toBe("duplicate_of_issue_id");
+    });
+
+    it("400s an empty-string target as a shape error, not a lookup miss", async () => {
+      // Pre-migration this reached the database and answered
+      // `duplicate-target-not-found`; the schema's minLength(1) now catches it
+      // as the malformed id it always was. Same 400, earlier and more honest.
+      const h = makeHarness();
+      await createBoard(h);
+      const dupe = await createIssue(h, { title: "Filed twice" });
+
+      const res = await markRaw(h, dupe.id, "");
+
+      expect(res.status).toBe(400);
+      expect(await reasonOf(res)).toBe("duplicate_of_issue_id");
+    });
+
     it("401s an anonymous caller", async () => {
       const h = makeHarness();
       await createBoard(h);
