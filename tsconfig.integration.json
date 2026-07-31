@@ -1,0 +1,25 @@
+// The integration lane is the one place in this repo that runs in Node rather
+// than in the Worker runtime: it spawns wrangler, listens on a socket, and
+// hashes with node:crypto. That needs @types/node.
+//
+// It gets its own project rather than adding "node" to the root tsconfig's
+// `types` on purpose. The root pin to @cloudflare/workers-types is a guardrail
+// — it is what stops `fs.readFileSync` from typechecking inside src/, which
+// would deploy and then fail in production. (tests/raw.d.ts documents the same
+// pin from the other side.) Widening it globally to serve one directory would
+// trade a real safety property for a small convenience.
+//
+// Checked by `npm run typecheck:integration`. It is a separate script rather
+// than being chained onto `typecheck` because `typecheck` currently exits
+// non-zero on 2 pre-existing errors, so an `&&` chain would never reach this
+// project. Both belong in CI when CI exists.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  // `exclude` is restated because it is inherited, and the base excludes
+  // exactly this directory.
+  "exclude": ["node_modules", ".wrangler"],
+  "include": ["tests/integration/**/*.ts"]
+}
