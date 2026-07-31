@@ -18,7 +18,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap } from "../effects";
+import { Audience, AuditLog, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -28,7 +28,7 @@ import {
   resolveBoardScope,
   type BoardOwnershipError,
 } from "../authz";
-import { parseBoardRow, type BoardShape } from "../shapes";
+import { parseBoardRow, parseIssueRow, type BoardShape } from "../shapes";
 import { enabledColumns } from "../columns";
 import {
   allowedExternalStates,
@@ -53,7 +53,99 @@ import {
   type RulePreset,
 } from "../github/rules";
 import { evaluateDelivery, parseDelivery, type TargetIssue } from "../github/engine";
-import { executePlan } from "../github/execute";
+import { WEBHOOK_ACTOR_FALLBACK, executePlan, type AppliedAction } from "../github/execute";
+import { emitSecureBoardEvent } from "../audiences";
+
+/**
+ * EFB-66 — turn the transitions a webhook applied into BoardEvents.
+ *
+ * Before this, github-driven moves emitted nothing at all: connected clients
+ * saw no change until a reload, and the 30553 substrate publish never fired
+ * because it hangs off a board event that was never raised. Both close here.
+ *
+ * At the API layer rather than inside `execute.ts`, per EFB-56 — the executor
+ * runs in a Db-only Effect graph, and emitting from in there would drag the
+ * Audience and BoardEmitter services into the webhook's graph and couple two
+ * subsystems that are currently independent. The same argument applies to the
+ * read below, which is why it lives here too.
+ *
+ * The issue rows are re-read AFTER the executor has run, deliberately: the
+ * payload must carry the issue's post-transition state, and `statusByIssue` on
+ * the executor's input holds the pre-transition snapshot. One query for every
+ * transition in the delivery rather than a read per effect.
+ */
+const TRANSITION_KINDS = new Set(["set_column", "set_container"]);
+
+const emitTransitionEvents = (
+  boardId: string,
+  applied: ReadonlyArray<AppliedAction>,
+  actor: string,
+) =>
+  Effect.gen(function* () {
+    // A type predicate rather than a bare boolean so the `statusChangeId`
+    // check narrows the element type. Without it the emit below would have to
+    // re-handle an `undefined` this filter has already excluded — and the
+    // usual way to silence that is a non-null assertion, which is the same
+    // claim with the compiler's check removed.
+    const transitions = applied.filter(
+      (a): a is AppliedAction & { statusChangeId: string } =>
+        a.applied && TRANSITION_KINDS.has(a.kind) && a.statusChangeId !== undefined,
+    );
+    if (transitions.length === 0) return;
+
+    const db = yield* Db;
+    const ids = [...new Set(transitions.map((t) => t.issue_id))];
+    const rows = yield* db.queryAll(
+      `SELECT * FROM issueCache WHERE id IN (${ids.map(() => "?").join(",")})`,
+      ids,
+    );
+    const issues = new Map<string, ReturnType<typeof parseIssueRow>>();
+    for (const row of rows) {
+      const issue = parseIssueRow(row);
+      issues.set(issue.id, issue);
+    }
+
+    const now = yield* Clock.currentTimeMillis;
+    for (const t of transitions) {
+      const issue = issues.get(t.issue_id);
+      // Emit per surviving issue rather than all-or-none. These are independent
+      // facts about different issues, and suppressing issue B's event because
+      // issue A was deleted mid-delivery would couple them for no gain — the
+      // same per-item independence `publishPlaintextEvent` keeps between the
+      // 30551 and the 30553. A missing row means the issue was deleted between
+      // the update and this read; there is no state left to describe, so the
+      // event is dropped and said out loud rather than emitted hollow.
+      if (issue === undefined) {
+        console.log(
+          JSON.stringify({
+            warn: "github-emit-skipped",
+            reason: "issue-row-missing",
+            board_id: boardId,
+            issue_id: t.issue_id,
+            kind: t.kind,
+          }),
+        );
+        continue;
+      }
+      const isColumn = t.kind === "set_column";
+      yield* emitSecureBoardEvent(boardId, {
+        kind: isColumn ? "issue.transitioned" : "issue.container_changed",
+        board_id: boardId,
+        issue_id: t.issue_id,
+        at_ms: now,
+        status_change_id: t.statusChangeId,
+        payload: {
+          issue,
+          // Same reason the UI path carries it: nothing on the issue row records
+          // WHO moved the card, and the 30553 attributes the change.
+          actor_pubkey: actor,
+          ...(isColumn
+            ? { from_status: t.fromStatus ?? null, to_status: t.toStatus ?? null }
+            : { from_container: t.fromContainer ?? null, to_container: t.toContainer ?? null }),
+        },
+      });
+    }
+  });
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 /** Bodies larger than this are refused unread — GitHub's own cap is 25MB. */
@@ -315,7 +407,12 @@ const processDelivery = (
   signature: string | null,
   rawBody: string,
   masterSecret: string | undefined,
-): Effect.Effect<ProcessOutcome, DbError, Db | AuditLog> =>
+  // BoardEmitter | Audience joined the requirements in EFB-66: this handler now
+  // emits board events for the transitions it applies, and `emitSecureBoardEvent`
+  // needs both. `bootstrap` already provides them — AppServices has carried them
+  // all along — so this widening is a declaration catching up to what the layer
+  // could always satisfy, not new plumbing.
+): Effect.Effect<ProcessOutcome, DbError, Db | AuditLog | BoardEmitter | Audience> =>
   Effect.gen(function* () {
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
@@ -420,18 +517,25 @@ const processDelivery = (
           : yield* resolveAuthorPubkey(boardId, delivery.pr.author_login),
     });
 
+    // Hoisted (EFB-66): the board events emitted below must be attributed to
+    // the same actor the statusChangeCache rows were written with, or the
+    // 30553 would credit the change to someone the audit row never named.
+    const actor =
+      delivery.pr?.author_login != null
+        ? `github:${delivery.pr.author_login}`
+        : WEBHOOK_ACTOR_FALLBACK;
+
     const applied = yield* executePlan({
       plan,
       boardId,
       columns: board.columns,
-      actor:
-        delivery.pr?.author_login != null
-          ? `github:${delivery.pr.author_login}`
-          : "github:webhook",
+      actor,
       linksByIssue,
       labelsByIssue,
       statusByIssue,
     });
+
+    yield* emitTransitionEvents(boardId, applied, actor);
 
     yield* writeAudit(
       boardId,

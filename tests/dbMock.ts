@@ -1377,6 +1377,13 @@ export const makeDbMock = (): DbMock => {
             )
             .map((r) => ({ ...r })) as R[];
         }
+        // EFB-66: the github webhook's post-transition re-read. One query for
+        // every issue the delivery moved, so the emitted board events carry
+        // post-update state. Matched on the `IN (` prefix because the
+        // placeholder count varies with the number of transitions.
+        if (sql.startsWith("SELECT * FROM issueCache WHERE id IN (")) {
+          return issues.filter((r) => params.includes(r["id"])).map((r) => ({ ...r })) as R[];
+        }
         // Sprint-start's backlog sweep — must precede the generic
         // board-list handler, which shares its prefix.
         // Phase 21+ start-sprint sweep: every active-container issue.

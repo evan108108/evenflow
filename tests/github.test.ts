@@ -557,3 +557,147 @@ describe("GET /boards/:slug/github/audit", () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ── EFB-66: github-driven transitions emit BoardEvents ────────────────────
+//
+// Before this, a github webhook could move a card and the world would not
+// hear about it: no SSE frame for connected clients, and no 30553 on the
+// substrate — the publish path hangs off a board event that was never raised.
+// EFB-56 fixed the half where the statusChangeCache id was discarded; these
+// pin the half where the id was kept and still went nowhere.
+describe("EFB-66 — github transitions emit board events", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const issueEvents = () =>
+    h.emitter.events.filter((e) => e.event.kind.startsWith("issue."));
+  const transitions = () =>
+    issueEvents().filter(
+      (e) => e.event.kind === "issue.transitioned" || e.event.kind === "issue.container_changed",
+    );
+
+  it("emits issue.transitioned for a column move, carrying the 30553's row id", async () => {
+    const before = transitions().length;
+    const res = await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
+    expect(res.status).toBe(200);
+
+    const emitted = transitions().slice(before);
+    expect(emitted).toHaveLength(1);
+    const event = emitted[0]!.event;
+    expect(event.kind).toBe("issue.transitioned");
+    expect(event.issue_id).toBe(issueRow()["id"]);
+
+    // The envelope id must be the statusChangeCache row this delivery wrote —
+    // that row id IS the 30553's `d` tag, so a mismatch here publishes an
+    // audit event keyed to the wrong change.
+    const row = h.db.statusChanges.find((r) => r["to_status"] === "Done")!;
+    expect(row).toBeDefined();
+    expect((event as { status_change_id?: string }).status_change_id).toBe(row["id"]);
+
+    const payload = event.payload as Record<string, unknown>;
+    expect(payload["from_status"]).toBe(row["from_status"]);
+    expect(payload["to_status"]).toBe("Done");
+    // github moves are attributed to the webhook actor, never to the assignee.
+    expect(String(payload["actor_pubkey"])).toMatch(/^github:/);
+    expect(payload["actor_pubkey"]).toBe(row["actor_pubkey"]);
+  });
+
+  // The payload carries the issue POST-transition. publish.ts builds the 30551
+  // from payload.issue and returns null without it, so an event that omits the
+  // row would stamp a 30553 while the substrate's copy of the issue silently
+  // kept the old status — an audit trail saying a card moved, next to a card
+  // that never did.
+  it("carries the post-transition issue row, not the pre-transition one", async () => {
+    await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
+    const event = transitions().at(-1)!.event;
+    const issue = (event.payload as { issue?: Record<string, unknown> }).issue;
+    expect(issue).toBeDefined();
+    expect(issue!["id"]).toBe(issueRow()["id"]);
+    expect(issue!["status"]).toBe("Done");
+    expect(issue!["status"]).toBe(issueRow()["status"]);
+  });
+
+  it("emits issue.container_changed for a container move, with from/to container", async () => {
+    const put = await h.app.request(
+      "/api/v0/boards/kb/github/rules",
+      jsonReq("PUT", {
+        rules: [
+          {
+            bucket: "match",
+            when: { event: "pull_request", action: "opened" },
+            do: { type: "set_container", container: "active" },
+          },
+        ],
+      }),
+      ENV,
+    );
+    expect(put.status).toBe(200);
+
+    const before = transitions().length;
+    const res = await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
+    expect(res.status).toBe(200);
+
+    const emitted = transitions().slice(before);
+    expect(emitted).toHaveLength(1);
+    const event = emitted[0]!.event;
+    // The kind that would have been missed by emitting only issue.transitioned.
+    expect(event.kind).toBe("issue.container_changed");
+    const payload = event.payload as Record<string, unknown>;
+    expect(payload["to_container"]).toBe("active");
+    expect(payload).not.toHaveProperty("to_status");
+    const row = h.db.statusChanges.find((r) => r["to_container"] === "active")!;
+    expect((event as { status_change_id?: string }).status_change_id).toBe(row["id"]);
+  });
+
+  // Only transitions. A webhook that labels, assigns or comments has moved
+  // nothing, and emitting a transition for it would put a phantom move on the
+  // substrate's audit trail.
+  it("emits no transition event for a non-transition action", async () => {
+    const put = await h.app.request(
+      "/api/v0/boards/kb/github/rules",
+      jsonReq("PUT", {
+        rules: [
+          {
+            bucket: "match",
+            when: { event: "pull_request", action: "opened" },
+            do: { type: "add_label", label: "from-github" },
+          },
+        ],
+      }),
+      ENV,
+    );
+    expect(put.status).toBe(200);
+
+    const before = transitions().length;
+    const res = await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
+    expect(res.status).toBe(200);
+    expect(transitions().slice(before)).toHaveLength(0);
+  });
+
+  it("publishes BOTH the 30551 and the 30553 on a public board", async () => {
+    h = makeHarness();
+    await createBoard(h, "kb", { visibility: "public" });
+    const issue = await createIssue(h, { title: "Wire the pill" });
+    shortId = issue.short_id!;
+    boardId = h.db.boards[0]!["id"] as string;
+    await connect();
+    secret = await mintSecret();
+    await settle();
+
+    const before = h.audience.calls.length;
+    const res = await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
+    expect(res.status).toBe(200);
+    await settle();
+
+    const posted = h.audience.calls
+      .slice(before)
+      .map((c) => (c.body as { event?: { kind: number; id: string } }).event)
+      .filter((e): e is { kind: number; id: string } => e !== undefined);
+    // Both, not one instead of the other — the 30551 is the issue's new state,
+    // the 30553 is the record that it changed.
+    expect(posted.map((e) => e.kind).sort()).toEqual([30551, 30553]);
+
+    const changeRow = h.db.statusChanges.find((r) => r["to_status"] === "Done")!;
+    const issueRowNow = h.db.issues.find((r) => r["id"] === issue.id)!;
+    expect(changeRow["substrate_event_id"]).toBe(posted.find((e) => e.kind === 30553)!.id);
+    expect(issueRowNow["substrate_event_id"]).toBe(posted.find((e) => e.kind === 30551)!.id);
+  });
+});
