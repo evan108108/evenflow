@@ -17,6 +17,7 @@ import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
+import { canonicalizeIdentityRef, isNpub, isRosterMember } from "../lib/identity";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -165,10 +166,41 @@ const issueColumn = (board: BoardShape, issue: IssueShape): Column | undefined =
 const inDone = (board: BoardShape, issue: IssueShape): boolean =>
   issueColumn(board, issue)?.category === "done";
 
-const validateAssignee = (v: unknown) =>
-  v === null || (typeof v === "string" && v !== "")
-    ? Effect.succeed(v as string | null)
-    : Effect.fail(new ValidationError({ reason: "assignee_pubkey" }));
+/**
+ * An assignee is a reference to a person, not a string (EFB-38).
+ *
+ * Two failures used to hide here: `049b628c…` and `nostr:049b628c…` were
+ * stored as different assignees for one key, and any authenticated caller
+ * could assign work to somebody who was not on the board at all.
+ *
+ * The roster is boardMemberCache — deliberately the same source the members
+ * endpoint and the UI picker read, so the API cannot accept an assignee the
+ * picker can't show. NOT effectiveBoardRole, which floors every pubkey at
+ * "viewer" on a public board and would make this check a no-op there.
+ */
+const validateAssignee = (
+  v: unknown,
+  board: BoardShape,
+): Effect.Effect<string | null, ValidationError, Db> =>
+  Effect.gen(function* () {
+    if (v === null) return null;
+    // Recognized but unsupported — say so rather than falling through to the
+    // generic shape error, so the caller knows it's a missing feature.
+    if (isNpub(v)) {
+      return yield* new ValidationError({ reason: "assignee_pubkey-npub-unsupported" });
+    }
+    const ref = canonicalizeIdentityRef(v);
+    if (ref === null) return yield* new ValidationError({ reason: "assignee_pubkey" });
+    if (!(yield* isRosterMember("boardMemberCache", board.id, ref))) {
+      return yield* new ValidationError({ reason: "not-a-member" });
+    }
+    return ref;
+  }).pipe(
+    // The roster read is the only failure the caller can't act on; surfacing
+    // it as a 400 would blame them for our outage, so let DbError stay in the
+    // channel and land as a 500 like every other read.
+    Effect.catchTag("DbError", (e) => Effect.die(e)),
+  );
 
 const validateIntOrNull = (field: string) => (v: unknown) =>
   v === null || (typeof v === "number" && Number.isInteger(v))
@@ -363,7 +395,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           ? ("backlog" as Container)
           : yield* validateContainer(body["container"]);
       const assignee =
-        body["assignee_pubkey"] === undefined ? null : yield* validateAssignee(body["assignee_pubkey"]);
+        body["assignee_pubkey"] === undefined ? null : yield* validateAssignee(body["assignee_pubkey"], board);
       const priority =
         body["priority"] === undefined ? null : yield* validateIntOrNull("priority")(body["priority"]);
       const estimate =
@@ -713,7 +745,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const assignee =
         body["assignee_pubkey"] === undefined
           ? current.assignee_pubkey
-          : yield* validateAssignee(body["assignee_pubkey"]);
+          : yield* validateAssignee(body["assignee_pubkey"], board);
       const priority =
         body["priority"] === undefined ? current.priority : yield* validateIntOrNull("priority")(body["priority"]);
       const estimate =

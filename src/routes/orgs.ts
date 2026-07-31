@@ -29,6 +29,7 @@ import {
   upsertMembership,
 } from "../membership";
 import { parseBoardRow, parseMemberRow, parseOrgRow, type OrgShape } from "../shapes";
+import { canonicalizeIdentityRef, isNpub, isRosterMember } from "../lib/identity";
 import {
   BOARD_ROLES,
   ORG_ROLES,
@@ -102,10 +103,22 @@ const validateAvatarUrl = (v: unknown) =>
     ? Effect.succeed(v as string | null)
     : Effect.fail(new ValidationError({ reason: "avatar_url" }));
 
-const validatePubkey = (v: unknown) =>
-  typeof v === "string" && v.trim() !== "" && v.length <= 256
-    ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "pubkey" }));
+/**
+ * Normalize a written identity reference (EFB-38).
+ *
+ * Was "any string under 256 chars", which let `049b628c…` and
+ * `nostr:049b628c…` both land in a roster as two members for one key.
+ *
+ * Shape only, no roster check: these endpoints exist to add somebody who is
+ * NOT yet a member, so there is nothing to validate against. Sites where the
+ * referent must already exist compose `isRosterMember` on top — see the
+ * transfer handler below.
+ */
+const validatePubkey = (v: unknown) => {
+  if (isNpub(v)) return Effect.fail(new ValidationError({ reason: "pubkey-npub-unsupported" }));
+  const ref = canonicalizeIdentityRef(v);
+  return ref === null ? Effect.fail(new ValidationError({ reason: "pubkey" })) : Effect.succeed(ref);
+};
 
 const validateOrgRole = (v: unknown) =>
   typeof v === "string" && (ORG_ROLES as ReadonlyArray<string>).includes(v)
@@ -327,6 +340,13 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const to_pubkey = yield* validatePubkey(body["to_pubkey"]);
       if (body["confirmation_slug"] !== org.slug) {
         return yield* new ValidationError({ reason: "confirmation-slug-mismatch" });
+      }
+      // EFB-38: you may only hand an org to somebody already in it. Handing
+      // ownership to a stranger in one call is a security hole, and
+      // add-then-transfer leaves a legible audit trail ("added X, then
+      // transferred to X") instead of X materialising as owner.
+      if (!(yield* isRosterMember("orgMemberCache", org.id, to_pubkey))) {
+        return yield* new ValidationError({ reason: "not-a-member" });
       }
       if (to_pubkey === pubkey) {
         return yield* new ValidationError({ reason: "transfer-to-self" });

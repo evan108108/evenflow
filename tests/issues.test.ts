@@ -7,6 +7,7 @@ import {
   createIssue,
   jsonReq,
   makeHarness,
+  seedBoardMember,
   seedForeignBoardAndIssue,
 } from "./harness";
 
@@ -60,7 +61,11 @@ describe("POST /api/v0/boards/:slug/issues", () => {
       priority: 2,
       estimate: 5,
       labels: ["bug"],
-      assignee_pubkey: "github:7",
+      // Was "github:7" — a pubkey belonging to nobody on this board. It only
+      // worked because assignee_pubkey took any non-empty string (EFB-38);
+      // the test never asserted on it, so the hole went unnoticed. CALLER is
+      // on the roster via the create-time grant.
+      assignee_pubkey: CALLER,
     });
     expect(issue.status).toBe("In Progress");
     expect(issue.container).toBe("active");
@@ -600,5 +605,169 @@ describe("PATCH /api/v0/issues/:id/reorder", () => {
       {},
     );
     expect(res.status).toBe(401);
+  });
+});
+
+// ── EFB-38: assignee_pubkey validation + normalization ────────────────────
+//
+// Written BEFORE the fix and confirmed red, per the ticket. Two things were
+// wrong: `validateAssignee` accepted any non-empty string, so (a) raw hex and
+// its `nostr:`-prefixed form were stored as two distinct identities for the
+// same key, and (b) an authenticated caller could assign an issue to somebody
+// who is not on the board at all, silently.
+//
+// "Member" here means a row in boardMemberCache — deliberately the same
+// source the members endpoint and the UI dropdown read, so the API cannot
+// accept an assignee the picker can't show. Notably NOT effectiveBoardRole,
+// which floors any pubkey at "viewer" on a public board and would make the
+// check a no-op there.
+describe("EFB-38 assignee_pubkey validation", () => {
+  const HEX = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+  const CANON = `nostr:${HEX}`;
+  const STRANGER = "nostr:1111111111111111111111111111111111111111111111111111111111111111";
+
+  /** Board whose roster holds the caller plus one nostr-shaped member. */
+  const boardWithNostrMember = async (h: ReturnType<typeof makeHarness>) => {
+    await createBoard(h);
+    const boardId = h.db.boards[0]!["id"] as string;
+    seedBoardMember(h, boardId, CANON, "contributor");
+    return boardId;
+  };
+
+  const patchAssignee = (h: ReturnType<typeof makeHarness>, id: string, v: unknown) =>
+    h.app.request(`/api/v0/issues/${id}`, jsonReq("PATCH", { assignee_pubkey: v }), {});
+
+  const storedAssignee = (h: ReturnType<typeof makeHarness>, id: string) =>
+    h.db.issues.find((r) => r["id"] === id)?.["assignee_pubkey"] ?? null;
+
+  // 1 — the reported bug: raw hex and nostr:hex are the same key, and the
+  // stored form must be the canonical one.
+  it("PATCH normalizes raw 64-char hex to nostr: form", async () => {
+    const h = makeHarness();
+    await boardWithNostrMember(h);
+    const issue = await createIssue(h);
+
+    const res = await patchAssignee(h, issue.id, HEX);
+    expect(res.status).toBe(200);
+    expect(storedAssignee(h, issue.id)).toBe(CANON);
+    expect(((await res.json()) as { issue: IssueShape }).issue.assignee_pubkey).toBe(CANON);
+  });
+
+  // 2 — the other half: a well-formed identity that is not on this board.
+  it("PATCH 400s assigning to a non-member", async () => {
+    const h = makeHarness();
+    await boardWithNostrMember(h);
+    const issue = await createIssue(h);
+
+    const res = await patchAssignee(h, issue.id, STRANGER);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ reason: "not-a-member" });
+    expect(storedAssignee(h, issue.id)).toBeNull();
+  });
+
+  it("PATCH null unassigns", async () => {
+    const h = makeHarness();
+    await boardWithNostrMember(h);
+    const issue = await createIssue(h, { assignee_pubkey: CANON });
+    expect(storedAssignee(h, issue.id)).toBe(CANON);
+
+    const res = await patchAssignee(h, issue.id, null);
+    expect(res.status).toBe(200);
+    expect(storedAssignee(h, issue.id)).toBeNull();
+  });
+
+  it("PATCH accepts an already-canonical member pubkey unchanged", async () => {
+    const h = makeHarness();
+    await boardWithNostrMember(h);
+    const issue = await createIssue(h);
+
+    const res = await patchAssignee(h, issue.id, CANON);
+    expect(res.status).toBe(200);
+    expect(storedAssignee(h, issue.id)).toBe(CANON);
+  });
+
+  // 5 — the create path shares validateAssignee, so it shares every case.
+  describe("POST create applies the same rules", () => {
+    const postIssue = (h: ReturnType<typeof makeHarness>, v: unknown) =>
+      h.app.request(
+        "/api/v0/boards/kb/issues",
+        jsonReq("POST", { title: "assigned at birth", assignee_pubkey: v }),
+        {},
+      );
+
+    it("normalizes raw hex on create", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const res = await postIssue(h, HEX);
+      expect(res.status).toBe(201);
+      expect(((await res.json()) as { issue: IssueShape }).issue.assignee_pubkey).toBe(CANON);
+    });
+
+    it("400s on a non-member at create", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const res = await postIssue(h, STRANGER);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ reason: "not-a-member" });
+    });
+
+    it("accepts null and an already-canonical member at create", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      expect((await postIssue(h, null)).status).toBe(201);
+      expect((await postIssue(h, CANON)).status).toBe(201);
+    });
+  });
+
+  // 6 — rows written before the fix keep parsing and rendering. Migration
+  // 0023 normalizes them in D1; this proves the read path never depended on
+  // the shape in the first place.
+  it("still reads a pre-fix row whose assignee is raw hex", async () => {
+    const h = makeHarness();
+    await boardWithNostrMember(h);
+    const issue = await createIssue(h);
+    // Simulate a row written by the old, unvalidated code path.
+    const row = h.db.issues.find((r) => r["id"] === issue.id)!;
+    row["assignee_pubkey"] = HEX;
+
+    const res = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: bearer }, {});
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { issue: IssueShape }).issue.assignee_pubkey).toBe(HEX);
+  });
+
+  // Shape rules from the ticket's canonicalizeIdentityRef spec.
+  describe("canonicalization edge cases", () => {
+    it("uppercases hex normalize to lowercase nostr: form", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const issue = await createIssue(h);
+
+      const res = await patchAssignee(h, issue.id, HEX.toUpperCase());
+      expect(res.status).toBe(200);
+      expect(storedAssignee(h, issue.id)).toBe(CANON);
+    });
+
+    it("400s on npub1 bech32, which is not supported yet", async () => {
+      const h = makeHarness();
+      await boardWithNostrMember(h);
+      const issue = await createIssue(h);
+
+      const res = await patchAssignee(h, issue.id, "npub1qy352eufi7lxs4h8lpelw9r4vtvrhtnfvxhc4xzn3nlrxq0zj9nqmcqvr7");
+      expect(res.status).toBe(400);
+      expect(storedAssignee(h, issue.id)).toBeNull();
+    });
+
+    it.each(["", "   ", "not a pubkey", "nostr:", ":abc", "deadbeef"])(
+      "400s on unrecognized shape %j",
+      async (v) => {
+        const h = makeHarness();
+        await boardWithNostrMember(h);
+        const issue = await createIssue(h);
+
+        const res = await patchAssignee(h, issue.id, v);
+        expect(res.status).toBe(400);
+        expect(storedAssignee(h, issue.id)).toBeNull();
+      },
+    );
   });
 });
