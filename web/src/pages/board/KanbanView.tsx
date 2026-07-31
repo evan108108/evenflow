@@ -41,25 +41,18 @@ const StatusStack = (props: {
   dnd: DndHandle;
   onOpen: (id: string) => void;
   highlightSprintId?: string | null | undefined;
-  /** Phase 21c: when non-null, Kanban shows ONLY issues with sprint_id
-   *  matching this value. Non-sprint cards hide entirely (Linear-style
-   *  cycle filter). When null, every container=active issue shows. */
-  filterSprintId?: string | null | undefined;
-  /** Phase 21c: when set AND no sprint filter is on, the Done column
-   *  hides items completed longer ago than this many ms. Prevents the
-   *  Done column from growing indefinitely for kanban-only teams. */
+  /** When set, the Done column hides items completed longer ago than this
+   *  many ms — keeps Done from growing indefinitely for kanban-only teams.
+   *  Null/undefined = show every done card. BoardPage has already folded the
+   *  sprint-filter and viewer-lift cases into this value (lib/doneWindow). */
   doneWindowMs?: number | null | undefined;
   layout?: "columns" | "vertical" | undefined;
-  /** EFB-44 board filters. Absent = no filtering. Applied alongside — not
-   *  instead of — filterSprintId; the two narrow independently. */
+  /** EFB-45: the `active`-scope predicate — every filter dimension including
+   *  sprint. Absent = no filtering. */
   matchesFilters?: ((issue: Issue) => boolean) | undefined;
 }) => {
   const active = () => {
-    let rows = props.store.issues().filter((i) => i.container === "active");
-    if (props.filterSprintId != null) {
-      const sid = props.filterSprintId;
-      rows = rows.filter((i) => i.sprint_id === sid);
-    }
+    const rows = props.store.issues().filter((i) => i.container === "active");
     const pred = props.matchesFilters;
     return pred === undefined ? rows : rows.filter(pred);
   };
@@ -72,16 +65,12 @@ const StatusStack = (props: {
   };
   const inColumn = (column: Column): Issue[] => {
     const rows = issuesInColumn(active(), column);
-    // Done-window filter: only on the done column, only when there is no
-    // sprint filter active (a sprint filter already narrows the deck),
-    // and only when the board configured a window. Uses issue.completed_at_ms
-    // which the server maintains on transition into/out of done.
-    if (
-      column.category === "done" &&
-      props.filterSprintId == null &&
-      props.doneWindowMs != null &&
-      props.doneWindowMs > 0
-    ) {
+    // Done-window filter: only on the done column, and only when a window
+    // reaches us at all. BoardPage already resolved the "a sprint filter
+    // narrows the deck, so don't window on top" case to null (lib/doneWindow),
+    // so there is nothing to re-decide here. Uses issue.completed_at_ms, which
+    // the server maintains on transition into/out of done.
+    if (column.category === "done" && props.doneWindowMs != null && props.doneWindowMs > 0) {
       const cutoff = Date.now() - props.doneWindowMs;
       return rows.filter((i) => (i.completed_at_ms ?? 0) >= cutoff);
     }
@@ -275,11 +264,8 @@ export const KanbanView = (props: {
   onOpen: (id: string) => void;
   /** Sprint id to spotlight (phase 20's badge toggle); null = no spotlight. */
   highlightSprintId?: string | null;
-  /** Phase 21c: sprint id to FILTER by. Only cards with sprint_id === this
-   *  render on the board. Null = show all container=active. */
-  filterSprintId?: string | null;
-  /** Phase 21c: Done-column window in ms; only applied when there's no
-   *  sprint filter. Null/undefined = show every done card. */
+  /** Done-column window in ms, already resolved by BoardPage — null/undefined
+   *  means show every done card. */
   doneWindowMs?: number | null;
   /** Horizontal columns (default) or the Linear-style vertical stack. The
    *  status-stack DOM is identical either way — zones, indicators, and
@@ -288,8 +274,12 @@ export const KanbanView = (props: {
   /** Vertical layout only: the viewport is wide enough to put the rail
    *  beside the stack instead of below it (lib/layout isWideVertical). */
   wideRail?: boolean;
-  /** EFB-44 board filters. Absent = no filtering. */
-  matchesFilters?: ((issue: Issue) => boolean) | undefined;
+  /** EFB-45 `active`-scope predicate — includes the sprint dimension. Goes to
+   *  the status stack only. Absent = no filtering. */
+  matchesActive?: ((issue: Issue) => boolean) | undefined;
+  /** EFB-45 `ambient`-scope predicate — every dimension EXCEPT sprint. Goes to
+   *  the rail, which has no sprint sections and stays deliberately ambient. */
+  matchesAmbient?: ((issue: Issue) => boolean) | undefined;
 }) => (
   <Show
     when={props.layout === "vertical"}
@@ -299,10 +289,9 @@ export const KanbanView = (props: {
         dnd={props.dnd}
         onOpen={props.onOpen}
         highlightSprintId={props.highlightSprintId}
-        filterSprintId={props.filterSprintId}
         doneWindowMs={props.doneWindowMs}
         layout={props.layout}
-        matchesFilters={props.matchesFilters}
+        matchesFilters={props.matchesActive}
       />
     }
   >
@@ -312,16 +301,15 @@ export const KanbanView = (props: {
         dnd={props.dnd}
         onOpen={props.onOpen}
         highlightSprintId={props.highlightSprintId}
-        filterSprintId={props.filterSprintId}
         doneWindowMs={props.doneWindowMs}
         layout="vertical"
-        matchesFilters={props.matchesFilters}
+        matchesFilters={props.matchesActive}
       />
       <KanbanRail
         store={props.store}
         dnd={props.dnd}
         onOpen={props.onOpen}
-        matchesFilters={props.matchesFilters}
+        matchesFilters={props.matchesAmbient}
       />
     </div>
   </Show>

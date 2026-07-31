@@ -8,9 +8,11 @@
 //     only weighs mineOnly/assignees/labels. A lifted window with no other
 //     filter on would be classed empty and deleted — the lift would silently
 //     fail to survive a refresh.
-//  2. hasActiveFilters() drives chip highlighting and empty-state copy. A
-//     lifted window would make the board report itself as filtered while
-//     actually showing MORE than the default.
+//  2. The filter shape feeds a short-circuit that decides whether a narrowing
+//     predicate gets built at all (predicateFor). A lifted window would make
+//     the board count itself as narrowed while actually showing MORE than the
+//     default. (This note used to credit hasActiveFilters with driving chip
+//     highlighting and empty-state copy — it never did; corrected in EFB-45.)
 //  3. Every BoardFilters member NARROWS and is a pure issue-level predicate.
 //     This one WIDENS, and it gates a column's render rather than an issue —
 //     it can never be evaluated through matchesFilters(issue, ...).

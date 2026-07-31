@@ -25,10 +25,10 @@ import { boardViewOf, issuePath, viewPath } from "../../lib/boardView";
 import {
   EMPTY_FILTERS,
   UNASSIGNED,
-  hasActiveFilters,
-  matchesFilters,
+  predicateFor,
   type BoardFilters,
 } from "../../lib/boardFilters";
+import { effectiveDoneWindowMs } from "../../lib/doneWindow";
 import { readFilters, writeFilters } from "../../lib/filterPersistence";
 import { readDoneWindowLifted, writeDoneWindowLifted } from "../../lib/doneWindowPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
@@ -86,17 +86,14 @@ export const BoardPage = () => {
   // when an active sprint exists (Linear posture: "here's the current
   // sprint's board"). Users toggle off with the chip to see everything.
   const [sprintFilterOff, setSprintFilterOff] = createSignal(false);
-  // EFB-44 — board filters, applied as one predicate the views run over
-  // already-loaded issues. Deliberately separate from the sprint chip
-  // above: that one stays a scalar prop, and unifying the two mechanisms
-  // is a follow-up rather than a change to shipped phase-21c behaviour.
+  // EFB-44 — board filters, applied as a predicate the views run over
+  // already-loaded issues. EFB-45 folded the phase-21c sprint filter in here
+  // too, so there is one filter shape rather than a shape plus a scalar prop.
+  // Holds the PERSISTED dimensions only. The sprint dimension is merged in
+  // downstream by `effectiveFilters` rather than stored here, which is what
+  // keeps it out of localStorage structurally instead of by remembering to
+  // strip it on every write.
   const [filters, setFilters] = createSignal<BoardFilters>(EMPTY_FILTERS);
-  const filterPredicate = createMemo(() => {
-    const active = filters();
-    const viewer = callerPubkey();
-    if (!hasActiveFilters(active)) return undefined;
-    return (issue: Issue) => matchesFilters(issue, active, viewer);
-  });
   // Persist on mutation rather than in an effect over `filters`: an effect
   // would also fire when the STORAGE KEY changes (sign-in/out), writing the
   // outgoing viewer's filters into the incoming viewer's slot before the
@@ -374,13 +371,32 @@ export const BoardPage = () => {
   });
   /** Sprint the tide should read, or null for the board's kanban-only tide. */
   const tideSprint = createMemo(() => (sprintFilterOff() ? null : activeSprint()));
-  /** Sprint the views narrow to, or null. Shared so the Done-window chip's
-   *  visibility and KanbanView's prop can never disagree about kanban-mode. */
+  /** Sprint the views narrow to, or null. Still the single source of what
+   *  "kanban mode" means — the Done-window chip and the filter predicates both
+   *  read it, so they cannot disagree. */
   const sprintFilterId = createMemo(() => activeSprintFilterId(activeSprint(), sprintFilterOff()));
+  /** The persisted filters plus the live sprint dimension. Merged here rather
+   *  than stored in `filters` so the sprint can never reach localStorage, and
+   *  so a filters restore (which fires on sign-in/out) cannot race the sprint
+   *  back to null. */
+  const effectiveFilters = createMemo<BoardFilters>(() => ({
+    ...filters(),
+    sprintId: sprintFilterId(),
+  }));
+  // Sprint narrows one funnel; every other dimension narrows all five. Passing
+  // the right predicate to the right surface is what replaced the scalar prop.
+  const activePredicate = createMemo(() =>
+    predicateFor("active", effectiveFilters(), callerPubkey()),
+  );
+  const ambientPredicate = createMemo(() =>
+    predicateFor("ambient", effectiveFilters(), callerPubkey()),
+  );
   const doneWindowDays = () => store.board()?.done_window_days ?? FALLBACK_DONE_WINDOW_DAYS;
-  /** The window KanbanView applies, or null when lifted — null disables it. */
+  /** The window the status stack applies, or null for "show every done card".
+   *  The sprint-filter case used to be decided inside StatusStack off the
+   *  scalar prop; it is decided here now, next to the state it reads. */
   const doneWindowMs = createMemo(() =>
-    doneWindowLifted() ? null : doneWindowDays() * DAY_MS,
+    effectiveDoneWindowMs(doneWindowLifted(), sprintFilterId() !== null, doneWindowDays()),
   );
   /** The chip only appears where the window actually bites: the kanban view,
    *  in kanban-mode (no sprint narrowing), with a window configured. Anywhere
@@ -641,11 +657,11 @@ export const BoardPage = () => {
                   dnd={dnd}
                   onOpen={(id) => navigate(openPath(id))}
                   highlightSprintId={highlightSprintId()}
-                  filterSprintId={sprintFilterId()}
                   doneWindowMs={doneWindowMs()}
                   layout={kanbanLayout()}
                   wideRail={wideRail()}
-                  matchesFilters={filterPredicate()}
+                  matchesActive={activePredicate()}
+                  matchesAmbient={ambientPredicate()}
                 />
               </Show>
               <Show when={view() === "backlog"}>
@@ -653,7 +669,7 @@ export const BoardPage = () => {
                   store={store}
                   dnd={dnd}
                   onOpen={(id) => navigate(openPath(id))}
-                  matchesFilters={filterPredicate()}
+                  matchesFilters={ambientPredicate()}
                   readOnly={boardReadOnly()}
                 />
               </Show>

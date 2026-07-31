@@ -14,6 +14,8 @@ import type { Column } from "../../lib/columns";
 import type { DndHandle } from "../../lib/dnd";
 import type { BoardStore } from "./store";
 import { KanbanView } from "./KanbanView";
+import { EMPTY_FILTERS, predicateFor, type BoardFilters } from "../../lib/boardFilters";
+import { effectiveDoneWindowMs } from "../../lib/doneWindow";
 
 const DAY_MS = 86_400_000;
 const WINDOW_DAYS = 14;
@@ -144,7 +146,6 @@ describe("Done window in kanban-mode", () => {
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId={null}
         doneWindowMs={WINDOW_MS}
       />
     ));
@@ -166,7 +167,6 @@ describe("Done window in kanban-mode", () => {
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId={null}
         doneWindowMs={WINDOW_MS}
       />
     ));
@@ -183,7 +183,6 @@ describe("Done window in kanban-mode", () => {
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId={null}
         doneWindowMs={null}
       />
     ));
@@ -205,7 +204,6 @@ describe("Done window in kanban-mode", () => {
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId={null}
         doneWindowMs={WINDOW_MS}
       />
     ));
@@ -216,23 +214,30 @@ describe("Done window in kanban-mode", () => {
 });
 
 describe("Done window does not apply in sprint-mode", () => {
-  // The no-regression case from the brief. When a sprint filter is narrowing
-  // the deck, the sprint governs Done — applying the board window on top would
-  // double-filter and empty the column on sprint boards.
-  it("ignores the window while a sprint filter is active", async () => {
+  // EFB-31's no-regression case, re-expressed for EFB-45. The rule itself —
+  // "a sprint filter already narrows the deck, so don't window on top" — moved
+  // out of StatusStack (which no longer sees a sprint) into
+  // lib/doneWindow.effectiveDoneWindowMs, where doneWindow.test.ts pins it.
+  //
+  // What's still worth asserting HERE is the composed outcome: given what
+  // BoardPage actually passes in sprint-mode — the active predicate carrying
+  // the sprint, and a window already resolved to null — every done card in the
+  // sprint survives, however old.
+  it("keeps every done card in the sprint when the window resolved to null", async () => {
     const sprintIssues = [
       done("7", "Old but in sprint", 40, { sprint_id: "s1" }),
       done("8", "Recent in sprint", 1, { sprint_id: "s1" }),
       done("9", "Old, other sprint", 40, { sprint_id: "s2" }),
     ];
+    const filters: BoardFilters = { ...EMPTY_FILTERS, sprintId: "s1" };
     const { container, cleanup } = mount(() => (
       <KanbanView
         store={stub(sprintIssues)}
         dnd={clickDnd}
         onOpen={() => undefined}
         layout="columns"
-        filterSprintId="s1"
-        doneWindowMs={WINDOW_MS}
+        matchesActive={predicateFor("active", filters, null)}
+        doneWindowMs={effectiveDoneWindowMs(false, filters.sprintId !== null, WINDOW_DAYS)}
       />
     ));
     await flush();

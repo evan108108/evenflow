@@ -38,6 +38,11 @@ export const parseFilters = (raw: string | null): BoardFilters => {
       mineOnly: mineOnly === true,
       assignees: isStringArray(assignees) ? assignees : [],
       labels: isStringArray(labels) ? labels : [],
+      // EFB-45: sprint is a filter dimension now, but deliberately NOT a
+      // persisted one — it resets on reload exactly as the phase-21c scalar
+      // did. Hard-coded null rather than read-and-ignore so a hand-edited or
+      // future-shaped blob can never resurrect it.
+      sprintId: null,
     };
   } catch {
     return EMPTY_FILTERS;
@@ -67,7 +72,18 @@ export const writeFilters = (boardId: string, viewer: string | null, filters: Bo
   const key = filterStorageKey(boardId, viewer);
   try {
     if (isEmpty(filters)) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, JSON.stringify(filters));
+    // Serialise the persisted subset explicitly rather than the whole object:
+    // sprintId is part of the shape but must not reach storage (EFB-45 lean a),
+    // and `isEmpty` below likewise weighs only these three.
+    else
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          mineOnly: filters.mineOnly,
+          assignees: filters.assignees,
+          labels: filters.labels,
+        }),
+      );
   } catch {
     // Best-effort, same as the layout preference: the session keeps the signal.
   }

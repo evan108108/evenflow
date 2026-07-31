@@ -5,8 +5,10 @@ import {
   UNASSIGNED,
   filterByAssignee,
   filterByLabels,
+  filterBySprint,
   hasActiveFilters,
   matchesFilters,
+  predicateFor,
 } from "./boardFilters";
 
 const SONA = "nostr:049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
@@ -115,7 +117,7 @@ describe("matchesFilters — composition", () => {
 
   // The brief's core requirement: chips AND together.
   it("ANDs across dimensions", () => {
-    const f = { mineOnly: true, assignees: [], labels: ["bug"] };
+    const f = { mineOnly: true, assignees: [], labels: ["bug"], sprintId: null };
     expect(matchesFilters(issue({ assignee_pubkey: SONA, labels: ["bug"] }), f, SONA)).toBe(true);
     // right label, wrong owner
     expect(matchesFilters(issue({ assignee_pubkey: EVAN, labels: ["bug"] }), f, SONA)).toBe(false);
@@ -124,7 +126,7 @@ describe("matchesFilters — composition", () => {
   });
 
   it("narrows as an intersection when assignee and label are both set", () => {
-    const f = { mineOnly: false, assignees: [EVAN], labels: ["ui"] };
+    const f = { mineOnly: false, assignees: [EVAN], labels: ["ui"], sprintId: null };
     expect(matchesFilters(issue({ assignee_pubkey: EVAN, labels: ["ui", "bug"] }), f, SONA)).toBe(
       true,
     );
@@ -135,7 +137,7 @@ describe("matchesFilters — composition", () => {
   // mineOnly and an explicit assignee selection are independent gates, so a
   // contradictory pair legitimately matches nothing.
   it("lets mineOnly and a conflicting assignee selection cancel out", () => {
-    const f = { mineOnly: true, assignees: [EVAN], labels: [] };
+    const f = { mineOnly: true, assignees: [EVAN], labels: [], sprintId: null };
     expect(matchesFilters(issue({ assignee_pubkey: SONA }), f, SONA)).toBe(false);
     expect(matchesFilters(issue({ assignee_pubkey: EVAN }), f, SONA)).toBe(false);
   });
@@ -147,5 +149,76 @@ describe("hasActiveFilters", () => {
     expect(hasActiveFilters({ ...EMPTY_FILTERS, mineOnly: true })).toBe(true);
     expect(hasActiveFilters({ ...EMPTY_FILTERS, assignees: [UNASSIGNED] })).toBe(true);
     expect(hasActiveFilters({ ...EMPTY_FILTERS, labels: ["bug"] })).toBe(true);
+  });
+});
+
+describe("filterBySprint", () => {
+  it("is no constraint when null", () => {
+    expect(filterBySprint(issue({ sprint_id: null }), null)).toBe(true);
+    expect(filterBySprint(issue({ sprint_id: "s1" }), null)).toBe(true);
+  });
+
+  it("matches only that sprint's issues", () => {
+    expect(filterBySprint(issue({ sprint_id: "s1" }), "s1")).toBe(true);
+    expect(filterBySprint(issue({ sprint_id: "s2" }), "s1")).toBe(false);
+    expect(filterBySprint(issue({ sprint_id: null }), "s1")).toBe(false);
+  });
+});
+
+describe("predicateFor — scope limits sprint to the active funnel", () => {
+  const sprintOnly = { ...EMPTY_FILTERS, sprintId: "s1" };
+
+  it("narrows the active funnel by sprint", () => {
+    const pred = predicateFor("active", sprintOnly, SONA);
+    expect(pred).toBeDefined();
+    expect(pred!(issue({ sprint_id: "s1" }))).toBe(true);
+    expect(pred!(issue({ sprint_id: "s2" }))).toBe(false);
+    expect(pred!(issue({ sprint_id: null }))).toBe(false);
+  });
+
+  // The rail and the Backlog view are deliberately ambient: a sprint-bound
+  // backlog issue must still list there. Pre-EFB-45 this held because the
+  // scalar prop was simply never forwarded to them.
+  it("does not narrow an ambient funnel by sprint", () => {
+    expect(predicateFor("ambient", sprintOnly, SONA)).toBeUndefined();
+  });
+
+  // THE INVARIANT A NAIVE REFACTOR BREAKS SILENTLY. A sprint board in its
+  // default state has the chip on and nothing else set. If sprint were added
+  // to the filter shape but not to the short-circuit, the predicate would come
+  // back undefined here and sprint filtering would quietly stop working.
+  it("builds a predicate when the sprint is the ONLY thing set", () => {
+    expect(hasActiveFilters(sprintOnly)).toBe(true);
+    expect(predicateFor("active", sprintOnly, SONA)).toBeDefined();
+  });
+
+  it("skips the pass entirely when nothing narrows", () => {
+    expect(predicateFor("active", EMPTY_FILTERS, SONA)).toBeUndefined();
+    expect(predicateFor("ambient", EMPTY_FILTERS, SONA)).toBeUndefined();
+  });
+
+  it("intersects sprint with the other dimensions on the active funnel", () => {
+    const f = { ...EMPTY_FILTERS, sprintId: "s1", labels: ["bug"] };
+    const pred = predicateFor("active", f, SONA);
+    expect(pred!(issue({ sprint_id: "s1", labels: ["bug"] }))).toBe(true);
+    expect(pred!(issue({ sprint_id: "s1", labels: ["ui"] }))).toBe(false);
+    expect(pred!(issue({ sprint_id: "s2", labels: ["bug"] }))).toBe(false);
+  });
+
+  // Ambient funnels still see every non-sprint dimension — dropping sprint
+  // must not drop the rest.
+  it("still applies the other dimensions on an ambient funnel", () => {
+    const f = { ...EMPTY_FILTERS, sprintId: "s1", labels: ["bug"] };
+    const pred = predicateFor("ambient", f, SONA);
+    expect(pred).toBeDefined();
+    expect(pred!(issue({ sprint_id: "s2", labels: ["bug"] }))).toBe(true);
+    expect(pred!(issue({ sprint_id: "s1", labels: ["ui"] }))).toBe(false);
+  });
+});
+
+describe("hasActiveFilters — sprint dimension", () => {
+  it("counts a sprint selection", () => {
+    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: "s1" })).toBe(true);
+    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: null })).toBe(false);
   });
 });

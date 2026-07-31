@@ -4,9 +4,18 @@
 // the server at this scale. Kept separate from boardView.ts, which is URL/view
 // routing and shares no concern with issue selection.
 //
-// The sprint filter is NOT here. It ships as its own scalar `filterSprintId`
-// prop (phase 21c) and each view applies both; unifying the two mechanisms is
-// a follow-up ticket, deliberately out of scope here.
+// EFB-45: the sprint filter lives here too now. It used to ship as its own
+// scalar `filterSprintId` prop (phase 21c) applied alongside this predicate,
+// so the board carried two filter mechanisms at once.
+//
+// Sprint still reaches only ONE of the five filterable funnels —
+// StatusStack.active. The rail's backlog and icebox and the Backlog view's two
+// groupings stay ambient by design (see KanbanRail's comment: the rail has no
+// sprint sections, so a sprint-bound backlog issue should still list there).
+// That reach map used to be implicit in which props a component happened to
+// forward, which meant any refactor touching the plumbing could silently widen
+// or narrow it. It is now explicit in `predicateFor(scope, …)` — a derivation
+// of state, and unit-testable.
 
 import type { Issue } from "./types";
 
@@ -24,17 +33,36 @@ export interface BoardFilters {
   /** Canonical pubkeys, plus `UNASSIGNED` for the null-assignee option. */
   readonly assignees: ReadonlyArray<string>;
   readonly labels: ReadonlyArray<string>;
+  /** Sprint to narrow the active board to, or null for no sprint constraint.
+   *  Unlike the others this is scope-limited — see `predicateFor`. */
+  readonly sprintId: string | null;
 }
 
 export const EMPTY_FILTERS: BoardFilters = {
   mineOnly: false,
   assignees: [],
   labels: [],
+  sprintId: null,
 };
 
-/** Whether any chip is on — drives chip highlighting and empty-state copy. */
-export const hasActiveFilters = (filters: BoardFilters): boolean =>
+/** The dimensions that narrow every funnel — everything except sprint. */
+const hasAmbientFilters = (filters: BoardFilters): boolean =>
   filters.mineOnly || filters.assignees.length > 0 || filters.labels.length > 0;
+
+/**
+ * Is anything narrowing the board at all, sprint included?
+ *
+ * NOTE this has no caller in app code as of EFB-45. Its previous consumer was
+ * BoardPage's predicate memo, whose short-circuit now lives inside
+ * `predicateFor` (which needs the per-scope question, not this one). Kept as
+ * the public "is this board filtered" question, and because EFB-44's tests for
+ * it are part of the behaviour-preservation evidence for this refactor.
+ *
+ * Its doc used to claim it drove chip highlighting and empty-state copy. It
+ * never did — each chip reads its own slice of the filter state directly.
+ */
+export const hasActiveFilters = (filters: BoardFilters): boolean =>
+  hasAmbientFilters(filters) || filters.sprintId !== null;
 
 /**
  * Does this issue's assignee match the selection?
@@ -75,4 +103,39 @@ export const matchesFilters = (
 ): boolean => {
   if (filters.mineOnly && viewer !== null && issue.assignee_pubkey !== viewer) return false;
   return filterByAssignee(issue, filters.assignees) && filterByLabels(issue, filters.labels);
+};
+
+/**
+ * Which funnel a predicate is being built for.
+ *
+ * `active` is the status stack — the one surface a sprint narrows. `ambient`
+ * is everything else: the rail's backlog and icebox, and the Backlog view's
+ * in-sprint and unassigned groupings. They see every dimension EXCEPT sprint.
+ */
+export type FilterScope = "active" | "ambient";
+
+/** Does this issue belong to the filtered sprint? Null = no constraint. */
+export const filterBySprint = (issue: Issue, sprintId: string | null): boolean =>
+  sprintId === null || issue.sprint_id === sprintId;
+
+/**
+ * The predicate a funnel should run, or undefined when nothing narrows it.
+ *
+ * Undefined rather than a tautology so callers can skip the filter pass
+ * entirely — and so an unfiltered board never pays to walk its own issue list.
+ *
+ * The scope check is what keeps sprint on one funnel. Note it is applied to
+ * the SPRINT VALUE, not by branching the returned predicate: an ambient funnel
+ * builds its predicate as though no sprint were selected, so a board narrowed
+ * to a sprint still shows that sprint's backlog neighbours in the rail.
+ */
+export const predicateFor = (
+  scope: FilterScope,
+  filters: BoardFilters,
+  viewer: string | null,
+): ((issue: Issue) => boolean) | undefined => {
+  const sprintId = scope === "active" ? filters.sprintId : null;
+  if (sprintId === null && !hasAmbientFilters(filters)) return undefined;
+  return (issue: Issue) =>
+    filterBySprint(issue, sprintId) && matchesFilters(issue, filters, viewer);
 };
