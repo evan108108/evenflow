@@ -19,9 +19,47 @@ export interface AttachmentActionError {
   readonly link: string | null;
 }
 
+/**
+ * EFB-57. Reviewed copy — do not reword without another voice pass.
+ *
+ * Every clause is load-bearing. "Board members see these links" is narrowly
+ * true (the API gates the attachment list on membership) and is deliberately
+ * NOT the broader "links stay on the board", which would claim a protection
+ * the storage does not provide: a blob URL is `<host>/<sha256 of the bytes>`,
+ * so anyone holding the same file can derive it without anyone sharing
+ * anything. Naming sharing as the exposure vector is honest about the common
+ * case; the docs page carries the content-hash case.
+ */
+const PRIVACY_NOTE =
+  "Board members see these links — but a link, once shared, opens for anyone.";
+
+/**
+ * Does this board need the attachment-privacy notice?
+ *
+ * Gated on `!== "public"` rather than `=== "private"` deliberately.
+ * `visibility` is optional on the wire type so pre-phase-16 payloads still
+ * parse, and an absent value would silently SUPPRESS the notice under an
+ * equality check — the one failure this notice exists to prevent.
+ *
+ * This is `publishesPlaintext`'s polarity inverted, and the inversion is the
+ * point. That gate asks `=== "public"` because a false negative merely declines
+ * to publish; here a false positive merely shows a notice to someone whose file
+ * was never at risk. Both choose the harmless direction, which lands on
+ * opposite operators.
+ */
+const needsPrivacyNote = (visibility: "private" | "public" | undefined): boolean =>
+  visibility !== "public";
+
 export const AttachmentsPanel = (props: {
   attachments: ReadonlyArray<Attachment>;
   readOnly: boolean;
+  /**
+   * The board's visibility, straight off the board row. Explicitly admits
+   * `undefined` rather than relying on optionality: under
+   * `exactOptionalPropertyTypes` those are different types, and the absent case
+   * is the one the gate below most needs to receive.
+   */
+  boardVisibility?: "private" | "public" | undefined;
   onUpload: (file: File) => Promise<AttachmentActionError | null>;
   onSetCover: (attachment: Attachment, is_cover: boolean) => void;
   onDelete: (attachment: Attachment) => void;
@@ -101,6 +139,17 @@ export const AttachmentsPanel = (props: {
       </Show>
 
       <Show when={!props.readOnly}>
+        {/*
+          Sits ABOVE the button, not inside a confirmation step, because the
+          file picker is the OS's and there is no dialog of ours to interrupt.
+          A notice a user meets after committing to the upload is a notice that
+          arrived too late to inform the choice.
+        */}
+        <Show when={needsPrivacyNote(props.boardVisibility)}>
+          <p class="attachment-privacy-note">
+            {PRIVACY_NOTE} <a href="/docs#attachment-privacy">How storage works →</a>
+          </p>
+        </Show>
         <div class="attachment-upload">
           <input ref={fileInput} type="file" style={{ display: "none" }} onChange={(e) => void pick(e)} />
           <button

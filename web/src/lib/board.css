@@ -1928,6 +1928,28 @@ select:disabled {
   font-weight: 600;
 }
 
+/*
+  EFB-57 attachment-privacy notice. Deliberately quieter than .attachment-error
+  above: that one reports something that went wrong and has earned its amber,
+  while this states a standing property of the storage and is read once. Same
+  shape so the two read as one family; muted ink so a permanent notice does not
+  sit on the page shouting.
+*/
+.attachment-privacy-note {
+  font-size: 0.85rem;
+  color: #5c6470;
+  background: rgba(92, 100, 112, 0.07);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.8rem;
+}
+
+.attachment-privacy-note a {
+  color: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* ── phase 18c: rich comments + buffered composer attachments ── */
 .comment-composer {
   display: flex;

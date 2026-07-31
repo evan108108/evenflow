@@ -130,4 +130,21 @@ describe("Docs", () => {
     expect(text).toContain("/evenflow skill");
     cleanup();
   });
+
+  // EFB-57. The attachment-privacy notice on the issue sheet links here by
+  // anchor. If this section is ever renamed or dropped, that notice silently
+  // becomes a link to nothing — which is worse than no link, because a user
+  // who clicks for the details and lands nowhere concludes there aren't any.
+  it("carries the #attachment-privacy anchor the upload notice points at", async () => {
+    const { container, cleanup } = await mountPage(Docs, "/docs", "/docs");
+    expect(container.querySelector("#attachment-privacy")).not.toBeNull();
+    expect([...container.querySelectorAll("a")].some(
+      (a) => a.getAttribute("href") === "#attachment-privacy",
+    )).toBe(true);
+    const text = container.textContent!;
+    // The two facts the notice defers to this page to explain.
+    expect(text).toContain("sharing the link is sharing the file");
+    expect(text).toContain("content-addressed");
+    cleanup();
+  });
 });

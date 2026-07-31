@@ -42,6 +42,7 @@ export const Docs = () => (
         <a href="#rest">REST reference</a>
         <a href="#mcp">MCP</a>
         <a href="#skill">/evenflow skill</a>
+        <a href="#attachment-privacy">Attachment storage</a>
       </nav>
     </header>
 
@@ -136,6 +137,80 @@ export const Docs = () => (
         done" — riding your <code>evk_</code> key through the MCP endpoint. The skill file ships
         in the Evenflow repo at <code>skills/evenflow/SKILL.md</code>.
       </p>
+    </section>
+
+    {/*
+      EFB-57. The link target of the attachment-privacy notice on the issue
+      sheet. Kept in sync with docs/attachment-privacy.md — if the two drift,
+      the notice points at a page that no longer says what it promised.
+    */}
+    <section id="attachment-privacy" class="docs-section">
+      <h2>How attachment storage works</h2>
+      <p>
+        A private board keeps its issues, comments and sprints to its members. It does{" "}
+        <strong>not</strong> keep its attachment files private. Anyone who gets a file's link can
+        open it — no account, no membership, no expiry.
+      </p>
+      <div class="docs-group">
+        <h3>What membership does cover</h3>
+        <p>
+          On a private board, membership gates the board itself, its issues, comments and sprints,
+          and the list of attachments on an issue — including each file's link. A non-member cannot
+          browse your board and collect links.
+        </p>
+      </div>
+      <div class="docs-group">
+        <h3>Two ways a file gets out</h3>
+        <p>
+          <strong>Sharing the link.</strong> Paste an attachment link anywhere outside the board and
+          the recipient can open the file. A forwarded link keeps working. This is the common case,
+          and what the notice on the upload panel is about.
+        </p>
+        <p>
+          <strong>Confirming a file exists.</strong> Attachment links are content-addressed — the
+          address is a SHA-256 hash of the file's own bytes:
+        </p>
+        <pre class="docs-code">https://blossom.band/&lt;sha256-of-the-file&gt;</pre>
+        <p>
+          That sounds like "anyone with the same file can fetch yours," but computing the address
+          requires the bytes, and someone who has the bytes already has the file. What it actually
+          leaks is narrower: whether a given file is stored on the host at all. An existence oracle,
+          not a file leak.
+        </p>
+        <p class="muted">
+          Two caveats. A hit means "these bytes are on this host" — the default host is shared with
+          other applications, so it doesn't show the upload came from Evenflow. And the oracle gets
+          sharper for low-entropy files: if a document's content is guessable, someone can hash
+          candidates until one hits, making it confirmation of content too. This matters when the
+          fact of the file is itself sensitive.
+        </p>
+      </div>
+      <div class="docs-group">
+        <h3>Why it works this way</h3>
+        <p>
+          Attachments use Blossom (BUD-01/02), a content-addressed protocol. Content-addressing buys
+          verifiability (the address is the hash), deduplication, and portability between hosts. The
+          cost is that addresses are public and permanent by construction: an address derived from
+          content cannot also be a secret, because anyone with the content can derive it. That trade
+          is inherent to the model, which is why we document it rather than paper over it.
+        </p>
+      </div>
+      <div class="docs-group">
+        <h3>What you can do today</h3>
+        <p>
+          Don't upload genuinely sensitive files — credentials, contracts under NDA, personal data.
+          Use storage that gates on identity for those. Treat an attachment link as the file itself:
+          sharing the link is sharing the file, and the address is permanent, so there is no
+          un-sharing. Deleting an attachment removes it from the issue and does not guarantee the
+          bytes are gone from a host that already served them.
+        </p>
+        <p>
+          Organizations needing different properties can bring their own storage — a custom Blossom
+          host or an S3-compatible bucket — in the org's storage settings, which puts the access
+          rules under your control. Inline image previews need the object readable without auth, so
+          a fully locked-down bucket trades previews for privacy.
+        </p>
+      </div>
     </section>
 
     <footer class="docs-footer muted">

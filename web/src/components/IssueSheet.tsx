@@ -689,6 +689,7 @@ export const IssueSheet = (props: {
         <AttachmentsPanel
           attachments={attachments() ?? []}
           readOnly={readOnly()}
+          boardVisibility={props.board.visibility}
           onUpload={uploadAttachment}
           onSetCover={setCover}
           onDelete={deleteAttachment}
