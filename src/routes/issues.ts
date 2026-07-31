@@ -429,6 +429,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         created_at_ms: now,
         updated_at_ms: now,
         completed_at_ms: createdDone ? now : null,
+        // Publish is fired off the request path (EFB-24), so it has not
+        // landed yet at response time. Stamped later, if at all.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO issueCache (id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

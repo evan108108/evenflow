@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bearer,
   createBoard,
+  createPublicBoard,
   createIssue,
   jsonReq,
   makeHarness,
@@ -185,7 +186,7 @@ describe("private board — never leaks to the public substrate", () => {
 describe("public board — caller-signed 30560", () => {
   it("signs as Evenflow and posts the event to the gateway", async () => {
     const h = makeHarness();
-    await createBoard(h);
+    await createPublicBoard(h);
     const sprint = await createSprint(h);
     const issue = await createIssue(h, { title: "Open work" });
     await h.app.request(
@@ -229,7 +230,7 @@ describe("public board — caller-signed 30560", () => {
 
   it("omits fa:sprint and keys on the board for the kanban-only variant", async () => {
     const h = makeHarness();
-    await createBoard(h);
+    await createPublicBoard(h);
 
     vi.setSystemTime(at(1));
     const res = await h.app.request("/api/v0/boards/kb/tide", { headers: bearer }, {});

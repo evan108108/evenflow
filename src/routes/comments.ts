@@ -209,6 +209,8 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         body_format: "markdown",
         in_reply_to: inReplyTo,
         created_at_ms: now,
+        // Publish is fired off the request path (EFB-24) — not landed yet.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO commentCache (id, issue_id, author_pubkey, body, body_format, in_reply_to, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",

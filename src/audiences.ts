@@ -38,6 +38,14 @@ import { blake3ContentTag } from "./lib/audience/blake3-tag";
 import { openScalarFromServer, type ServerAudienceKeys } from "./lib/audience-store";
 import { realPubkeyOfMember } from "./nostr";
 import type { BoardEvent } from "./durable-objects/BoardDO";
+import { publishPlaintextEvent, publishesPlaintext } from "./lib/kanban/publish";
+
+/**
+ * Ceiling on what a board mutation will wait for the substrate mirror.
+ * Generous enough for a healthy gateway round-trip including relay fan-out,
+ * short enough that an unhealthy one is a blip rather than a hang.
+ */
+const PUBLISH_TIMEOUT_MS = 3_000;
 
 const bytesToHexLocal = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -579,5 +587,55 @@ export const emitSecureBoardEvent = (
         ? yield* secureBoardEvent(board, event)
         : { event, substrate_event_id: null };
     yield* emitBoardEvent(board_id, secured.event);
+
+    // EFB-24: the public counterpart of the wrap above. Gated on
+    // `publishesPlaintext`, NOT on `!encryption_active` — see that function
+    // for why the difference matters (a board can be private with no
+    // audience, and that state's negation is not "public").
+    //
+    // AWAITED, not forked. The first cut used Effect.forkDaemon to keep
+    // gateway latency off the request path, and it did not publish a single
+    // event in production: Cloudflare cancels outstanding work as soon as the
+    // response is returned, so the fiber never got scheduled. Verified by
+    // `wrangler tail` — the request logged outcome "ok" with the audit line
+    // and NONE of this module's warn logs, not even the no-key one, which
+    // only happens if the code never ran at all.
+    //
+    // ctx.waitUntil is the runtime's answer to that, but reaching it means
+    // threading Hono's ExecutionContext through 52 `layerFor(c.env)`
+    // boundaries and reshaping the LayerFor testability seam. Not worth it
+    // for a best-effort mirror, so the publish is awaited and bounded
+    // instead: a mutation pays at most PUBLISH_TIMEOUT_MS, and a gateway that
+    // is slow or down costs a substrate event rather than a board write.
+    //
+    // A publish that adds latency beats a publish that silently never
+    // happens — which is precisely what this ticket exists to fix.
+    if (board !== null && publishesPlaintext(board)) {
+      yield* publishPlaintextEvent(board, event).pipe(
+        Effect.timeoutTo({
+          duration: PUBLISH_TIMEOUT_MS,
+          onTimeout: () => {
+            console.log(
+              JSON.stringify({ warn: "kanban-publish-timeout", board_id, kind: event.kind }),
+            );
+            return null;
+          },
+          onSuccess: (id: string | null) => id,
+        }),
+        Effect.catchAll((e) =>
+          Effect.sync(() => {
+            console.log(
+              JSON.stringify({
+                warn: "kanban-publish-failed",
+                board_id,
+                kind: event.kind,
+                error: String(e),
+              }),
+            );
+            return null;
+          }),
+        ),
+      );
+    }
     return secured.substrate_event_id;
   });

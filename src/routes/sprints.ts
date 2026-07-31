@@ -231,6 +231,8 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         points_completed: null,
         points_carried: null,
         adds_mid_sprint: 0,
+        // Publish is fired off the request path (EFB-24) — not landed yet.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO sprintCache (id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -240,6 +242,13 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         event_type: "sprint_created",
         actor: claims.login,
         details: { board: board.slug, sprint: sprint.id },
+      });
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "sprint.created",
+        board_id: board.id,
+        sprint_id: sprint.id,
+        at_ms: now,
+        payload: { sprint },
       });
       return { sprint };
     });
@@ -281,7 +290,15 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { board: board.slug, sprint: current.id },
       });
-      return { sprint: { ...current, name, goal, planned_days } };
+      const sprint = { ...current, name, goal, planned_days };
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "sprint.updated",
+        board_id: board.id,
+        sprint_id: current.id,
+        at_ms: yield* Clock.currentTimeMillis,
+        payload: { sprint },
+      });
+      return { sprint };
     });
     return runJson(c, program);
   });
@@ -402,13 +419,21 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           points_committed_start: pointsCommitted,
         },
       });
+      const sprint = {
+        ...current,
+        status: "active" as const,
+        started_at_ms: now,
+        points_committed_start: pointsCommitted,
+      };
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "sprint.started",
+        board_id: board.id,
+        sprint_id: current.id,
+        at_ms: now,
+        payload: { sprint },
+      });
       return {
-        sprint: {
-          ...current,
-          status: "active" as const,
-          started_at_ms: now,
-          points_committed_start: pointsCommitted,
-        },
+        sprint,
         issues_moved: rows.length,
         issues_swept_in: sweptIn,
       };
@@ -543,14 +568,22 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           carry_to_sprint: nextSprintId,
         },
       });
+      const sprint = {
+        ...current,
+        status: "completed" as const,
+        completed_at_ms: now,
+        points_completed: pointsCompleted,
+        points_carried: pointsCarried,
+      };
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "sprint.completed",
+        board_id: board.id,
+        sprint_id: current.id,
+        at_ms: now,
+        payload: { sprint },
+      });
       return {
-        sprint: {
-          ...current,
-          status: "completed" as const,
-          completed_at_ms: now,
-          points_completed: pointsCompleted,
-          points_carried: pointsCarried,
-        },
+        sprint,
         carried_to_sprint_id: nextSprintId,
         dropped_count: carryOver === "next_planning" && nextSprintId === null
           ? memberRows.filter((r) => !isDoneStatus(boardShape.columns, parseIssueRow(r).status)).length
@@ -867,6 +900,16 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           payload: { issue: updated },
         });
       }
+      // Emitted after the member issues so a client applies the detachments
+      // before the sprint disappears. The board row still exists, so unlike
+      // a board delete this tombstone can reach the substrate.
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "sprint.deleted",
+        board_id: board.id,
+        sprint_id: current.id,
+        at_ms: now,
+        payload: { sprint: current, deleted: true },
+      });
       return { deleted: true, member_count: memberRows.length };
     });
     return runJson(c, program);

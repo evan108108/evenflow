@@ -70,6 +70,9 @@ export interface BoardShape {
   readonly archived_at_ms: number | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
+  // 4a event id for the kind:30550 this row was published as (EFB-24, public
+  // boards only). NULL = never published.
+  readonly substrate_event_id: string | null;
 }
 
 /** Mirrors orgCache (projection of kind:30520 org declarations). */
@@ -161,6 +164,10 @@ export interface IssueShape {
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;
+  // 4a event id for the kind:30551 this row was published as (EFB-24, public
+  // boards only). NULL = never published: a private board, or a publish that
+  // did not land. Never load-bearing — the row itself is the cache.
+  readonly substrate_event_id: string | null;
 }
 
 /** Mirrors sprintCache (phase 20) — a startable batch of backlog issues. */
@@ -184,6 +191,8 @@ export interface SprintShape {
   readonly points_completed: number | null;
   readonly points_carried: number | null;
   readonly adds_mid_sprint: number;
+  // 4a event id for the kind:30554 this row was published as (EFB-24).
+  readonly substrate_event_id: string | null;
 }
 
 /** Mirrors commentCache (soft-FK projection of kind:30552 fa:KanbanComment). */
@@ -197,6 +206,8 @@ export interface CommentShape {
   readonly body_format: BodyFormat;
   readonly in_reply_to: string | null;
   readonly created_at_ms: number;
+  // 4a event id for the kind:30552 this row was published as (EFB-24).
+  readonly substrate_event_id: string | null;
 }
 
 /** Mirrors statusChangeCache (kind:30553 fa:KanbanStatusChange) — feed rows. */
@@ -211,6 +222,8 @@ export interface StatusChangeShape {
   readonly to_container: string | null;
   readonly container_at_completion: string | null;
   readonly occurred_at_ms: number;
+  // 4a event id for the kind:30553 this row was published as (EFB-24).
+  readonly substrate_event_id: string | null;
 }
 
 export class BoardShapeError extends Error {
@@ -398,6 +411,7 @@ export const parseBoardRow = (row: unknown): BoardShape => {
     archived_at_ms: r["archived_at_ms"] == null ? null : h.number(r["archived_at_ms"], "archived_at_ms"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
   };
 };
 
@@ -471,6 +485,7 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"], "completed_at_ms"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
   };
 };
 
@@ -503,6 +518,7 @@ export const parseSprintRow = (row: unknown): SprintShape => {
     points_completed: h.numberOrNull(r["points_completed"] ?? null, "points_completed"),
     points_carried: h.numberOrNull(r["points_carried"] ?? null, "points_carried"),
     adds_mid_sprint: h.number(r["adds_mid_sprint"] ?? 0, "adds_mid_sprint"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
   };
 };
 
@@ -530,6 +546,7 @@ export const parseCommentRow = (row: unknown): CommentShape => {
     body_format: body_format as BodyFormat,
     in_reply_to: h.stringOrNull(r["in_reply_to"], "in_reply_to"),
     created_at_ms: h.number(r["created_at_ms"], "created_at_ms"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
   };
 };
 
@@ -553,6 +570,7 @@ export const parseStatusChangeRow = (row: unknown): StatusChangeShape => {
     to_container: h.stringOrNull(r["to_container"], "to_container"),
     container_at_completion: h.stringOrNull(r["container_at_completion"], "container_at_completion"),
     occurred_at_ms: h.number(r["occurred_at_ms"], "occurred_at_ms"),
+    substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
   };
 };
 

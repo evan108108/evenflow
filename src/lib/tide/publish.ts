@@ -26,6 +26,7 @@ import { BoardEmitter, Db, type DbError } from "../../effects";
 import { emitSecureBoardEvent, loadBoardById } from "../../audiences";
 import { __signEvent } from "../audience/nip17";
 import { buildSprintTide } from "../audience/audience-events";
+import { publishesPlaintext } from "../kanban/publish";
 import { stampSubstrateEventId, type TideSubject } from "./snapshot";
 import type { TideDay } from "./compute";
 
@@ -92,12 +93,21 @@ export const publishTide = (
     const board = yield* loadBoardById(subject.board_id).pipe(
       Effect.catchAll(() => Effect.succeed(null)),
     );
-    if (board === null || board.encryption_active) {
+    // EFB-24 fix: this used to read `board === null || board.encryption_active`,
+    // which published a cleartext 30560 for a board that is private but has
+    // never minted an audience — the state every board is born into. Those
+    // boards' committed/done/remaining points were going to a public relay.
+    // Shares the predicate with the plaintext kanban publisher so the two
+    // gates cannot drift.
+    if (!publishesPlaintext(board)) {
       if (board !== null) {
         console.log(
           JSON.stringify({
             warn: "tide-publish-deferred",
-            reason: "private-wraps-failed",
+            // Distinguishes the two private cases now that both land here:
+            // an encrypted board whose wraps failed, versus a board that is
+            // private with no audience yet (nothing was ever going to wrap).
+            reason: board.encryption_active ? "private-wraps-failed" : "private-no-audience",
             board_id: subject.board_id,
             day: reading.day,
           }),

@@ -19,7 +19,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Audience, Db, DbError, bootstrap } from "../effects";
-import { AudienceKeyError, initializeBoardAudience } from "../audiences";
+import { AudienceKeyError, emitSecureBoardEvent, initializeBoardAudience } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -277,6 +277,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         archived_at_ms: null,
         created_at_ms: now,
         updated_at_ms: now,
+        // Publish is fired off the request path (EFB-24) — not landed yet.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, org_id, visibility, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -311,6 +313,12 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         event_type: "board_created",
         actor: claims.login,
         details: { slug, org_slug: org.slug },
+      });
+      yield* emitSecureBoardEvent(id, {
+        kind: "board.created",
+        board_id: id,
+        at_ms: now,
+        payload: { board },
       });
       return { board, org: orgView(org) };
     });
@@ -670,6 +678,12 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         audience_pubkey: audienceState.audience_pubkey,
         updated_at_ms: now,
       };
+      yield* emitSecureBoardEvent(current.id, {
+        kind: "board.updated",
+        board_id: current.id,
+        at_ms: now,
+        payload: { board },
+      });
       return { board };
     });
 
@@ -702,7 +716,14 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { slug: board.slug },
       });
-      return { board: { ...board, archived_at_ms, updated_at_ms: now } };
+      const updated = { ...board, archived_at_ms, updated_at_ms: now };
+      yield* emitSecureBoardEvent(board.id, {
+        kind: "board.updated",
+        board_id: board.id,
+        at_ms: now,
+        payload: { board: updated },
+      });
+      return { board: updated };
     });
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));

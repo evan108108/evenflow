@@ -224,16 +224,20 @@ describe("BoardEmitter wire-up (mutations fan out through the emitter)", () => {
     await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { title: "Renamed" }), {});
     await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("DELETE"), {});
     const boardId = h.db.boards[0]!["id"];
-    expect(h.emitter.events.map((e) => e.event.kind)).toEqual([
+    // Scoped to the issue family: board creation emits its own board.created
+    // since EFB-24, and the per-event assertions below are about issue
+    // events specifically (a board event carries no issue_id).
+    const issueEvents = h.emitter.events.filter((e) => e.event.kind.startsWith("issue."));
+    expect(issueEvents.map((e) => e.event.kind)).toEqual([
       "issue.created",
       "issue.transitioned",
       "issue.container_changed",
       "issue.updated",
       "issue.deleted",
     ]);
-    expect(h.emitter.events.every((e) => e.board_id === boardId)).toBe(true);
-    expect(h.emitter.events.every((e) => e.event.board_id === boardId)).toBe(true);
-    expect(h.emitter.events.every((e) => e.event.issue_id === issue.id)).toBe(true);
+    expect(issueEvents.every((e) => e.board_id === boardId)).toBe(true);
+    expect(issueEvents.every((e) => e.event.board_id === boardId)).toBe(true);
+    expect(issueEvents.every((e) => e.event.issue_id === issue.id)).toBe(true);
   });
 
   it("does not emit for a no-op transition or container move", async () => {

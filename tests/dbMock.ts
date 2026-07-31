@@ -523,6 +523,35 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { container, updated_at_ms });
           return;
         }
+        // EFB-24 substrate stamps. These MUST precede every other
+        // "UPDATE <table> SET" handler for the same tables: several of those
+        // match on a bare prefix and would swallow this statement, binding
+        // the wrong params and no-opping silently — the failure mode this
+        // file's other "must precede" comments exist to warn about.
+        if (sql.startsWith("UPDATE boardCache SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = boards.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { substrate_event_id });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { substrate_event_id });
+          return;
+        }
+        if (sql.startsWith("UPDATE commentCache SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = comments.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { substrate_event_id });
+          return;
+        }
+        if (sql.startsWith("UPDATE sprintCache SET substrate_event_id = ?")) {
+          const [substrate_event_id, id] = params;
+          const row = sprints.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { substrate_event_id });
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET title = ?")) {
           const [title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
