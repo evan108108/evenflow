@@ -66,6 +66,70 @@ Folding the second into the schema would force `parseRouteBody` to carry `R = Db
 
 Both still answer `400`. The split is about where the check lives, not what the caller sees.
 
+## Provenance — naming which person a pubkey is
+
+`IdentityRefFromInput` answers *"is this a well-formed identity?"*. It cannot answer *"is this the RIGHT person?"* — every pubkey in this codebase is a `string`, so an assignee, an author, a mover of a card and an audience target are all mutually substitutable as far as the compiler is concerned.
+
+EFB-33 is what that costs. `buildKanbanStatusChange` needed the actor who moved a card; the event carried none; the first draft reached for `issue.assignee_pubkey` — the owner of the work, usually somebody else entirely. It compiled. All 676 tests passed. It would have published false attribution to a signed public relay, where it cannot be retracted.
+
+This is the same family as EFB-53 and the checker in the meta-lesson below: **a guard that looks total and isn't.** `string` on an identity reference looks like typing. It types the shape and says nothing about the role, and the role is the part that was wrong.
+
+```ts
+export const Provenance = Schema.Struct({
+  source: ProvenanceSource,   // "route.caller" | "user.explicit" | "audit.system"
+  pubkey: IdentityRefFromInput,
+});
+```
+
+**`source` names the SEMANTIC ROLE of the pubkey, not the pipeline it travelled through.** A person can hold two roles in one request — the caller who posts a comment is also its author — and `source` picks which one is being asserted. Read `route.caller` as "this pubkey is the authenticated caller of the request being served," not "this value once passed through a route."
+
+The three values are a **closed union**. Do not add a fourth without a real use case:
+
+| `source` | The claim being made |
+|---|---|
+| `route.caller` | The JWT-authenticated caller of *this* request acted. |
+| `user.explicit` | An admin is acting on behalf of another user's issue (bulk operations). |
+| `audit.system` | No live human actor — server-generated tombstones, backfills, republishes. |
+
+Construct one through a named helper rather than a literal:
+
+```ts
+ProvenanceFromCaller(claims)        // takes Claims, NEVER a pubkey string
+ProvenanceFromSystem()              // takes nothing — nobody to name
+ProvenanceFromStoredActor(pubkey)   // audit.system, re-attesting a stored identity
+```
+
+`ProvenanceFromCaller` is the strong one, and the reason is that it **takes `Claims` and not a string**: there is no spelling of it that accepts a different person's pubkey. Prefer it wherever claims are in scope. `ProvenanceFromStoredActor` does take a bare string, and its safety is weaker and different in kind — the name, not the type, is what protects you. `ProvenanceFromStoredActor(issue.assignee_pubkey)` reads false on the page, where `actorPubkey: issue.assignee_pubkey` read fine.
+
+### Scope it to actor slots only
+
+**Provenance is for the ACTOR of a signed event — the person who did the thing.** It is not for references.
+
+- `assignee_pubkey` on an issue is a *reference* (who owns the work), not an actor. Leave it.
+- `p`-tag targets are *audience*. Leave them.
+- Pubkey lookups on read paths are *queries*. Leave them.
+
+Over-migration widens the type without adding safety and dilutes what `Provenance` signals when you do see it. Of the five `buildKanban*` builders, exactly two have an actor slot — `buildKanbanComment.author` and `buildKanbanStatusChange.actor`. `buildKanbanBoard` and `buildKanbanSprint` carry no pubkey at all, and `buildKanbanIssue` carries only the assignee reference. Two is the complete set, not a partial migration.
+
+### Rename the field when you migrate it
+
+`actorPubkey: string` → `actor: Provenance`, not `actorPubkey: Provenance`. The rename is what turns every un-migrated callsite into a **missing-field** error instead of a type mismatch that a `as any` can silence. The compile errors are the migration guide.
+
+### Provenance is compile-time only
+
+Only `.pubkey` reaches the wire. `source` exists to make the callsite name the role, and adding it to the event as a tag would be an on-wire compatibility change requiring a mirrored update in the gateway's validators. Events built through `Provenance` are byte-identical to the ones built before it — which is a property worth *proving* by diffing builder output against the previous implementation, not asserting.
+
+### Assert the substitution is impossible
+
+Guard the near-miss with `@ts-expect-error`, which fails the build if the line below it *does* compile:
+
+```ts
+// @ts-expect-error — a bare pubkey string is not a Provenance.
+actor: issue.assignee_pubkey,
+```
+
+An unused `@ts-expect-error` is itself a tsc error, so a clean typecheck is positive evidence that the substitution still fails — not an assumption that it does.
+
 ## Anti-patterns
 
 **Reading the body yourself.**
@@ -127,7 +191,7 @@ Existing behavior must not change except that previously-silent failures now ret
 ## Related tickets
 
 - **EFB-53** — `PATCH /issues/:id` accepted unknown keys silently. Closed by construction when the reference route migrated; the strict-unknown tests in `tests/boundary-discipline.test.ts` are its regression guard.
-- **EFB-58** — typed provenance for identity references in signed-event contexts. Generalizes the `Provenance` struct here to every signed-event builder; this document defines the shape, EFB-58 applies it.
+- **EFB-58** *(shipped)* — typed provenance for identity references in signed-event contexts. Applied the `Provenance` struct to both signed-event builders that have an actor slot, and added the constructors. See the Provenance section above.
 - **EFB-38 / EFB-42 / EFB-51** — the identity bugs `IdentityRefFromInput` exists to prevent.
 - **EFB-33** — the attribution bug `Provenance` exists to prevent.
 

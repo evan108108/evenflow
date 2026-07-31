@@ -18,6 +18,9 @@ import {
   IdentityRefFromInput,
   ImmutableField,
   Provenance,
+  ProvenanceFromCaller,
+  ProvenanceFromStoredActor,
+  ProvenanceFromSystem,
   ShortId,
   Uuid,
   decodeBody,
@@ -158,6 +161,37 @@ describe("primitives are pure — no Db, no Context, no harness", () => {
     // substitution impossible to perform silently.
     expect(await decode(Provenance, { source: "whatever", pubkey: HEX })).toEqual({
       reason: "source",
+    });
+  });
+
+  // EFB-58 — the three construction sites. Each names a different claim about
+  // where a pubkey came from, and the point of having three is that picking one
+  // is a decision the author has to make out loud.
+  it("the Provenance constructors each assert a different claim", () => {
+    const claims = {
+      provider: "nostr",
+      oauth_id: HEX,
+      login: "evan",
+      iat: 0,
+      exp: 0,
+    } as const;
+
+    // Takes Claims, never a pubkey — so it structurally cannot be handed some
+    // other person's key. That is the EFB-33 near-miss made unrepresentable.
+    expect(ProvenanceFromCaller(claims)).toEqual({
+      source: "route.caller",
+      pubkey: `nostr:${HEX}`,
+    });
+
+    // No argument at all: an event with no human actor has nobody to name, and
+    // the empty pubkey is what the pre-EFB-58 builders already put on the wire.
+    expect(ProvenanceFromSystem()).toEqual({ source: "audit.system", pubkey: "" });
+
+    // Same source, but re-attesting a stored identity rather than claiming
+    // there is none — a republished comment still belongs to its author.
+    expect(ProvenanceFromStoredActor(HEX)).toEqual({
+      source: "audit.system",
+      pubkey: HEX,
     });
   });
 
