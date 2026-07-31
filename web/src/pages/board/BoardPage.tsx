@@ -20,6 +20,7 @@ import {
   resolveKanbanLayout,
   type KanbanLayout,
 } from "../../lib/layout";
+import { boardViewOf, issuePath, viewPath } from "../../lib/boardView";
 import { issuesInColumn } from "../../lib/order";
 import { sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove } from "../../lib/types";
@@ -99,11 +100,10 @@ export const BoardPage = () => {
 
   const loadingLine = LOADING_LINES[Math.floor(Math.random() * LOADING_LINES.length)];
 
-  const view = () => {
-    if (location.pathname.endsWith("/backlog")) return "backlog";
-    if (location.pathname.endsWith("/icebox")) return "icebox";
-    return "kanban";
-  };
+  const view = () => boardViewOf(location.pathname, base());
+  // Opening an issue must not move you off the view you opened it from,
+  // so every issue URL we mint carries the current view.
+  const openPath = (ref: string) => issuePath(base(), view(), ref);
 
   // The deep-link segment is a short id (FLOW-42, preferred) or a UUID
   // (pre-migration bookmarks, SSE payloads).
@@ -118,7 +118,7 @@ export const BoardPage = () => {
   createEffect(() => {
     const issue = openIssue();
     if (issue?.short_id != null && params.issueRef !== issue.short_id) {
-      navigate(`${base()}/issues/${issue.short_id}`, { replace: true });
+      navigate(openPath(issue.short_id), { replace: true });
     }
   });
 
@@ -419,7 +419,7 @@ export const BoardPage = () => {
                 <KanbanView
                   store={store}
                   dnd={dnd}
-                  onOpen={(id) => navigate(`${base()}/issues/${id}`)}
+                  onOpen={(id) => navigate(openPath(id))}
                   highlightSprintId={highlightSprintId()}
                   filterSprintId={
                     activeSprint() !== undefined && !sprintFilterOff() ? activeSprint()!.id : null
@@ -432,10 +432,10 @@ export const BoardPage = () => {
                 />
               </Show>
               <Show when={view() === "backlog"}>
-                <BacklogView store={store} dnd={dnd} onOpen={(id) => navigate(`${base()}/issues/${id}`)} />
+                <BacklogView store={store} dnd={dnd} onOpen={(id) => navigate(openPath(id))} />
               </Show>
               <Show when={view() === "icebox"}>
-                <IceboxView store={store} dnd={dnd} onOpen={(id) => navigate(`${base()}/issues/${id}`)} />
+                <IceboxView store={store} dnd={dnd} onOpen={(id) => navigate(openPath(id))} />
               </Show>
 
               <Show when={dnd.draggingId()}>
@@ -454,7 +454,7 @@ export const BoardPage = () => {
                     store={store}
                     callerPubkey={callerPubkey()}
                     commentsVersion={commentsVersion}
-                    onClose={() => navigate(base())}
+                    onClose={() => navigate(viewPath(base(), view()))}
                   />
                 )}
               </Show>

@@ -64,7 +64,12 @@ export const App = () => (
       <Route path="/" />
       <Route path="/backlog" />
       <Route path="/icebox" />
+      {/* An issue sheet opens over whichever view you were on, so the view
+          stays in the path. Bare /issues/:ref is kept for old bookmarks and
+          resolves to kanban. */}
       <Route path="/issues/:issueRef" />
+      <Route path="/backlog/issues/:issueRef" />
+      <Route path="/icebox/issues/:issueRef" />
     </Route>
     <Route
       path="/:handle/:board_slug/settings"
