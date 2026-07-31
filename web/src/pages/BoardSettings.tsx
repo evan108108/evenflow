@@ -70,6 +70,7 @@ interface PendingInvite {
 }
 
 import { GithubSection } from "../components/GithubSection";
+import { WebhooksSection } from "../components/WebhooksSection";
 
 const api = <T,>(
   f: (c: ApiClientService) => Effect.Effect<T, ApiError>,
@@ -611,6 +612,7 @@ export const BoardSettings = () => {
 
       <Show when={tab() === "GitHub"}>
         <GithubSection apiBase={apiBase()} />
+        <WebhooksSection apiBase={apiBase()} />
       </Show>
 
       {/* Visibility lives on the General tab — it is an ordinary setting, not

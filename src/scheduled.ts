@@ -22,6 +22,7 @@ import { loadKanbanTideInput, loadSprintTideInput } from "./lib/tide/facts";
 import { rollForwardClosedDay, type TideSubject } from "./lib/tide/snapshot";
 import { publishTide } from "./lib/tide/publish";
 import { parseBoardRow } from "./shapes";
+import { sweepOutboundWebhooks } from "./lib/webhook-dispatch";
 
 /**
  * Two days: yesterday (the one being closed) and the day before it, which
@@ -163,11 +164,44 @@ export const rollForwardAllTides = (nowMs: number) =>
  * handler returns immediately and the runtime still waits for it — a cron
  * that awaited inline would hold the invocation open for no benefit.
  */
+/**
+ * The every-minute trigger. Must match wrangler.toml's `crons` entry exactly —
+ * Cloudflare hands the schedule back as the literal string it was configured
+ * with, so a typo here silently routes every tick to the tide branch.
+ */
+export const WEBHOOK_SWEEP_CRON = "* * * * *";
+
 export const scheduled = (
   event: ScheduledController,
   env: WorkerEnv,
   ctx: ExecutionContext,
 ): void => {
+  // Two schedules, one entrypoint. EFB-13 added the minute cron, and it must
+  // NOT run the tide roll-forward — that is a whole-table sweep meant to run
+  // once a day. Branching on `event.cron` is what keeps them separate; the
+  // daily tide schedule stays the default so an unrecognised cron still does
+  // the thing this handler originally existed for.
+  if (event.cron === WEBHOOK_SWEEP_CRON) {
+    ctx.waitUntil(
+      Effect.runPromise(
+        Effect.provide(
+          sweepOutboundWebhooks(event.scheduledTime, env.EVENFLOW_WEBHOOK_SECRET),
+          bootstrap(env),
+        ).pipe(
+          Effect.catchAllDefect((defect) =>
+            Effect.sync(() => {
+              console.log(
+                JSON.stringify({ warn: "webhook-sweep-defect", detail: String(defect) }),
+              );
+              return { attempted: 0, delivered: 0, stuck: 0 };
+            }),
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+
   ctx.waitUntil(
     Effect.runPromise(
       Effect.provide(rollForwardAllTides(event.scheduledTime), bootstrap(env)).pipe(
