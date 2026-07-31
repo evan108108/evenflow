@@ -12,7 +12,8 @@ import type { Board, Issue } from "../../lib/types";
 import type { Column } from "../../lib/columns";
 import type { DndHandle } from "../../lib/dnd";
 import type { BoardStore } from "./store";
-import { EMPTY_FILTERS, matchesFilters } from "../../lib/boardFilters";
+import { EMPTY_FILTERS, UNASSIGNED, matchesFilters } from "../../lib/boardFilters";
+import { FilterPicker } from "../../components/FilterPicker";
 import { BacklogView } from "./BacklogView";
 import { KanbanView } from "./KanbanView";
 
@@ -266,6 +267,113 @@ describe("sprint filter and board filters compose", () => {
     const { container, cleanup } = kanban({ sprint: "s1", pred: mineOnly(SONA) });
     await flush();
     expect(titles(container)).toEqual(["Mine in sprint"]);
+    cleanup();
+  });
+});
+
+describe("FilterPicker", () => {
+  const options = [
+    { value: UNASSIGNED, label: "Unassigned" },
+    { value: SONA, label: "Sona" },
+    { value: EVAN, label: "Evan" },
+  ];
+
+  const picker = (
+    selected: string[],
+    onToggle: (value: string) => void = () => undefined,
+    onClear: () => void = () => undefined,
+  ) =>
+    mount(() => (
+      <FilterPicker
+        label="Assignee"
+        options={options}
+        selected={selected}
+        onToggle={onToggle}
+        onClear={onClear}
+        emptyLine="Nobody to filter by yet."
+      />
+    ));
+
+  const openMenu = async (container: HTMLElement) => {
+    container.querySelector<HTMLButtonElement>(".filter-chip")!.click();
+    await flush();
+  };
+
+  it("stays closed until clicked, and closes again on a second click", async () => {
+    const { container, cleanup } = picker([]);
+    await flush();
+    expect(container.querySelector(".filter-menu")).toBeNull();
+    await openMenu(container);
+    expect(container.querySelector(".filter-menu")).not.toBeNull();
+    await openMenu(container);
+    expect(container.querySelector(".filter-menu")).toBeNull();
+    cleanup();
+  });
+
+  // The count carries the state so a long roster can't overflow the header.
+  it("shows a count on the chip instead of the picked names", async () => {
+    const bare = picker([]);
+    await flush();
+    expect(bare.container.querySelector(".filter-chip")!.textContent).toBe("Assignee");
+    expect(bare.container.querySelector(".filter-chip")!.classList.contains("on")).toBe(false);
+    bare.cleanup();
+
+    const two = picker([SONA, EVAN]);
+    await flush();
+    expect(two.container.querySelector(".filter-chip")!.textContent).toBe("Assignee · 2");
+    expect(two.container.querySelector(".filter-chip")!.classList.contains("on")).toBe(true);
+    two.cleanup();
+  });
+
+  it("reflects the selection as checked boxes and reports toggles", async () => {
+    const toggled: string[] = [];
+    const { container, cleanup } = picker([SONA], (v: string) => toggled.push(v));
+    await flush();
+    await openMenu(container);
+    const boxes = [...container.querySelectorAll<HTMLInputElement>(".filter-menu-item input")];
+    expect(boxes.map((b) => b.checked)).toEqual([false, true, false]);
+    boxes[2]!.click();
+    await flush();
+    expect(toggled).toEqual([EVAN]);
+    cleanup();
+  });
+
+  it("offers Clear only while something is selected", async () => {
+    const bare = picker([]);
+    await flush();
+    await openMenu(bare.container);
+    expect(bare.container.querySelector(".filter-menu-clear")).toBeNull();
+    bare.cleanup();
+
+    let cleared = 0;
+    const some = picker([SONA], () => undefined, () => {
+      cleared += 1;
+    });
+    await flush();
+    await openMenu(some.container);
+    some.container.querySelector<HTMLButtonElement>(".filter-menu-clear")!.click();
+    await flush();
+    expect(cleared).toBe(1);
+    some.cleanup();
+  });
+
+  it("explains itself when there is nothing to pick from", async () => {
+    const { container, cleanup } = mount(() => (
+      <FilterPicker
+        label="Label"
+        options={[]}
+        selected={[]}
+        onToggle={() => undefined}
+        onClear={() => undefined}
+        emptyLine="No labels on this board yet."
+      />
+    ));
+    await flush();
+    await openMenu(container);
+    expect(container.querySelector(".filter-menu-empty")!.textContent).toBe(
+      "No labels on this board yet.",
+    );
+    expect(container.querySelector(".filter-menu-item")).toBeNull();
     cleanup();
   });
 });

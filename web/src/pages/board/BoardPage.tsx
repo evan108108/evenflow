@@ -23,10 +23,13 @@ import {
 import { boardViewOf, issuePath, viewPath } from "../../lib/boardView";
 import {
   EMPTY_FILTERS,
+  UNASSIGNED,
   hasActiveFilters,
   matchesFilters,
   type BoardFilters,
 } from "../../lib/boardFilters";
+import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
+import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
 import { issuesInColumn } from "../../lib/order";
 import { sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
@@ -77,6 +80,39 @@ export const BoardPage = () => {
     if (!hasActiveFilters(active)) return undefined;
     return (issue: Issue) => matchesFilters(issue, active, viewer);
   });
+  const toggleIn = (key: "assignees" | "labels") => (value: string) =>
+    setFilters((f) => ({
+      ...f,
+      [key]: f[key].includes(value) ? f[key].filter((v) => v !== value) : [...f[key], value],
+    }));
+  const clearIn = (key: "assignees" | "labels") => () =>
+    setFilters((f) => ({ ...f, [key]: [] }));
+  // Assignee options come from the members list, unioned with anyone actually
+  // holding a card. Two reasons for the union: /members needs contributor
+  // scope, so a plain viewer's list comes back empty, and a former member can
+  // still own an issue — the same fallback IssueSheet does for a single
+  // assignee, widened to the whole picker.
+  const assigneeOptions = createMemo<FilterOption[]>(() => {
+    const seen = new Set<string>();
+    for (const m of store.members()) seen.add(m.pubkey);
+    for (const i of store.issues()) if (i.assignee_pubkey !== null) seen.add(i.assignee_pubkey);
+    for (const pubkey of seen) requestProfile(pubkey);
+    const named = [...seen]
+      .map((pubkey) => ({ value: pubkey, label: authorLabel(profileFor(pubkey), pubkey, null) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    // Unassigned is a real option, not the empty state — it sits first so it
+    // doesn't get lost at the bottom of a long roster.
+    return [{ value: UNASSIGNED, label: "Unassigned" }, ...named];
+  });
+  // Labels come from the loaded issues, NOT board.labels: that field is typed
+  // ReadonlyArray<unknown> and has no other reader in the app. Deriving from
+  // issues keeps every option typed and guarantees it matches at least one
+  // card, so the picker can't offer a choice that filters to nothing.
+  const labelOptions = createMemo<FilterOption[]>(() =>
+    [...new Set(store.issues().flatMap((i) => i.labels))]
+      .sort((a, b) => a.localeCompare(b))
+      .map((label) => ({ value: label, label })),
+  );
   // Bumped whenever something that could move the tide lands; TideBadge
   // refetches on the change rather than recomputing client-side.
   const [tideVersion, setTideVersion] = createSignal(0);
@@ -439,6 +475,22 @@ export const BoardPage = () => {
                   >
                     Show my tickets
                   </button>
+                  <FilterPicker
+                    label="Assignee"
+                    options={assigneeOptions()}
+                    selected={filters().assignees}
+                    onToggle={toggleIn("assignees")}
+                    onClear={clearIn("assignees")}
+                    emptyLine="Nobody to filter by yet."
+                  />
+                  <FilterPicker
+                    label="Label"
+                    options={labelOptions()}
+                    selected={filters().labels}
+                    onToggle={toggleIn("labels")}
+                    onClear={clearIn("labels")}
+                    emptyLine="No labels on this board yet."
+                  />
                 </div>
               </Show>
 
