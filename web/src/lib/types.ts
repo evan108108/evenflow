@@ -75,6 +75,10 @@ export interface Issue {
   // pre-21 cached payloads still parse.
   readonly external_state?: string | null;
   readonly external_state_updated_at_ms?: number | null;
+  // The issue this one duplicates (EFB-30). Null = not a duplicate; optional
+  // so pre-0024 cached payloads still parse. The target is always on the same
+  // board, which is what lets the card render it as a short-id badge.
+  readonly duplicate_of_issue_id?: string | null;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
   readonly completed_at_ms: number | null;

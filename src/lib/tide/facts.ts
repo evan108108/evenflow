@@ -6,6 +6,22 @@
 //
 // Both scopes come out as the same `TideInput`, so the compute path has no
 // idea whether it is replaying a sprint or a kanban board.
+//
+// DUPLICATES ARE EXCLUDED HERE, in the load, not in compute.ts (EFB-30).
+// An issue with `duplicate_of_issue_id` set never enters `TideInput` at all,
+// so it contributes 0 to committed_pts and 0 to done_pts on every day of the
+// replay — including the days before it was marked. That retroactivity is the
+// point, not a rounding error: a duplicate was never extra work, it was the
+// discovery that the work already had an id. Leaving it in would inflate the
+// commitment on every historical day and then "deliver" it for free the
+// moment somebody noticed the duplication, which reads as a velocity spike
+// earned by filing a ticket twice.
+//
+// The filter belongs in the query rather than in compute.ts because compute
+// is a pure replay over facts and a duplicate has no facts worth replaying;
+// filtering there would mean carrying rows through the whole pipeline in
+// order to drop them at the end. Note it is a HARD exclusion, unlike the
+// done-window test below: no day of the range ever sees the row.
 
 import { Effect } from "effect";
 import { Db, type DbError } from "../../effects";
@@ -140,7 +156,7 @@ export const loadSprintTideInput = (
     }
     const issues = yield* queryByIds<IssueRow>(
       (marks) =>
-        `SELECT id, estimate, status, created_at_ms FROM issueCache WHERE id IN (${marks})`,
+        `SELECT id, estimate, status, created_at_ms FROM issueCache WHERE id IN (${marks}) AND duplicate_of_issue_id IS NULL`,
       [...windows.keys()],
     );
     const facts = yield* attachHistory(issues, (id) => windows.get(id) ?? []);
@@ -186,6 +202,7 @@ export const loadKanbanTideInput = (
          FROM issueCache i
         WHERE i.board_id = ?
           AND i.created_at_ms <= ?
+          AND i.duplicate_of_issue_id IS NULL
           AND (${openTest}
                OR EXISTS (SELECT 1 FROM statusChangeCache s
                            WHERE s.issue_id = i.id AND s.occurred_at_ms >= ?))`,

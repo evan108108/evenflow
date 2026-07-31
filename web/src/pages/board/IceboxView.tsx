@@ -5,6 +5,7 @@ import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { StreamSentinel } from "../../components/StreamSentinel";
 import { moveZone, type DndHandle } from "../../lib/dnd";
+import { refFor, shortIdIndex } from "../../lib/duplicates";
 import type { BoardStore } from "./store";
 
 export const IceboxView = (props: {
@@ -17,6 +18,9 @@ export const IceboxView = (props: {
       .issues()
       .filter((i) => i.container === "icebox")
       .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+  // Over EVERY loaded issue, not just the icebox — an iced duplicate almost
+  // always points at something that isn't iced.
+  const duplicateRefs = () => shortIdIndex(props.store.issues());
 
   const backlogZone = moveZone("promote_to_backlog");
   const activeZone = moveZone("promote_to_active");
@@ -51,7 +55,15 @@ export const IceboxView = (props: {
           fallback={<p class="empty-state">Cold storage. Thoughts on ice.</p>}
         >
           <For each={iced()}>
-            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
+            {(issue) => (
+              <IssueCard
+                issue={issue}
+                dnd={props.dnd}
+                onOpen={props.onOpen}
+                duplicateOfRef={refFor(duplicateRefs(), issue)}
+                compact
+              />
+            )}
           </For>
       <StreamSentinel stream={props.store.streamFor("icebox")} />
         </Show>

@@ -130,6 +130,7 @@ export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate
       position: (issue["position"] as number | null) ?? null,
       sprintId: (issue["sprint_id"] as string | null) ?? null,
       externalState: (issue["external_state"] as string | null) ?? null,
+      duplicateOfIssueId: (issue["duplicate_of_issue_id"] as string | null) ?? null,
       deleted: event.kind === "issue.deleted",
     });
   }

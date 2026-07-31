@@ -16,6 +16,7 @@ import { StreamSentinel } from "../../components/StreamSentinel";
 import { cardZone, moveZone, parseZone, transitionZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
+import { refFor, shortIdIndex } from "../../lib/duplicates";
 import type { Issue } from "../../lib/types";
 import type { BoardStore } from "./store";
 
@@ -56,6 +57,9 @@ const StatusStack = (props: {
     const pred = props.matchesFilters;
     return pred === undefined ? rows : rows.filter(pred);
   };
+  // Over EVERY loaded issue, not just the active container: a duplicate in a
+  // status column usually points at something sitting in the backlog.
+  const duplicateRefs = () => shortIdIndex(props.store.issues());
   // Vertical stack reads top-to-bottom, so we flip the column order — Done
   // on top, walk backwards to Todo at the bottom. Reads like "here's what's
   // freshest first" instead of columns' left-to-right progression.
@@ -138,6 +142,7 @@ const StatusStack = (props: {
                         onOpen={props.onOpen}
                         zone={cardZone(column.id, issue.id)}
                         indicator={indicatorFor(column, issue)}
+                        duplicateOfRef={refFor(duplicateRefs(), issue)}
                         highlight={
                           props.highlightSprintId != null &&
                           issue.sprint_id === props.highlightSprintId
@@ -165,6 +170,10 @@ const StatusStack = (props: {
 const RailSection = (props: {
   title: string;
   issues: readonly Issue[];
+  /** id → short id over the loaded issues, for the duplicate-of badge
+   *  (EFB-30). Passed down rather than derived here: this section has no
+   *  store, and it renders a slice, not the board. */
+  duplicateRefs: Map<string, string>;
   /** Container-move zone this section accepts drops for. */
   zone: string;
   dnd: DndHandle;
@@ -205,7 +214,15 @@ const RailSection = (props: {
           fallback={<p class="empty-state">{props.emptyLine}</p>}
         >
           <For each={props.issues}>
-            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
+            {(issue) => (
+              <IssueCard
+                issue={issue}
+                dnd={props.dnd}
+                onOpen={props.onOpen}
+                duplicateOfRef={refFor(props.duplicateRefs, issue)}
+                compact
+              />
+            )}
           </For>
         </Show>
       </Show>
@@ -234,6 +251,10 @@ const KanbanRail = (props: {
     keep(props.store.issues().filter((i) => i.container === "icebox")).sort(
       (a, b) => b.updated_at_ms - a.updated_at_ms,
     );
+  // Indexed over EVERY loaded issue, not the filtered slice: a duplicate's
+  // target is frequently something the current filter excludes, and the badge
+  // should still name it.
+  const duplicateRefs = () => shortIdIndex(props.store.issues());
 
   return (
     <aside class="kanban-rail">
@@ -243,6 +264,7 @@ const KanbanRail = (props: {
         zone={moveZone("promote_to_backlog")}
         dnd={props.dnd}
         onOpen={props.onOpen}
+        duplicateRefs={duplicateRefs()}
         emptyLine="Nothing on your mind."
       />
       <RailSection
@@ -251,6 +273,7 @@ const KanbanRail = (props: {
         zone={moveZone("send_to_icebox")}
         dnd={props.dnd}
         onOpen={props.onOpen}
+        duplicateRefs={duplicateRefs()}
         emptyLine="Cold storage. Thoughts on ice."
         collapsible
       />
