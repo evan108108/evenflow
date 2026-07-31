@@ -11,6 +11,7 @@ import type { RuntimeFiber } from "effect/Fiber";
 import "../../lib/board.css";
 import { AuthManager, SseStream, appRuntime, type BoardEvent } from "../../effects";
 import { createDnd, parseZone } from "../../lib/dnd";
+import { shouldRedirectAnonymous } from "../../lib/boardAccess";
 import { decryptBoardPayload, isEncryptedPayload } from "../../lib/boardKeys";
 import { pubkeyOfJwt } from "../../lib/jwt";
 import {
@@ -69,6 +70,16 @@ export const BoardPage = () => {
     orgHandle() !== null ? `/@${orgHandle()}/${boardSlug}` : `/boards/${boardSlug}`;
 
   const [callerPubkey, setCallerPubkey] = createSignal<string | null>(null);
+  /**
+   * Read-only posture for the whole board (EFB-47). A signed-out visitor may
+   * reach a PUBLIC board and must be able to read all of it while reaching
+   * none of the mutations. Every mutation affordance below gates on this one
+   * derived value rather than re-deriving `callerPubkey() === null` at each
+   * site, so "what does a viewer see" is answerable by grepping one name.
+   * Mirrors IssueSheet's existing `readOnly = () => props.callerPubkey === null`,
+   * which already gates that surface in seven places.
+   */
+  const boardReadOnly = () => callerPubkey() === null;
   const [showNewIssue, setShowNewIssue] = createSignal(false);
   const [highlightSprintId, setHighlightSprintId] = createSignal<string | null>(null);
   // Phase 21c — sprint chip is now a filter, not a spotlight. Default ON
@@ -223,6 +234,12 @@ export const BoardPage = () => {
   });
 
   const dnd = createDnd((issueId, zone) => {
+    // Drag is the one mutation with no button to hide, so it is stopped here
+    // at the single drop handler every view shares — gating the three views
+    // individually would leave a bypass the next view to be added inherits
+    // (EFB-47). Cards still lift and follow the pointer for a signed-out
+    // visitor; only the write is refused.
+    if (boardReadOnly()) return;
     const issue = store.issues().find((i) => i.id === issueId);
     const target = parseZone(zone);
     if (issue === undefined || target === null) return;
@@ -304,13 +321,28 @@ export const BoardPage = () => {
   onMount(() => {
     void appRuntime
       .runPromise(Effect.flatMap(AuthManager, (a) => a.get()))
-      .then((jwt) => {
-        if (jwt === null) {
+      .then(async (jwt) => {
+        setCallerPubkey(jwt === null ? null : pubkeyOfJwt(jwt));
+
+        // Load BEFORE deciding whether to bounce: visibility is not knowable
+        // until the board resolves. This ordering is load-bearing — the
+        // previous shape returned early on a null JWT and so never called
+        // store.load() at all, which is why a signed-out visitor could not
+        // have rendered a public board even with the redirect removed.
+        await store.load();
+
+        // Rule and rationale live in shouldRedirectAnonymous, which is unit
+        // tested — this branch is otherwise unreachable without a router,
+        // the Effect runtime and an AuthManager, which is how it went
+        // unverified long enough to ship the bug EFB-47 fixes.
+        if (shouldRedirectAnonymous(jwt, store.board())) {
           navigate("/", { replace: true });
           return;
         }
-        setCallerPubkey(pubkeyOfJwt(jwt));
-        void store.load();
+
+        // Anonymous subscribers are allowed on a public board (the stream
+        // route resolves at "viewer" scope), so read-only visitors get live
+        // updates like everyone else rather than a silently frozen board.
         sseFiber = appRuntime.runFork(
           Effect.flatMap(SseStream, (sse) =>
             Stream.runForEach(
@@ -410,17 +442,25 @@ export const BoardPage = () => {
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
                 </Show>
                 <div class="spacer" />
+                {/* Sprint history stays: it is a read-only view, and a
+                    signed-out visitor on a public board may read it. */}
                 <a class="btn" href={`${base()}/sprints`} title="Sprint history">
                   Sprints
                 </a>
-                <Show when={orgHandle()}>
+                {/* Settings and New issue are mutation entry points, so they
+                    are hidden rather than disabled for a signed-out viewer —
+                    a disabled control still advertises an action they have no
+                    way to take (EFB-47). */}
+                <Show when={orgHandle() && !boardReadOnly()}>
                   <a class="btn" href={`${base()}/settings`} title="Board settings">
                     Settings
                   </a>
                 </Show>
-                <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
-                  + New issue
-                </button>
+                <Show when={!boardReadOnly()}>
+                  <button ref={newIssueButton} class="btn btn-solid" onClick={() => setShowNewIssue(true)}>
+                    + New issue
+                  </button>
+                </Show>
               </header>
 
               <div class="tabs-row">
@@ -461,7 +501,11 @@ export const BoardPage = () => {
                     );
                   }}
                 </Show>
-                <Show when={activeSprint()}>
+                {/* The sprint chip above stays interactive — it only filters,
+                    which needs no auth. This one completes the sprint. */}
+                {/* Guard FIRST so the `&&` result is the sprint, not a
+                    boolean — Show hands the callback its `when` value. */}
+                <Show when={!boardReadOnly() && activeSprint()}>
                   {(sprint) => (
                     <button
                       class="btn btn-small btn-quiet"
@@ -610,6 +654,7 @@ export const BoardPage = () => {
                   dnd={dnd}
                   onOpen={(id) => navigate(openPath(id))}
                   matchesFilters={filterPredicate()}
+                  readOnly={boardReadOnly()}
                 />
               </Show>
               <Show when={view() === "icebox"}>
