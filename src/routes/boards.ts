@@ -277,6 +277,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         archived_at_ms: null,
         created_at_ms: now,
         updated_at_ms: now,
+        // Publish is fired off the request path (EFB-24) — not landed yet.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO boardCache (id, pubkey, slug, title, description, columns, labels, member_policy, is_encrypted, issue_prefix, next_issue_number, org_id, visibility, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

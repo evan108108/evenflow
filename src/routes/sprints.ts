@@ -231,6 +231,8 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         points_completed: null,
         points_carried: null,
         adds_mid_sprint: 0,
+        // Publish is fired off the request path (EFB-24) — not landed yet.
+        substrate_event_id: null,
       };
       yield* db.execute(
         "INSERT INTO sprintCache (id, board_id, name, goal, status, planned_days, started_at_ms, completed_at_ms, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
