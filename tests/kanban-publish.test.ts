@@ -389,14 +389,17 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     expect(res.status).toBe(200);
     await settle();
 
-    const change = eventsOf(h).find((e) => e.kind === 30553);
-    expect(change).toBeDefined();
-
-    // The `d` tag is the statusChangeCache row id — that identity is the
-    // reason this kind needed the threading at all.
+    // Select the 30553 BY ITS ROW, not by position. EFB-56 made creation
+    // publish a 30553 of its own (the null → first-column change), so "the
+    // first 30553" is no longer this transition's — it is the creation's. The
+    // row identity was always the right key; taking [0] only worked while
+    // transitions were the sole publisher.
     const row = h.db.statusChanges.find((r) => r["to_status"] === "In Progress")!;
     expect(row).toBeDefined();
-    expect(change!.tags.find((t) => t[0] === "d")?.[1]).toBe(row["id"]);
+    const change = eventsOf(h).find(
+      (e) => e.kind === 30553 && e.tags.find((t) => t[0] === "d")?.[1] === row["id"],
+    );
+    expect(change).toBeDefined();
     expect(row["substrate_event_id"]).toBe(change!.id);
   });
 
@@ -462,7 +465,14 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     await h.app.request(`/api/v0/issues/${issue.id}/send_to_icebox`, jsonReq("POST", {}), {});
     await settle();
 
-    const change = eventsOf(h).find((e) => e.kind === 30553)!;
+    // By row, not by position — creation now publishes a 30553 of its own
+    // (EFB-56), so [0] would be the creation's, whose to_container is where the
+    // issue was born rather than where this move sent it.
+    const row = h.db.statusChanges.find((r) => r["to_container"] === "icebox")!;
+    expect(row).toBeDefined();
+    const change = eventsOf(h).find(
+      (e) => e.kind === 30553 && e.tags.find((t) => t[0] === "d")?.[1] === row["id"],
+    )!;
     expect(change).toBeDefined();
     const content = JSON.parse(change.content) as {
       from_container: string;
@@ -530,7 +540,84 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     expect(res.status).toBe(200); // the mutation does not care
     await settle();
 
-    const changeRow = h.db.statusChanges.find((r) => r["issue_id"] === issue.id)!;
+    // The TRANSITION's row specifically. Since EFB-56 the issue already has a
+    // creation-time row, and that one was published normally — it happened
+    // before `failPosts` was set, so it carries a substrate id. Asserting on
+    // "the first row for this issue" would now be asserting about the wrong
+    // event entirely, and would fail for a reason unrelated to the gateway.
+    const changeRow = h.db.statusChanges.find(
+      (r) => r["issue_id"] === issue.id && r["to_status"] === "In Progress",
+    )!;
+    expect(changeRow).toBeDefined();
     expect(changeRow["substrate_event_id"] ?? null).toBeNull();
+  });
+
+  // ── EFB-56 — creation is a status change too ──────────────────────────
+  //
+  // Creation writes a real null → first-column statusChangeCache row, but the
+  // id used to be discarded at the creation callsite, so `issue.created`
+  // referenced nothing and the publish path had no 30553 to fan out. The
+  // consequence was semantic, not cosmetic: the substrate's audit trail for an
+  // issue began at its FIRST TRANSITION. The one status change every issue is
+  // guaranteed to have was the one guaranteed never to be published.
+
+  it("publishes BOTH the 30551 and a 30553 when an issue is created", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h, { title: "Born in Todo" });
+    await settle();
+
+    const kinds = kindsOf(h);
+    expect(kinds).toContain(30551);
+    expect(kinds).toContain(30553);
+  });
+
+  it("keys the creation 30553 to the null-to-first-column row via its d tag", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h, { title: "Born in Todo" });
+    await settle();
+
+    // The creation row is the one with no prior status. Identified by that
+    // rather than by position, for the same reason the tests above were
+    // rewritten: position stops meaning what you think once a second row can
+    // exist for the same issue.
+    const row = h.db.statusChanges.find(
+      (r) => r["issue_id"] === issue.id && r["from_status"] === null,
+    )!;
+    expect(row).toBeDefined();
+
+    const change = eventsOf(h).find(
+      (e) => e.kind === 30553 && e.tags.find((t) => t[0] === "d")?.[1] === row["id"],
+    );
+    expect(change).toBeDefined();
+
+    // Stamped back, exactly as a transition's row is — this is what proves the
+    // id survived the whole round trip rather than merely being generated.
+    expect(row["substrate_event_id"]).toBe(change!.id);
+  });
+
+  it("carries the creation's from/to on the published 30553", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h, { title: "Born in Todo" });
+    await settle();
+
+    const row = h.db.statusChanges.find(
+      (r) => r["issue_id"] === issue.id && r["from_status"] === null,
+    )!;
+    const change = eventsOf(h).find(
+      (e) => e.kind === 30553 && e.tags.find((t) => t[0] === "d")?.[1] === row["id"],
+    )!;
+    const content = JSON.parse(change.content) as {
+      from_status: string | null;
+      to_status: string | null;
+    };
+
+    // from_status null is the whole point: this is the null → first-column
+    // change, and an event that lost it would be indistinguishable from an
+    // ordinary transition.
+    expect(content.from_status).toBeNull();
+    expect(content.to_status).toBe(row["to_status"]);
   });
 });
