@@ -1374,6 +1374,27 @@ select:disabled {
   position: static;
 }
 
+/* EFB-30 — "→ EFB-7" beside the card's own ref. Quieter than the short-id
+   chip next to it on purpose: the card's identity should still read first,
+   with the pointer as an annotation on it rather than a competing label.
+   Monospace so the two refs line up as the same KIND of thing. */
+.issue-card .card-duplicate-of {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--color-ink-soft);
+  opacity: 0.75;
+}
+
+/* The ref row is absolutely positioned, so the title clears it with a fixed
+   padding — which the badge would overrun. Widen only for cards that carry
+   one, rather than reserving the space on every card for a state that is
+   rare. */
+.issue-card:has(.card-duplicate-of) .title {
+  padding-right: 9.4rem;
+}
+
 .sheet-row .type-badge {
   margin-right: 0.45rem;
 }

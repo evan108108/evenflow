@@ -20,6 +20,7 @@ import { Author } from "./Author";
 import { AssigneeAvatar } from "./AssigneeAvatar";
 import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
 import { createRenderEffect } from "solid-js";
+import { IssuePicker } from "./IssuePicker";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -65,6 +66,10 @@ export const IssueSheet = (props: {
   const [commentBusy, setCommentBusy] = createSignal(false);
   const [commentError, setCommentError] = createSignal<string | null>(null);
   const [labelDraft, setLabelDraft] = createSignal("");
+  const [showDuplicate, setShowDuplicate] = createSignal(false);
+  const [duplicateTarget, setDuplicateTarget] = createSignal<Issue | null>(null);
+  const [duplicateBusy, setDuplicateBusy] = createSignal(false);
+  const [duplicateError, setDuplicateError] = createSignal<string | null>(null);
 
   const [comments, { refetch: refetchComments }] = createResource(
     () => [props.issue.id, props.commentsVersion()] as const,
@@ -197,6 +202,37 @@ export const IssueSheet = (props: {
     }
   };
 
+  // The issue this one duplicates, resolved to a card for the badge. Only
+  // resolvable when the target is among the loaded pages — the pointer is
+  // authoritative either way, so an unresolved target still renders (as the
+  // raw pointer) rather than disappearing.
+  const duplicateOf = () => {
+    const targetId = props.issue.duplicate_of_issue_id ?? null;
+    if (targetId === null) return null;
+    return props.store.issues().find((i) => i.id === targetId) ?? null;
+  };
+
+  const applyDuplicate = async (targetId: string | null) => {
+    if (duplicateBusy()) return;
+    setDuplicateBusy(true);
+    setDuplicateError(null);
+    try {
+      const updated = await props.store.markDuplicateOf(props.issue, targetId);
+      if (updated === null) {
+        setDuplicateError(
+          targetId === null
+            ? "Couldn't clear the duplicate mark. Try again."
+            : "Couldn't mark it as a duplicate — check that issue is still on this board.",
+        );
+        return;
+      }
+      setShowDuplicate(false);
+      setDuplicateTarget(null);
+    } finally {
+      setDuplicateBusy(false);
+    }
+  };
+
   return (
     <>
       <div class="sheet-overlay" onClick={props.onClose} />
@@ -243,6 +279,24 @@ export const IssueSheet = (props: {
                   }}
                 >
                   Move to another board…
+                </button>
+                {/* EFB-30. Sits ABOVE Delete because it is the answer most
+                    of the time somebody reaches for Delete: the ticket is a
+                    duplicate, and pointing at the original keeps the context
+                    the second filing carried. Not hidden behind a reveal —
+                    both are ordinary actions and the delete confirm is
+                    already the safety net. */}
+                <button
+                  type="button"
+                  class="user-nav-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setDuplicateTarget(null);
+                    setDuplicateError(null);
+                    setShowDuplicate(true);
+                  }}
+                >
+                  Mark as duplicate of…
                 </button>
                 {/* Deleting one issue sits with the other issue-level
                     actions rather than in a danger zone of its own — the
@@ -526,6 +580,62 @@ export const IssueSheet = (props: {
           </div>
         </div>
 
+        {/* Only present when the issue IS a duplicate — an empty "Duplicate
+            of: —" row on every other issue would be noise for a state that
+            is rare and, unlike estimate or assignee, not a field anyone is
+            expected to fill in. */}
+        <Show when={props.issue.duplicate_of_issue_id}>
+          {(targetId) => (
+            <div class="sheet-row">
+              <span class="key">Duplicate of</span>
+              <span style={{ display: "flex", "align-items": "center", gap: "0.5rem", flex: "1" }}>
+                <Show
+                  when={duplicateOf()}
+                  fallback={
+                    // Target isn't in the loaded pages (or was deleted since).
+                    // The pointer is still the truth, so show it rather than
+                    // pretending the issue isn't a duplicate.
+                    <span class="muted" title={targetId()}>
+                      another issue
+                    </span>
+                  }
+                >
+                  {(target) => (
+                    <>
+                      <Show when={target().short_id}>
+                        {(shortId) => <IssueRef shortId={shortId()} class="card-ref" />}
+                      </Show>
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          "text-overflow": "ellipsis",
+                          "white-space": "nowrap",
+                        }}
+                      >
+                        {target().title}
+                      </span>
+                    </>
+                  )}
+                </Show>
+                <Show when={!readOnly()}>
+                  <button
+                    type="button"
+                    class="btn"
+                    style={{ "margin-left": "auto", padding: "0.1rem 0.55rem" }}
+                    disabled={duplicateBusy()}
+                    // Clearing the pointer does NOT move the issue back out
+                    // of Done: that transition really happened, and the audit
+                    // trail is append-only even though the state reverts.
+                    onClick={() => void applyDuplicate(null)}
+                  >
+                    Clear
+                  </button>
+                </Show>
+              </span>
+            </div>
+          )}
+        </Show>
+
         <Show when={props.issue.github_links.length > 0}>
           <div class="sheet-row">
             <span class="key">GitHub</span>
@@ -695,6 +805,50 @@ export const IssueSheet = (props: {
           </For>
         </section>
       </aside>
+
+      <Show when={showDuplicate()}>
+        <div
+          class="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setShowDuplicate(false)}
+        >
+          <div class="modal" role="dialog" aria-label="Mark as duplicate">
+            <h2>Mark as duplicate of…</h2>
+            <p class="muted" style={{ "font-size": "0.85rem" }}>
+              This issue moves to Done and stops counting toward the tide. Nothing is deleted —
+              the pointer stays, and you can clear it later.
+            </p>
+            <IssuePicker
+              apiBase={props.store.apiBase}
+              excludeIssueId={props.issue.id}
+              selected={duplicateTarget()}
+              onSelect={setDuplicateTarget}
+            />
+            <Show when={duplicateError()}>
+              <p class="muted" role="alert" style={{ "margin-top": "0.6rem" }}>
+                {duplicateError()}
+              </p>
+            </Show>
+            <div class="actions" style={{ "margin-top": "1rem" }}>
+              <button
+                type="button"
+                class="btn btn-solid"
+                disabled={duplicateTarget() === null || duplicateBusy()}
+                // Reads the signal rather than passing `?? null`, which would
+                // silently mean "clear the pointer" — a different action.
+                onClick={() => {
+                  const target = duplicateTarget();
+                  if (target !== null) void applyDuplicate(target.id);
+                }}
+              >
+                {duplicateBusy() ? "Marking…" : "Mark as duplicate"}
+              </button>
+              <button type="button" class="btn" onClick={() => setShowDuplicate(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <Show when={showMove()}>
         <div

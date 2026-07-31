@@ -18,7 +18,7 @@ import { AssigneeAvatar } from "./AssigneeAvatar";
 import { IssueRef } from "./IssueRef";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 
-const CardMeta = (props: { issue: Issue }) => (
+const CardMeta = (props: { issue: Issue; duplicateOfRef?: string | null | undefined }) => (
   <>
     <div class="card-ref-row">
       <span class="type-badge" title={`Type: ${typeLabel(props.issue.type)}`}>
@@ -26,6 +26,25 @@ const CardMeta = (props: { issue: Issue }) => (
       </span>
       <Show when={props.issue.short_id}>
         {(shortId) => <IssueRef shortId={shortId()} class="card-ref" />}
+      </Show>
+      {/* EFB-30. Sits in the ref row, next to this card's own id, because it
+          is a fact about the card's IDENTITY — "this ticket is that ticket" —
+          not an attribute like estimate or label. Rendering it here means the
+          duplication is legible without opening the sheet, which is the whole
+          reason the row is kept instead of deleted. The arrow degrades to a
+          bare "duplicate" when the target isn't among the loaded pages: the
+          pointer is still true, only its short id is unknown. */}
+      <Show when={props.issue.duplicate_of_issue_id}>
+        <span
+          class="card-duplicate-of"
+          title={
+            props.duplicateOfRef == null
+              ? "Duplicate of another issue"
+              : `Duplicate of ${props.duplicateOfRef}`
+          }
+        >
+          {props.duplicateOfRef == null ? "duplicate" : `→ ${props.duplicateOfRef}`}
+        </span>
       </Show>
     </div>
     <div class="title">{props.issue.title}</div>
@@ -100,6 +119,10 @@ export const IssueCard = (props: {
   indicator?: "before" | "after" | null;
   /** Sprint spotlight (phase 20) — subtle ink border while the badge is on. */
   highlight?: boolean;
+  /** Short id of the issue this one duplicates (EFB-30), when the view could
+   *  resolve it. Null/absent with a duplicate_of pointer set just means the
+   *  target wasn't in the loaded pages — the badge still shows, unlabelled. */
+  duplicateOfRef?: string | null | undefined;
 }) => {
   // Compact mode skips the tall portrait cover. If the issue still HAS a cover,
   // we render it as a small square thumbnail on the left instead (list-view
@@ -144,13 +167,13 @@ export const IssueCard = (props: {
         fallback={
           <Show
             when={thumb()}
-            fallback={<CardMeta issue={props.issue} />}
+            fallback={<CardMeta issue={props.issue} duplicateOfRef={props.duplicateOfRef} />}
           >
             {(url) => (
               <>
                 <img class="issue-thumb" src={url()} alt="" draggable={false} />
                 <div class="issue-thumb-meta">
-                  <CardMeta issue={props.issue} />
+                  <CardMeta issue={props.issue} duplicateOfRef={props.duplicateOfRef} />
                 </div>
               </>
             )}
@@ -161,7 +184,7 @@ export const IssueCard = (props: {
           <div class="issue-cover">
             <img ref={coverImg} src={url()} alt="" draggable={false} />
             <div class="cover-overlay">
-              <CardMeta issue={props.issue} />
+              <CardMeta issue={props.issue} duplicateOfRef={props.duplicateOfRef} />
             </div>
           </div>
         )}

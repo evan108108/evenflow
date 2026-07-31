@@ -194,6 +194,41 @@ describe("IssueCard", () => {
     cleanup();
   });
 
+  // EFB-30. The badge's job is to make the duplication legible WITHOUT
+  // opening the sheet — that is the whole argument for keeping the row
+  // instead of deleting it, so it has to survive the case where the target
+  // isn't loaded.
+  it("shows the duplicate-of arrow beside the card's own ref", () => {
+    const dupe: Issue = { ...issue, duplicate_of_issue_id: "i-original" };
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={dupe} dnd={clickDnd} onOpen={vi.fn()} duplicateOfRef="KB-3" />
+    ));
+    const badge = container.querySelector(".card-duplicate-of")!;
+    expect(badge.textContent).toBe("→ KB-3");
+    expect(badge.getAttribute("title")).toBe("Duplicate of KB-3");
+    // In the ref row, after this card's own id — an annotation on the
+    // identity, not a competing label.
+    expect(container.querySelector(".card-ref-row")!.lastElementChild).toBe(badge);
+    cleanup();
+  });
+
+  it("still marks a duplicate whose target isn't among the loaded pages", () => {
+    const dupe: Issue = { ...issue, duplicate_of_issue_id: "i-original" };
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={dupe} dnd={clickDnd} onOpen={vi.fn()} duplicateOfRef={null} />
+    ));
+    expect(container.querySelector(".card-duplicate-of")!.textContent).toBe("duplicate");
+    cleanup();
+  });
+
+  it("shows no duplicate badge on an ordinary issue", () => {
+    const { container, cleanup } = mount(() => (
+      <IssueCard issue={issue} dnd={clickDnd} onOpen={vi.fn()} />
+    ));
+    expect(container.querySelector(".card-duplicate-of")).toBeNull();
+    cleanup();
+  });
+
   it("falls back to the UUID for issues awaiting backfill", () => {
     const onOpen = vi.fn();
     const legacy: Issue = { ...issue, short_id: null };

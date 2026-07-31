@@ -410,6 +410,12 @@ export interface BuildKanbanIssueInput {
   position?: number | null;
   sprintId?: string | null;
   externalState?: string | null;
+  /**
+   * The issue this one duplicates (EFB-30). Null/absent = not a duplicate.
+   * A consumer replaying the substrate needs this to reconstruct why an issue
+   * is in Done without any work having been done on it.
+   */
+  duplicateOfIssueId?: string | null;
   deleted?: boolean;
   createdAt?: number;
 }
@@ -433,6 +439,7 @@ export function buildKanbanIssue(input: BuildKanbanIssueInput): EventTemplate {
     position: input.position ?? null,
     sprint_id: input.sprintId ?? null,
     external_state: input.externalState ?? null,
+    duplicate_of_issue_id: input.duplicateOfIssueId ?? null,
     deleted: input.deleted ?? false,
   });
   const tags: string[][] = [
@@ -446,6 +453,13 @@ export function buildKanbanIssue(input: BuildKanbanIssueInput): EventTemplate {
     ["fa:container", input.container],
   ];
   if (input.sprintId != null) tags.push(["fa:sprint", input.sprintId]);
+  // Tagged, not just in content, so a relay query can select duplicates
+  // without fetching and parsing every issue's body — same reason fa:sprint
+  // and fa:status are tags. Only present when set: an absent tag means "not a
+  // duplicate", which keeps the tag list of an ordinary issue unchanged.
+  if (input.duplicateOfIssueId != null) {
+    tags.push(["fa:duplicate_of", input.duplicateOfIssueId]);
+  }
   if (input.deleted === true) tags.push(["fa:deleted", "1"]);
   return {
     kind: KIND_KANBAN_ISSUE,

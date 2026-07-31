@@ -168,6 +168,11 @@ export interface IssueShape {
   // boards only). NULL = never published: a private board, or a publish that
   // did not land. Never load-bearing — the row itself is the cache.
   readonly substrate_event_id: string | null;
+  // The issue this one duplicates (EFB-30). Null = not a duplicate. Soft
+  // pointer, same posture as the rest of the schema: the target may have been
+  // deleted since, so a non-null value proves an intent was recorded, not
+  // that the target still resolves.
+  readonly duplicate_of_issue_id: string | null;
 }
 
 /** Mirrors sprintCache (phase 20) — a startable batch of backlog issues. */
@@ -486,6 +491,11 @@ export const parseIssueRow = (row: unknown): IssueShape => {
     updated_at_ms: h.number(r["updated_at_ms"], "updated_at_ms"),
     completed_at_ms: h.numberOrNull(r["completed_at_ms"], "completed_at_ms"),
     substrate_event_id: h.stringOrNull(r["substrate_event_id"] ?? null, "substrate_event_id"),
+    // Pre-0024 rows lack the column entirely; absent reads as "not a duplicate".
+    duplicate_of_issue_id: h.stringOrNull(
+      r["duplicate_of_issue_id"] ?? null,
+      "duplicate_of_issue_id",
+    ),
   };
 };
 

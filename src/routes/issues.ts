@@ -71,6 +71,12 @@ const MAX_LIMIT = 100;
 const POSITION_STEP = 1000;
 const MIN_POSITION_GAP = 1e-6;
 
+// How far the duplicate-of cycle walk follows a chain before giving up and
+// rejecting (EFB-30). A real chain is one or two links — this is a backstop
+// for already-corrupt data, sized so the walk provably terminates rather than
+// sized to any expected depth.
+const DUPLICATE_CHAIN_MAX_HOPS = 10;
+
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
@@ -387,6 +393,42 @@ const applyContainerMove = (
     return { issue: { ...issue, container: to, updated_at_ms: now }, statusChangeId };
   });
 
+/**
+ * Would pointing `sourceId` at `targetId` close a duplicate-of loop?
+ *
+ * Walks the target's chain — B, then whatever B duplicates, and so on — and
+ * answers true if it reaches the source. Self-reference (A → A) is the
+ * zero-hop case and needs no separate test.
+ *
+ * FAILS CLOSED at DUPLICATE_CHAIN_MAX_HOPS: a chain longer than the cap is
+ * reported as circular rather than followed further. The cap is a backstop
+ * against already-corrupt data, not a limit anyone should reach, and between
+ * "reject a legitimate 11-link chain" and "walk a corrupt ring forever" the
+ * first is the cheaper mistake.
+ */
+const closesDuplicateLoop = (
+  sourceId: string,
+  targetId: string,
+): Effect.Effect<boolean, DbError, Db> =>
+  Effect.gen(function* () {
+    const db = yield* Db;
+    let cursor: string | null = targetId;
+    for (let hops = 0; hops < DUPLICATE_CHAIN_MAX_HOPS; hops += 1) {
+      if (cursor === null) return false;
+      if (cursor === sourceId) return true;
+      // Explicitly annotated: `cursor` is assigned from this row, and without
+      // the annotation TS reads the generator's yield as depending on `cursor`
+      // in turn, and gives up with "implicitly has type any" (TS7022).
+      const row: { duplicate_of_issue_id: string | null } | null =
+        yield* db.queryFirst<{ duplicate_of_issue_id: string | null }>(
+          "SELECT duplicate_of_issue_id FROM issueCache WHERE id = ?",
+          [cursor],
+        );
+      cursor = row === null ? null : row.duplicate_of_issue_id;
+    }
+    return cursor !== null;
+  });
+
 export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   const issues = new Hono<AppHonoEnv>();
 
@@ -505,6 +547,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         // Publish is fired off the request path (EFB-24), so it has not
         // landed yet at response time. Stamped later, if at all.
         substrate_event_id: null,
+        // Nothing is born a duplicate — the mark is always a later judgement
+        // (EFB-30), through POST /issues/:id/duplicate-of.
+        duplicate_of_issue_id: null,
       };
       yield* db.execute(
         "INSERT INTO issueCache (id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -961,6 +1006,151 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program);
   });
 
+  // ── POST /issues/:id/duplicate-of — mark (or un-mark) a duplicate ───────
+  //
+  // The preserve-with-pointer half of EFB-26's delete. Deleting a duplicate
+  // works, but it discards the reason the duplicate was worth noticing:
+  // somebody filed this twice, and the second filing usually carries context
+  // the first one didn't. So the row stays, points at the original, and moves
+  // to Done — Linear's model, picked over Jira's delete-and-redirect.
+  //
+  // A DEDICATED ENDPOINT, not a PATCH field. Two reasons. Convention:
+  // /transition and /move-to-board already own the state changes that are
+  // more than a field write, and this is one — it transitions a column and
+  // appends an audit row as a side effect. Coordination: EFB-54 is rewriting
+  // the PATCH handler in parallel flight, and a field added there would
+  // collide with that work for no benefit.
+  //
+  // THE INVARIANT, since it is easy to get backwards: the audit trail is
+  // append-only, the state is revertible. Un-marking clears the pointer and
+  // does NOT move the issue back out of Done. The transition to Done really
+  // happened; unwinding it would put a lie in statusChangeCache, and every
+  // tide day already replayed with the issue excluded. Linear behaves the
+  // same way, for the same reason.
+  issues.post("/issues/:id/duplicate-of", async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      const pubkey = callerPubkey(claims);
+      const body = yield* readJsonBody(c);
+      const raw = body["duplicate_of_issue_id"];
+      if (raw !== null && typeof raw !== "string") {
+        return yield* new ValidationError({ reason: "duplicate_of_issue_id" });
+      }
+      const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
+      const db = yield* Db;
+      const audit = yield* AuditLog;
+
+      // ── un-mark ──────────────────────────────────────────────────────────
+      if (raw === null) {
+        if (issue.duplicate_of_issue_id === null) return { issue };
+        const now = yield* Clock.currentTimeMillis;
+        yield* db.execute(
+          "UPDATE issueCache SET duplicate_of_issue_id = NULL, updated_at_ms = ? WHERE id = ?",
+          [now, issue.id],
+        );
+        yield* audit.record({
+          event_type: "issue_duplicate_cleared",
+          actor: claims.login,
+          details: { issue: issue.id, was_duplicate_of: issue.duplicate_of_issue_id },
+        });
+        const updated: IssueShape = {
+          ...issue,
+          duplicate_of_issue_id: null,
+          updated_at_ms: now,
+        };
+        yield* emitSecureBoardEvent(issue.board_id, {
+          kind: "issue.updated",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: updated },
+        });
+        return { issue: updated };
+      }
+
+      // ── resolve the target ───────────────────────────────────────────────
+      // Same addressing as fetchIssue (short id or UUID) so the API accepts
+      // whatever a caller has in hand, but deliberately NOT fetchIssue itself:
+      // that authorizes the target's board, and the target is constrained to
+      // THIS board anyway. Short ids are per-board vocabulary (see
+      // /move-to-board, which mints a fresh one), so a cross-board pointer
+      // could not render as "→ EFB-7" without lying about which board's #7.
+      const targetShortId = asShortId(raw);
+      const targetRow =
+        targetShortId === null
+          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [raw])
+          : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [targetShortId]);
+      if (targetRow === null) {
+        return yield* new ValidationError({ reason: "duplicate-target-not-found" });
+      }
+      const target = parseIssueRow(targetRow);
+      if (target.board_id !== issue.board_id) {
+        return yield* new ValidationError({ reason: "duplicate-target-other-board" });
+      }
+
+      // ── cycle guard ──────────────────────────────────────────────────────
+      if (yield* closesDuplicateLoop(issue.id, target.id)) {
+        return yield* new ValidationError({ reason: "circular_duplicate" });
+      }
+
+      // ── write ────────────────────────────────────────────────────────────
+      // Pointer BEFORE transition, and the order matters because there is no
+      // transaction here. Pointer-then-transition half-writes to "a duplicate
+      // sitting in its old column" — visible on the board, and re-running the
+      // action fixes it. Transition-then-pointer half-writes to "an issue
+      // silently in Done with nothing saying why", which nobody would think
+      // to look for. Same reasoning as the estimate-history ordering in PATCH.
+      const markedAt = yield* Clock.currentTimeMillis;
+      yield* db.execute(
+        "UPDATE issueCache SET duplicate_of_issue_id = ?, updated_at_ms = ? WHERE id = ?",
+        [target.id, markedAt, issue.id],
+      );
+      const pointed: IssueShape = {
+        ...issue,
+        duplicate_of_issue_id: target.id,
+        updated_at_ms: markedAt,
+      };
+
+      // A board with no enabled done column is a configuration problem, not a
+      // reason to refuse the mark: record the pointer and leave the column
+      // alone rather than inventing a destination.
+      const doneColumn = enabledColumns(board.columns).find((col) => col.category === "done");
+      const { issue: updated, statusChangeId } =
+        doneColumn === undefined
+          ? { issue: pointed, statusChangeId: null }
+          : yield* applyStatusChange(pointed, doneColumn, board, pubkey);
+
+      yield* audit.record({
+        event_type: "issue_marked_duplicate",
+        actor: claims.login,
+        details: { issue: issue.id, duplicate_of: target.id },
+      });
+
+      // issue.transitioned when a column actually moved, so the 30553 gets
+      // published alongside the 30551; issue.updated when the issue was
+      // already in Done and only the pointer changed. Both carry the whole
+      // issue, so either way the substrate 30551 picks up fa:duplicate_of.
+      const moved = updated.status !== issue.status || updated.column_id !== issue.column_id;
+      yield* emitSecureBoardEvent(issue.board_id, {
+        kind: moved ? "issue.transitioned" : "issue.updated",
+        board_id: issue.board_id,
+        issue_id: issue.id,
+        at_ms: updated.updated_at_ms,
+        ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+        payload: moved
+          ? {
+              issue: updated,
+              actor_pubkey: pubkey,
+              from_status: issue.status,
+              to_status: updated.status,
+            }
+          : { issue: updated },
+      });
+      return { issue: updated };
+    });
+    return runJson(c, program);
+  });
+
   // ── POST /issues/:id/move-to-board — cross-board move ───────────────────
   // Contributor on BOTH boards. The issue keeps its container but gets a
   // fresh short_id minted in the target's prefix (links to the old id keep
@@ -1025,8 +1215,16 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       );
       const position = (maxPos?.m ?? 0) + POSITION_STEP;
       const now = yield* Clock.currentTimeMillis;
+      // duplicate_of_issue_id resets with sprint_id, and for the same reason:
+      // both are per-board vocabulary (EFB-30). The pointer is constrained to
+      // same-board targets so the card can render "→ EFB-7"; carried across,
+      // it would point at an issue on the OLD board while the badge spelled it
+      // in the NEW board's numbering — a reference to a ticket that isn't the
+      // one named. Issues on the source board still pointing AT this one are
+      // left dangling, which is the documented soft-pointer posture (see
+      // migration 0024) and matches what DELETE already leaves behind.
       yield* db.execute(
-        "UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?",
+        "UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, duplicate_of_issue_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?",
         [target.id, short_id, column.id, column.name, position, now, issue.id],
       );
       const moved = {
@@ -1036,6 +1234,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         column_id: column.id,
         status: column.name,
         sprint_id: null,
+        duplicate_of_issue_id: null,
         position,
         updated_at_ms: now,
       };

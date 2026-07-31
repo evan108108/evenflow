@@ -481,6 +481,23 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { github_links, updated_at_ms });
           return;
         }
+        // EFB-30 duplicate-of. Two spellings, and the NULL one must be tested
+        // FIRST: `startsWith("… duplicate_of_issue_id = ?")` would never match
+        // the un-mark, but the reverse order is not so kind — both begin
+        // "UPDATE issueCache SET duplicate_of_issue_id = ", and a looser prefix
+        // here would swallow the parameterised form and shift its params.
+        if (sql.startsWith("UPDATE issueCache SET duplicate_of_issue_id = NULL, updated_at_ms = ? WHERE id = ?")) {
+          const [updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { duplicate_of_issue_id: null, updated_at_ms });
+          return;
+        }
+        if (sql.startsWith("UPDATE issueCache SET duplicate_of_issue_id = ?, updated_at_ms = ? WHERE id = ?")) {
+          const [duplicate_of_issue_id, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { duplicate_of_issue_id, updated_at_ms });
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?")) {
           const [status, column_id, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
@@ -842,10 +859,10 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         // ── polish batch: cross-board move + notifications ──
-        if (sql.startsWith("UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?")) {
+        if (sql.startsWith("UPDATE issueCache SET board_id = ?, short_id = ?, column_id = ?, status = ?, sprint_id = NULL, duplicate_of_issue_id = NULL, position = ?, updated_at_ms = ? WHERE id = ?")) {
           const [board_id, short_id, column_id, status, position, updated_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { board_id, short_id, column_id, status, sprint_id: null, position, updated_at_ms });
+          if (row) Object.assign(row, { board_id, short_id, column_id, status, sprint_id: null, duplicate_of_issue_id: null, position, updated_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO notificationsConfig")) {
@@ -1010,6 +1027,13 @@ export const makeDbMock = (): DbMock => {
             .filter((x) => x["board_id"] === params[0] && typeof x["position"] === "number")
             .map((x) => num(x["position"]));
           return { m: positions.length === 0 ? null : Math.max(...positions) } as R;
+        }
+        // Ahead of the `SELECT *` below only because that one's prefix does
+        // not cover this — kept adjacent so the two id-lookups read together.
+        // Missing row → null, which the cycle walk treats as end-of-chain.
+        if (sql.startsWith("SELECT duplicate_of_issue_id FROM issueCache WHERE id = ?")) {
+          const r = issues.find((x) => x["id"] === params[0]);
+          return (r ? { duplicate_of_issue_id: r["duplicate_of_issue_id"] ?? null } : null) as R | null;
         }
         if (sql.startsWith("SELECT * FROM issueCache WHERE id = ?")) {
           const r = issues.find((x) => x["id"] === params[0]);
@@ -1669,6 +1693,8 @@ export const makeDbMock = (): DbMock => {
           const wanted = new Set(params.map(str));
           return issues
             .filter((i) => wanted.has(str(i["id"])))
+            // EFB-30: duplicates never enter a tide replay.
+            .filter((i) => (i["duplicate_of_issue_id"] ?? null) === null)
             .map((i) => ({
               id: i["id"],
               estimate: i["estimate"] ?? null,
@@ -1708,6 +1734,8 @@ export const makeDbMock = (): DbMock => {
           const openNames = new Set(params.slice(2, params.length - 1).map(str));
           return issues
             .filter((i) => i["board_id"] === board_id && num(i["created_at_ms"]) <= rangeEnd)
+            // EFB-30: duplicates never enter a tide replay.
+            .filter((i) => (i["duplicate_of_issue_id"] ?? null) === null)
             .filter(
               (i) =>
                 openNames.has(str(i["status"])) ||

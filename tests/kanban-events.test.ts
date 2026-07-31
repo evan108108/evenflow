@@ -167,6 +167,19 @@ describe("buildKanbanIssue", () => {
     expect(tag("fa:deleted")).toBeUndefined();
   });
 
+  // EFB-30. Tagged rather than content-only so a relay can select duplicates
+  // without parsing every issue body; absent when unset, so an ordinary
+  // issue's tag list is exactly what it was before this shipped.
+  it("tags fa:duplicate_of only when the issue is a duplicate", () => {
+    const plain = buildKanbanIssue(base);
+    expect(plain.tags.find((t) => t[0] === "fa:duplicate_of")).toBeUndefined();
+    expect(JSON.parse(plain.content).duplicate_of_issue_id).toBe(null);
+
+    const dup = buildKanbanIssue({ ...base, duplicateOfIssueId: "issue-original" });
+    expect(dup.tags.find((t) => t[0] === "fa:duplicate_of")?.[1]).toBe("issue-original");
+    expect(JSON.parse(dup.content).duplicate_of_issue_id).toBe("issue-original");
+  });
+
   it("tags fa:sprint only when the issue is in a sprint", () => {
     const ev = buildKanbanIssue({ ...base, sprintId: "sprint-9" });
     expect(ev.tags.find((t) => t[0] === "fa:sprint")?.[1]).toBe("sprint-9");

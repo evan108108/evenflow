@@ -20,12 +20,17 @@ import { StreamSentinel } from "../../components/StreamSentinel";
 import { moveZone, sprintZone, type DndHandle } from "../../lib/dnd";
 import { FALLBACK_SPRINT_DAYS, effectiveSprintDays } from "../../lib/sprints";
 import { byBoardOrder } from "../../lib/order";
+import { refFor, shortIdIndex } from "../../lib/duplicates";
 import type { Issue, Sprint } from "../../lib/types";
 import type { BoardStore } from "./store";
 
 const SprintSection = (props: {
   sprint: Sprint;
   issues: readonly Issue[];
+  /** id → short id over the loaded issues, for the duplicate-of badge
+   *  (EFB-30). Passed down: this section has no store, and it renders one
+   *  sprint's slice while a duplicate's target is often outside it. */
+  duplicateRefs: Map<string, string>;
   dnd: DndHandle;
   onOpen: (id: string) => void;
   onRename: (name: string) => void;
@@ -129,7 +134,15 @@ const SprintSection = (props: {
         fallback={<p class="empty-state">Drag issues here to shape the sprint.</p>}
       >
         <For each={props.issues}>
-          {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
+          {(issue) => (
+            <IssueCard
+              issue={issue}
+              dnd={props.dnd}
+              onOpen={props.onOpen}
+              duplicateOfRef={refFor(props.duplicateRefs, issue)}
+              compact
+            />
+          )}
         </For>
       </Show>
     </section>
@@ -150,6 +163,9 @@ export const BacklogView = (props: {
     return pred === undefined ? rows : rows.filter(pred);
   };
   const planningSprints = () => props.store.sprints().filter((s) => s.status === "planning");
+  // Over EVERY loaded issue, not the filtered backlog slice — a duplicate's
+  // target is regularly a card this view doesn't show.
+  const duplicateRefs = () => shortIdIndex(props.store.issues());
   // Unassigned Backlog: container=backlog AND not in any planning sprint. An
   // active sprint's members already left the backlog container when their
   // sprint started (via Kanban); a completed sprint's members either shipped
@@ -193,6 +209,7 @@ export const BacklogView = (props: {
               <SprintSection
                 sprint={sprint}
                 issues={inSprint(sprint)}
+                duplicateRefs={duplicateRefs()}
                 dnd={props.dnd}
                 onOpen={props.onOpen}
                 onRename={(name) => void props.store.patchSprint(sprint.id, { name })}
@@ -226,7 +243,15 @@ export const BacklogView = (props: {
           fallback={<p class="empty-state">Nothing on your mind. What are you thinking about?</p>}
         >
           <For each={unassigned()}>
-            {(issue) => <IssueCard issue={issue} dnd={props.dnd} onOpen={props.onOpen} compact />}
+            {(issue) => (
+              <IssueCard
+                issue={issue}
+                dnd={props.dnd}
+                onOpen={props.onOpen}
+                duplicateOfRef={refFor(duplicateRefs(), issue)}
+                compact
+              />
+            )}
           </For>
         </Show>
         <StreamSentinel stream={props.store.streamFor("backlog")} />

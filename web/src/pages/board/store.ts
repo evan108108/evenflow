@@ -562,6 +562,43 @@ export const createBoardStore = (
     }
   };
 
+  /**
+   * Mark `issue` as a duplicate of `targetId`, or clear the pointer with
+   * null (EFB-30). The server also transitions the issue to Done, so this
+   * re-primes the streams either side of that move exactly like transition()
+   * does — the card leaves one column's page and joins another's, and a
+   * stale cursor on either side would skip a card on the next page.
+   *
+   * Not optimistic. A duplicate mark is a deliberate, low-frequency action
+   * with a confirm-shaped flow in front of it, so a round-trip is affordable;
+   * and unlike a drag there is no gesture whose responsiveness the optimism
+   * would be buying. Guessing WHICH done column the server picks would also
+   * mean duplicating the column-choice rule here, where it would silently
+   * drift from the server's.
+   */
+  const markDuplicateOf = async (issue: Issue, targetId: string | null): Promise<Issue | null> => {
+    noteLocalMutation(issue.id);
+    try {
+      const res = await api((c) =>
+        c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/duplicate-of`, {
+          duplicate_of_issue_id: targetId,
+        }),
+      );
+      replaceIssue(res.issue);
+      setLastError(null);
+      if (res.issue.column_id !== issue.column_id) {
+        await refreshStreams([
+          [issue.container, issue.column_id],
+          [res.issue.container, res.issue.column_id],
+        ]);
+      }
+      return res.issue;
+    } catch (e) {
+      setLastError(errorText(e));
+      return null;
+    }
+  };
+
   const deleteIssue = async (id: string) => {
     const snapshot = issues();
     setIssues((list) => list.filter((i) => i.id !== id));
@@ -666,6 +703,7 @@ export const createBoardStore = (
     reorderIssue,
     createIssue,
     patchIssue,
+    markDuplicateOf,
     deleteIssue,
     fetchComments,
     postComment,
