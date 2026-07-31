@@ -349,6 +349,7 @@ export interface BuildKanbanBoardInput {
   labels: ReadonlyArray<unknown>;
   memberPolicy: string;
   archived?: boolean;
+  deleted?: boolean;
   createdAt?: number;
 }
 
@@ -367,18 +368,26 @@ export function buildKanbanBoard(input: BuildKanbanBoardInput): EventTemplate {
     labels: input.labels,
     member_policy: input.memberPolicy,
     archived: input.archived ?? false,
+    deleted: input.deleted ?? false,
   });
+  // A board tombstone still carries the board's full last-known state, unlike
+  // the issue and comment ones, which are built from an envelope after the row
+  // is gone. The delete handler snapshots the row before deleting it (EFB-32),
+  // so `deleted: true` retires a complete description rather than a stub —
+  // which also keeps `fa:slug` non-empty, as the gateway's 30550 spec requires.
+  const tags: string[][] = [
+    ["d", input.boardId],
+    ["fa:context", FA_CONTEXT_V0],
+    ["alt", `Board ${input.title}`],
+    ["blake3", blake3ContentTag(content)],
+    ["fa:board", input.boardId],
+    ["fa:slug", input.slug],
+  ];
+  if (input.deleted === true) tags.push(["fa:deleted", "1"]);
   return {
     kind: KIND_KANBAN_BOARD,
     created_at: input.createdAt ?? nowSec(),
-    tags: [
-      ["d", input.boardId],
-      ["fa:context", FA_CONTEXT_V0],
-      ["alt", `Board ${input.title}`],
-      ["blake3", blake3ContentTag(content)],
-      ["fa:board", input.boardId],
-      ["fa:slug", input.slug],
-    ],
+    tags,
     content,
   };
 }

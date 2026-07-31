@@ -16,11 +16,13 @@
 // sprint header until the user reloaded. They also gave the substrate
 // publisher nothing to hang kinds 30550 and 30554 on.
 //
-// board.deleted is deliberately absent: the fork in emitSecureBoardEvent
-// re-reads the board to decide whether it may publish, and by the time a
-// delete handler could emit, the row is gone and the read fails closed. A
-// tombstone would need emitting BEFORE the delete, which is a change to
-// delete ordering rather than a new event. See the EFB-24 PR description.
+// board.deleted (EFB-32) was deferred out of EFB-24 because emitting it
+// naively publishes nothing: emitSecureBoardEvent re-reads the board to decide
+// whether it may publish, and for THIS kind alone the row it re-reads is the
+// row being deleted, so the read fails closed. issue.deleted and comment.deleted
+// emit after their own D1 delete and are fine — the board they re-read is still
+// there. The fix is to stop re-reading rather than to reorder: the delete
+// handler hands emitSecureBoardEvent the board snapshot it already holds.
 export type BoardEventKind =
   | "issue.created"
   | "issue.updated"
@@ -31,6 +33,7 @@ export type BoardEventKind =
   | "comment.deleted"
   | "board.created"
   | "board.updated"
+  | "board.deleted"
   | "sprint.created"
   | "sprint.updated"
   | "sprint.started"

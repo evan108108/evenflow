@@ -600,15 +600,32 @@ export const loadBoardById = (boardId: string) =>
  * Returns the substrate event id when a private board's wraps landed, else
  * null — callers caching a substrate row (tide snapshots) stamp it; every
  * other call site ignores it, exactly as before.
+ *
+ * `snapshot` overrides the freshness re-read below, and exists for exactly one
+ * caller: the board delete handler (EFB-32). Every other call site emits about
+ * a row that outlives the emit, so re-reading is free correctness — it picks up
+ * whatever the mutation just committed. `board.deleted` is the one kind whose
+ * subject IS the row being deleted, so the re-read returns null, publishesPlaintext
+ * fails closed on the null, and the tombstone is silently swallowed 100% of the
+ * time. That is why EFB-24 deferred this kind. Passing the pre-delete snapshot
+ * keeps the gate's fail-closed posture intact — it still decides from a real
+ * board row, just one held in memory rather than re-read from a table the
+ * caller has already emptied.
+ *
+ * The general rule, for whoever needs this next: pass a snapshot exactly when
+ * the gate's re-read target and the mutation's delete target are the same row.
+ * Anywhere else, don't — a stale snapshot would defeat the freshness read and
+ * publish a board state the mutation has already superseded.
  */
 export const emitSecureBoardEvent = (
   board_id: string,
   event: BoardEvent,
+  snapshot?: BoardShape,
 ): Effect.Effect<string | null, never, Db | Audience | BoardEmitter> =>
   Effect.gen(function* () {
-    const board = yield* loadBoardById(board_id).pipe(
-      Effect.catchAll(() => Effect.succeed(null)),
-    );
+    const board =
+      snapshot ??
+      (yield* loadBoardById(board_id).pipe(Effect.catchAll(() => Effect.succeed(null))));
     const secured =
       board !== null && board.encryption_active
         ? yield* secureBoardEvent(board, event)

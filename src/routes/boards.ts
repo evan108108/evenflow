@@ -753,6 +753,29 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { slug: current.slug },
       });
+      // EFB-32: retire the board's 30550 on the substrate. Without this the
+      // last live 30550 outlives the board forever and a replaying consumer
+      // resurrects it — replaceable events mean only a newer event AT THE SAME
+      // ADDRESS supersedes, and a delete published nowhere supersedes nothing.
+      //
+      // Emitted AFTER the delete, like issue.deleted and comment.deleted, so
+      // the failure direction stays the one we want: a DELETE that fails short-
+      // circuits the Effect and nothing publishes, rather than tombstoning a
+      // board that still exists. What makes it work where the naive version
+      // didn't is `current` — the pre-delete snapshot resolveBoardScope already
+      // handed us. emitSecureBoardEvent would otherwise re-read this row to
+      // decide whether it may publish, find it gone, and fail closed.
+      const now = yield* Clock.currentTimeMillis;
+      yield* emitSecureBoardEvent(
+        current.id,
+        {
+          kind: "board.deleted",
+          board_id: current.id,
+          at_ms: now,
+          payload: { board: current },
+        },
+        current,
+      );
       return { deleted: true };
     });
 

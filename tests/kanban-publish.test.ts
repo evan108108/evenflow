@@ -207,6 +207,149 @@ describe("board visibility flip", () => {
   });
 });
 
+// EFB-32. Deleting a public board used to leave its last live 30550 standing
+// on the substrate forever, so a consumer replaying the log resurrected a board
+// that no longer exists. The naive fix publishes nothing at all: the fork inside
+// emitSecureBoardEvent re-reads the board to decide whether it may publish, and
+// board.deleted is the one kind whose subject IS the row being deleted, so the
+// read fails closed every time. The handler passes its pre-delete snapshot
+// instead — these tests are what stop that parameter being "simplified" away.
+describe("board delete — 30550 tombstone", () => {
+  const deleteBoard = (h: Harness, slug = "kb") =>
+    h.app.request(`/api/v0/boards/${slug}`, { method: "DELETE", headers: bearer }, {});
+
+  const boardEvents = (h: Harness) =>
+    plaintextPosts(h)
+      .map((p) => (p.body as { event: { id: string; kind: number; tags: string[][] } }).event)
+      .filter((e) => e.kind === 30550);
+
+  it("publishes a tombstone at the board's own address", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const boardId = h.db.boards.find((r) => r["slug"] === "kb")!["id"];
+    await settle();
+
+    expect((await deleteBoard(h)).status).toBe(200);
+    await settle();
+
+    const tombstone = boardEvents(h).at(-1)!;
+    expect(tombstone.tags.find((t) => t[0] === "fa:deleted")?.[1]).toBe("1");
+    // Same address as the live 30550 the board create published — that is what
+    // makes it supersede rather than sit alongside.
+    expect(tombstone.tags.find((t) => t[0] === "d")?.[1]).toBe(boardId);
+    expect(boardEvents(h)[0]!.tags.find((t) => t[0] === "d")?.[1]).toBe(boardId);
+  });
+
+  it("supersedes the live board event — the tombstone is the last 30550", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { title: "Renamed" }), {});
+    await settle();
+    const beforeDelete = boardEvents(h);
+    expect(beforeDelete.length).toBeGreaterThanOrEqual(2);
+    expect(beforeDelete.every((e) => e.tags.every((t) => t[0] !== "fa:deleted"))).toBe(true);
+
+    await deleteBoard(h);
+    await settle();
+
+    const after = boardEvents(h);
+    expect(after).toHaveLength(beforeDelete.length + 1);
+    expect(after.at(-1)!.tags.find((t) => t[0] === "fa:deleted")?.[1]).toBe("1");
+  });
+
+  // The regression this ticket exists to prevent reintroducing: before EFB-32
+  // the delete handler emitted nothing at all.
+  it("actually reaches the substrate rather than being swallowed", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    await settle();
+    const before = boardEvents(h).length;
+
+    await deleteBoard(h);
+    await settle();
+
+    expect(boardEvents(h).length).toBe(before + 1);
+  });
+
+  // Board delete deliberately does NOT cascade to issueCache (boards.ts: "soft
+  // FKs; issues orphan, a v2 cleanup path reaps them"). Tombstoning those
+  // issues would tell the substrate they are gone while they still serve over
+  // REST — a lie in the opposite direction from the bug being fixed. The
+  // mirror stays faithful to what D1 actually holds.
+  it("does not tombstone issues or comments the delete leaves behind", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const issue = await createIssue(h, { title: "Orphaned by the delete" });
+    await h.app.request(`/api/v0/issues/${issue.id}/comments`, jsonReq("POST", { body: "c" }), {});
+    await settle();
+
+    await deleteBoard(h);
+    await settle();
+
+    const tombstoned = plaintextPosts(h)
+      .map((p) => (p.body as { event: { kind: number; tags: string[][] } }).event)
+      .filter((e) => e.tags.some((t) => t[0] === "fa:deleted"));
+    expect(tombstoned.map((e) => e.kind)).toEqual([30550]);
+    // …and the rows really are still there, which is what makes that correct.
+    expect(h.db.issues.some((r) => r["id"] === issue.id)).toBe(true);
+  });
+
+  it("still deletes the board when the gateway is down", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    await settle();
+    h.audience.flags.failPosts = true;
+
+    expect((await deleteBoard(h)).status).toBe(200);
+    expect(h.db.boards.some((r) => r["slug"] === "kb")).toBe(false);
+  });
+});
+
+describe("board delete — private boards", () => {
+  const deleteBoard = (h: Harness) =>
+    h.app.request("/api/v0/boards/kb", { method: "DELETE", headers: bearer }, {});
+
+  // The snapshot feeds the SAME gate as every other emit, so the three-state
+  // collapse this file exists to guard is still guarded on the delete path.
+  it("publishes NOTHING for a board that is private with no audience", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    await settle();
+
+    expect((await deleteBoard(h)).status).toBe(200);
+    await settle();
+
+    expect(plaintextPosts(h)).toHaveLength(0);
+  });
+
+  // The encrypted tombstone is an ADDITION, not a change: a private board's
+  // delete previously fired nothing here either, swallowed by the same failed
+  // re-read. Fixing the re-read fixes both paths by construction — one fork,
+  // no special-casing — so private consumers stop resurrecting dead boards too.
+  it("gift-wraps an encrypted tombstone and leaks no cleartext", async () => {
+    const h = makeHarness();
+    const session = generateEpochKeypair();
+    await registerKey(h, session.pub);
+    await createBoard(h);
+    const flip = await h.app.request(
+      "/api/v0/boards/kb",
+      jsonReq("PATCH", { visibility: "private" }),
+      {},
+    );
+    expect(flip.status).toBe(200);
+    await settle();
+    const wrapsBefore = h.audience.calls.filter((c) => c.path.includes("publish-wraps")).length;
+
+    await deleteBoard(h);
+    await settle();
+
+    expect(h.audience.calls.filter((c) => c.path.includes("publish-wraps")).length).toBe(
+      wrapsBefore + 1,
+    );
+    expect(plaintextPosts(h)).toHaveLength(0);
+  });
+});
+
 describe("tide publish — EFB-22 gate fix", () => {
   // EFB-22 shipped `board === null || board.encryption_active`, so a private
   // board with no audience published its committed/done/remaining points as a
