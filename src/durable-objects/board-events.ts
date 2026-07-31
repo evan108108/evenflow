@@ -39,7 +39,21 @@ export type BoardEventKind =
   | "sprint.started"
   | "sprint.completed"
   | "sprint.deleted"
-  | "sprint.tide.updated";
+  | "sprint.tide.updated"
+  // EFB-15. AGGREGATE: one event per CSV import, not one per issue. A 1000-row
+  // import emitting 1000 issue.created would enqueue 1000 webhook delivery rows
+  // per subscriber against a sweep that drains 50 a minute, and storm every
+  // open board tab, to describe what was a SINGLE user action.
+  //
+  // PLURAL, and outside all four families, on purpose — `templateFor` in
+  // lib/kanban/publish.ts dispatches on kind PREFIX, so `board.issues_imported`
+  // would fall into the board family and publish a 30550 KanbanBoard claiming
+  // the board itself changed. There is an explicit guard there too; the name is
+  // not doing that job alone. If you add a kind here, check that dispatch.
+  //
+  // Payload is a summary ({ import_id, count, created, skipped, unassigned });
+  // consumers wanting per-issue detail refetch from `at_ms`.
+  | "issues.imported";
 
 export interface BoardEvent {
   readonly kind: BoardEventKind;

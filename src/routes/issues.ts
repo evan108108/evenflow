@@ -75,7 +75,7 @@ const MAX_LIMIT = 100;
 // (neighbors closer than MIN_GAP, or a neighbor is a positionless legacy
 // row) the whole column rebalances to whole STEPs in display order.
 // Mirrored at web/src/lib/order.ts — keep the two in lockstep.
-const POSITION_STEP = 1000;
+export const POSITION_STEP = 1000;
 const MIN_POSITION_GAP = 1e-6;
 
 // How far the duplicate-of cycle walk follows a chain before giving up and

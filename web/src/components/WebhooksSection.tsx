@@ -36,6 +36,12 @@ const EVENT_KINDS = [
   "sprint.completed",
   "sprint.deleted",
   "sprint.tide.updated",
+  // EFB-15. NOTE for whoever adds the next kind: this list is a FIFTH mirror of
+  // the vocabulary, and unlike the other four it is asserted by nothing — the
+  // EFB-13 mirror test covers src/routes/webhooks.ts and the tsc assertion
+  // covers SseStream.ts, but a kind missing here just fails to appear as a
+  // checkbox, silently, and becomes unsubscribable through the UI.
+  "issues.imported",
 ] as const;
 
 /** Sensible starting set — the kinds a notification bridge actually wants. */

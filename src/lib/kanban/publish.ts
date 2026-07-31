@@ -73,6 +73,25 @@ export const publishesPlaintext = (board: BoardShape | null): boolean =>
 export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate | null => {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
 
+  // EFB-15 — an import is an AGGREGATE: no single entity changed, so there is
+  // no 30550-30554 to build from it. Declared here rather than left to the fact
+  // that "issues." does not match the "issue." prefix by one character.
+  //
+  // That near-miss is not a guard. The branches below dispatch on PREFIX with a
+  // silent fall-through, so a kind named `board.issues_imported` would have
+  // published a 30550 KanbanBoard — a signed, public, unretractable claim that
+  // the BOARD changed when only issues were added — and stamped
+  // boardCache.substrate_event_id with it. Nothing would have thrown. A future
+  // kind named `issue.imported`, the obvious next choice, would likewise build
+  // a KanbanIssue out of a payload that contains no issue.
+  //
+  // Imported issues therefore carry NULL substrate_event_id, permanently and BY
+  // DESIGN: per-issue publishing would mean up to 1000 sequential gateway
+  // round-trips inside one request, which is not reachable at any timeout. The
+  // API response says so explicitly rather than leaving a reader to infer a
+  // gateway outage from the NULL. See migration 0026 and docs/import-csv.md.
+  if (event.kind === "issues.imported") return null;
+
   if (event.kind.startsWith("board.")) {
     const b = (payload["board"] as BoardShape | undefined) ?? board;
     return buildKanbanBoard({

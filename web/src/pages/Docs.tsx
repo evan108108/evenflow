@@ -4,7 +4,15 @@
 
 import { For } from "solid-js";
 import { MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
+import { IMPORT_PROMPTS, IMPORT_PROMPT_PREAMBLE } from "./docs/import-prompts";
+import { CANONICAL_COLUMNS } from "../../../src/lib/csv-canonical";
 import "../lib/board.css";
+
+/**
+ * Rendered from the schema's own column list rather than typed out, so the
+ * header shown to users cannot drift from the one the endpoint accepts.
+ */
+const CANONICAL_HEADER = CANONICAL_COLUMNS.join(",");
 
 const CURL_FIRST = `# 1. Mint a key at https://evenflow.work/settings/keys, then:
 curl https://evenflow.work/api/v0/boards \\
@@ -41,6 +49,7 @@ export const Docs = () => (
         <a href="#getting-started">Getting started</a>
         <a href="#rest">REST reference</a>
         <a href="#mcp">MCP</a>
+        <a href="#import">Import</a>
         <a href="#skill">/evenflow skill</a>
       </nav>
     </header>
@@ -121,6 +130,48 @@ export const Docs = () => (
                 <span class="muted">arguments</span> <code>{tool.args}</code>
               </p>
               <pre class="docs-code">{tool.example}</pre>
+            </article>
+          )}
+        </For>
+      </div>
+    </section>
+
+    <section id="import" class="docs-section">
+      <h2>Importing from another tracker</h2>
+      <p>
+        Evenflow accepts one CSV shape — its own. There's no Linear importer, no Jira importer,
+        no GitHub importer, and there isn't going to be one: that would be a promise to track
+        every exporter's column renames and status vocabularies forever, and it still fails for
+        whoever arrives from the tracker nobody wrote an adapter for.
+      </p>
+      <p>
+        So the conversion is done by the thing that's already good at it. Export from your
+        tracker, hand the file to your AI assistant with the matching prompt below, and paste
+        what comes back into <strong>Board settings → Import from CSV</strong>. The header is:
+      </p>
+      <pre class="docs-code">{CANONICAL_HEADER}</pre>
+      <p class="muted">
+        <code>labels</code> is semicolon-separated (commas are the field separator).{" "}
+        <code>status</code> matches a column name on the destination board.{" "}
+        <code>external_url</code> is the original permalink, and it's what makes re-importing the
+        same file safe — rows already brought in are skipped rather than duplicated. An assignee
+        that isn't a member of the board is dropped and the issue imports unassigned; Evenflow
+        never invents a placeholder identity. Full reference:{" "}
+        <a href="https://github.com/evan108108/evenflow/blob/main/docs/import-csv.md">
+          docs/import-csv.md
+        </a>
+        .
+      </p>
+
+      <div class="docs-grid">
+        <For each={IMPORT_PROMPTS}>
+          {(prompt) => (
+            <article class="docs-endpoint">
+              <div class="endpoint-line">
+                <code class="path">{prompt.vendor}</code>
+              </div>
+              <p>{prompt.blurb}</p>
+              <pre class="docs-code">{`${IMPORT_PROMPT_PREAMBLE}\n\n${prompt.body}`}</pre>
             </article>
           )}
         </For>

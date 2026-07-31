@@ -39,11 +39,45 @@ export interface DbMock {
   readonly githubDedup: Row[];
   readonly estimateHistory: Row[];
   readonly tideSnapshots: Row[];
+  /** EFB-15 — CSV import audit + the 24h idempotency window. */
+  readonly issueImports: Row[];
+  readonly issueImportDedup: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
 const num = (v: unknown): number => v as number;
 const str = (v: unknown): string => String(v);
+
+/**
+ * Split an INSERT's flat parameter list into one Row per VALUES tuple.
+ *
+ * EFB-15 made this necessary: the bulk import writes MULTI-ROW inserts, because
+ * D1 caps bound parameters at 100 per statement and a row-at-a-time import
+ * would be thousands of round trips. Column names are read off the statement
+ * rather than hand-destructured at the call site, so the same helper serves the
+ * 19-column single-row insert issues.ts emits and the 21-column 4-at-a-time one
+ * imports.ts emits — and adding a column to either stops being a silent
+ * off-by-one in a positional destructure here.
+ */
+const insertRows = (sql: string, params: ReadonlyArray<unknown>): Row[] => {
+  const columnList = /\(([^)]*)\)\s*VALUES/i.exec(sql)?.[1];
+  if (columnList === undefined) throw new Error(`DbMock: unparseable INSERT: ${sql}`);
+  const columns = columnList.split(",").map((c) => c.trim());
+  if (params.length % columns.length !== 0) {
+    throw new Error(
+      `DbMock: ${params.length} params does not divide into ${columns.length} columns: ${sql}`,
+    );
+  }
+  const rows: Row[] = [];
+  for (let offset = 0; offset < params.length; offset += columns.length) {
+    const row: Row = {};
+    columns.forEach((name, index) => {
+      row[name] = params[offset + index];
+    });
+    rows.push(row);
+  }
+  return rows;
+};
 
 export const makeDbMock = (): DbMock => {
   const boards: Row[] = [];
@@ -70,6 +104,9 @@ export const makeDbMock = (): DbMock => {
   const githubAudit: Row[] = [];
   const githubDedup: Row[] = [];
   const estimateHistory: Row[] = [];
+  // EFB-15 — CSV import audit + the 24h idempotency window.
+  const issueImports: Row[] = [];
+  const issueImportDedup: Row[] = [];
   const tideSnapshots: Row[] = [];
 
   const issuesForBoardDesc = (boardId: unknown) =>
@@ -190,11 +227,31 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO issueCache")) {
-          const [id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms] = params;
-          if (issues.some((r) => r["short_id"] !== null && r["short_id"] === short_id)) {
-            throw new Error(`DbMock: UNIQUE violation on issueCache.short_id: ${String(short_id)}`);
+          for (const row of insertRows(sql, params)) {
+            if (issues.some((r) => r["short_id"] !== null && r["short_id"] === row["short_id"])) {
+              throw new Error(
+                `DbMock: UNIQUE violation on issueCache.short_id: ${String(row["short_id"])}`,
+              );
+            }
+            // The partial UNIQUE index from migration 0026. Modelled here
+            // because it is the ONLY thing standing between two concurrent
+            // imports of one CSV and a silent double-write, and a mock that
+            // omitted it would let a test certify that race as safe.
+            if (
+              row["external_url"] !== null &&
+              row["external_url"] !== undefined &&
+              issues.some(
+                (r) =>
+                  r["board_id"] === row["board_id"] &&
+                  r["external_url"] === row["external_url"],
+              )
+            ) {
+              throw new Error(
+                `DbMock: UNIQUE violation on issueCache(board_id, external_url): ${String(row["external_url"])}`,
+              );
+            }
+            issues.push(row);
           }
-          issues.push({ id, short_id, board_id, title, body, body_format, type, status, column_id, container, assignee_pubkey, priority, estimate, labels, github_links, position, created_at_ms, updated_at_ms, completed_at_ms });
           return;
         }
         if (sql.startsWith("INSERT INTO apiKeys")) {
@@ -274,8 +331,8 @@ export const makeDbMock = (): DbMock => {
           return;
         }
         if (sql.startsWith("INSERT INTO statusChangeCache")) {
-          const [id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms] = params;
-          statusChanges.push({ id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms });
+          // Multi-row since EFB-15 — an import writes these in batches.
+          for (const row of insertRows(sql, params)) statusChanges.push(row);
           return;
         }
         // ── EFB-22 sprint tide ────────────────────────────────────────────
@@ -934,10 +991,52 @@ export const makeDbMock = (): DbMock => {
           }
           return;
         }
+        // ── EFB-15 CSV import ─────────────────────────────────────────────
+        if (sql.startsWith("INSERT INTO issueImports")) {
+          for (const row of insertRows(sql, params)) issueImports.push(row);
+          return;
+        }
+        if (sql.startsWith("INSERT INTO issueImportDedup")) {
+          for (const row of insertRows(sql, params)) {
+            if (issueImportDedup.some((r) => r["id"] === row["id"])) {
+              throw new Error(`DbMock: UNIQUE violation on issueImportDedup.id`);
+            }
+            issueImportDedup.push(row);
+          }
+          return;
+        }
+        if (sql.startsWith("DELETE FROM issueImportDedup WHERE created_at_ms < ?")) {
+          const cutoff = num(params[0]);
+          for (let i = issueImportDedup.length - 1; i >= 0; i -= 1) {
+            const row = issueImportDedup[i];
+            if (row !== undefined && num(row["created_at_ms"]) < cutoff) {
+              issueImportDedup.splice(i, 1);
+            }
+          }
+          return;
+        }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
       Effect.sync(() => {
+        // EFB-15 — the BLOCK claim. Same atomic primitive as the +1 below, but
+        // reserving N numbers in one statement so a 1000-row import costs one
+        // round trip instead of a thousand. Registered first: the +1 form's
+        // prefix would otherwise not match, but keeping the more specific
+        // pattern ahead of the general one is the rule dbMock-dispatch.test.ts
+        // exists to enforce.
+        if (sql.startsWith("UPDATE boardCache SET next_issue_number = next_issue_number + ?")) {
+          const [count, id] = params;
+          const row = boards.find((x) => x["id"] === id);
+          if (!row) return null;
+          const start = num(row["next_issue_number"]);
+          row["next_issue_number"] = start + num(count);
+          return { start } as R;
+        }
+        if (sql.startsWith("SELECT response_json FROM issueImportDedup WHERE id = ?")) {
+          const row = issueImportDedup.find((r) => r["id"] === params[0]);
+          return (row ? { response_json: row["response_json"] } : null) as R | null;
+        }
         // The atomic issue-number claim (single-statement UPDATE...RETURNING).
         if (sql.startsWith("UPDATE boardCache SET next_issue_number = next_issue_number + 1")) {
           const row = boards.find((x) => x["id"] === params[0]);
@@ -1751,6 +1850,40 @@ export const makeDbMock = (): DbMock => {
               created_at_ms: i["created_at_ms"],
             })) as R[];
         }
+        // EFB-13's enqueue path runs on EVERY board mutation, and without this
+        // it threw "unexpected queryAll", which `enqueueOutboundWebhooks`
+        // catches and logs as `webhook-enqueue-defect`. The result was a wall of
+        // defect warnings on unrelated passing tests — noise that trains a
+        // reader to ignore the word "defect", which is the opposite of what a
+        // warning is for. No board in these tests has subscriptions, so the
+        // honest answer is an empty list, and the enqueue path now actually
+        // runs instead of failing.
+        if (sql.startsWith("SELECT id, board_id, url, event_kinds, predicate")) {
+          return [] as R[];
+        }
+        // ── EFB-15 CSV import ─────────────────────────────────────────────
+        //
+        // The dedup pre-check, chunked at 99 urls + 1 board_id because of D1's
+        // 100-parameter ceiling. Matched on the SELECT list rather than the
+        // whole statement because the IN() placeholder count varies per chunk.
+        if (sql.startsWith("SELECT external_url, short_id FROM issueCache")) {
+          const [boardId, ...urls] = params;
+          return issues
+            .filter(
+              (r) =>
+                r["board_id"] === boardId &&
+                r["external_url"] !== null &&
+                r["external_url"] !== undefined &&
+                urls.includes(r["external_url"]),
+            )
+            .map((r) => ({ external_url: r["external_url"], short_id: r["short_id"] })) as R[];
+        }
+        if (sql.startsWith("SELECT * FROM issueImports WHERE board_id = ?")) {
+          return issueImports
+            .filter((r) => r["board_id"] === params[0])
+            .sort((a, b) => num(b["imported_at_ms"]) - num(a["imported_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
         throw new Error(`DbMock: unexpected queryAll: ${sql}`);
       }),
   };
@@ -1781,6 +1914,8 @@ export const makeDbMock = (): DbMock => {
     githubDedup,
     estimateHistory,
     tideSnapshots,
+    issueImports,
+    issueImportDedup,
     layer: Layer.succeed(Db, service),
   };
 };

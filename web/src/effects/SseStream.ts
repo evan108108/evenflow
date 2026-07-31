@@ -52,7 +52,10 @@ type BoardEventKind =
   | "sprint.started"
   | "sprint.completed"
   | "sprint.deleted"
-  | "sprint.tide.updated";
+  | "sprint.tide.updated"
+  // EFB-15 — aggregate CSV import. Carries no issue_id: N issues landed, so
+  // there is no single one to name. A board view refetches on receipt.
+  | "issues.imported";
 
 // Invariant (bidirectional): the mirror above and the Worker's canonical union
 // must be the same set. `Equal` compares via conditional-type identity rather

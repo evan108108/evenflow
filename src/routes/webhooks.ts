@@ -47,6 +47,13 @@ export const BOARD_EVENT_KINDS = [
   "sprint.completed",
   "sprint.deleted",
   "sprint.tide.updated",
+  // EFB-15 — the aggregate import event. A subscriber gets ONE delivery per
+  // import rather than one per row. Note that a subscription carrying an
+  // `assignee` predicate will never match this kind: the payload is a summary
+  // with no assignee to compare, so `matchesSubscription` answers false. That
+  // is deliberate — an aggregate has no single person to attribute — and it
+  // means "notify me about MY issues" stays silent through an import.
+  "issues.imported",
 ] as const;
 
 /**

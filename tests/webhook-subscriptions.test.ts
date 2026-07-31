@@ -64,12 +64,13 @@ describe("event-kind vocabulary", () => {
       "sprint.completed",
       "sprint.deleted",
       "sprint.tide.updated",
+      "issues.imported",
     ];
     expect(fromRoute).toEqual([...fromVocabulary].sort());
     // Compile-time half: every routed kind must BE a BoardEventKind. If the
     // union shrinks, this assignment stops compiling.
     const _typecheck: ReadonlyArray<BoardEventKind> = BOARD_EVENT_KINDS;
-    expect(_typecheck.length).toBe(16);
+    expect(_typecheck.length).toBe(17);
   });
 });
 

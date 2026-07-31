@@ -38,17 +38,28 @@ any time, which is also why they carry no FOREIGN KEY constraints (events can
 arrive out of order, and a cache refresh must never depend on parent-row
 ordering).
 
-Only `webhookRoutes`, `webhookDeliveries`, `sessionCache`, and the
-`githubWebhook*` tables hold state whose source of truth is D1 itself.
+Only `webhookSubscriptions` / `webhookSubscriptionDeliveries`, `sessionCache`,
+the `githubWebhook*` tables, and `issueImports` / `issueImportDedup` (0026) hold
+state whose source of truth is D1 itself.
+
+`issueImports` is the exception worth knowing: it records that an import
+happened — who, when, how many rows, how many assignees could not be mapped —
+and no 4a event carries that. Truncating it loses provenance that cannot be
+rebuilt from the substrate, unlike every `*Cache` table.
 
 ## Two webhook families, opposite directions
 
 Mind the prefix — these are unrelated and must never be joined:
 
-* `webhookRoutes` / `webhookDeliveries` (0001) are **outbound**: Evenflow
-  calling someone else's URL.
+* `webhookSubscriptions` / `webhookSubscriptionDeliveries` (0025) are
+  **outbound**: Evenflow calling someone else's URL.
 * `githubWebhookRules` / `githubWebhookAudit` / `githubWebhookDedup` (0016)
   are **inbound**: GitHub calling us.
+
+The outbound pair replaced `webhookRoutes` / `webhookDeliveries`, which 0001
+created, nothing ever wrote to, and 0025 dropped — see that migration's header
+for why they were dropped rather than adopted. If you find a reference to either
+name anywhere, it predates 0025 and is stale.
 
 The per-board GitHub webhook secret lives in
 `boardCache.github_webhook_secret_ciphertext`, AES-GCM sealed under the
