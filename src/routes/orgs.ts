@@ -29,7 +29,7 @@ import {
   upsertMembership,
 } from "../membership";
 import { parseBoardRow, parseMemberRow, parseOrgRow, type OrgShape } from "../shapes";
-import { canonicalizeIdentityRef, isNpub, isRosterMember } from "../lib/identity";
+import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
 import {
   BOARD_ROLES,
   ORG_ROLES,
@@ -115,7 +115,11 @@ const validateAvatarUrl = (v: unknown) =>
  * transfer handler below.
  */
 const validatePubkey = (v: unknown) => {
-  if (isNpub(v)) return Effect.fail(new ValidationError({ reason: "pubkey-npub-unsupported" }));
+  // EFB-41 removed the `isNpub` early-reject: bech32 now decodes in
+  // canonicalizeIdentityRef, so an npub is a supported spelling rather than a
+  // recognized-but-refused one. An npub that fails its checksum falls through
+  // to the generic `pubkey` reason, which is correct — it is malformed input,
+  // not an unsupported feature.
   const ref = canonicalizeIdentityRef(v);
   return ref === null ? Effect.fail(new ValidationError({ reason: "pubkey" })) : Effect.succeed(ref);
 };

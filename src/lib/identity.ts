@@ -27,6 +27,7 @@
 // it is cryptographically bound to the event and stays raw hex.
 
 import { Effect } from "effect";
+import { decode as decodeNip19 } from "nostr-tools/nip19";
 import { Db, type DbError } from "../effects";
 
 /**
@@ -51,10 +52,41 @@ const HEX64 = /^[0-9a-f]{64}$/i;
  */
 const PROVIDER_REF = /^[a-z0-9]+:[A-Za-z0-9_-]+$/;
 
-/** Bech32-encoded Nostr pubkey. Recognized so callers can say why it failed. */
+/** Bech32-encoded Nostr pubkey. The spelling `npub1…`, decoded by EFB-41. */
 export const NPUB = /^npub1[02-9ac-hj-np-z]+$/i;
 
 const NOSTR_PROVIDER = "nostr";
+
+/**
+ * Decode a bech32 `npub1…` to bare lowercase hex, or null.
+ *
+ * MUST stay gated on `type === "npub"`. `nip19.decode` also accepts `nsec`
+ * — a PRIVATE key — as well as `nprofile`, `note`, `naddr` and friends. A
+ * caller who pastes their nsec where a pubkey belongs must not have it
+ * silently decoded to the matching public key and stored as an identity:
+ * that turns a fat-finger into a private-key disclosure, and it would look
+ * like success. Every non-npub type is either a secret or a different
+ * entity class, so all of them are null here.
+ *
+ * Null rather than a distinct error for the same reason the rest of this
+ * module returns null: callers raise their own typed 400. It is also why
+ * there is no "you sent an nsec" reason string — that would confirm to
+ * someone fishing that a given string decodes as a secret key.
+ *
+ * Lowercased before decoding so an all-caps npub folds to the same identity
+ * (bech32 is case-insensitive); the checksum is still enforced by decode, so
+ * this widens accepted spelling, never accepted keys.
+ */
+const decodeNpub = (v: string): string | null => {
+  try {
+    const { type, data } = decodeNip19(v.toLowerCase());
+    if (type !== "npub" || typeof data !== "string" || !HEX64.test(data)) return null;
+    return data.toLowerCase();
+  } catch {
+    // Invalid checksum, bad length, illegal character — not a key we can use.
+    return null;
+  }
+};
 
 /**
  * Normalize a written identity reference, or null when it is not one.
@@ -62,9 +94,12 @@ const NOSTR_PROVIDER = "nostr";
  * - bare 64-char hex (any case) → `nostr:<lowercase hex>`
  * - `nostr:<hex>` → lowercased, so `nostr:ABC…` and `nostr:abc…` cannot
  *   become two identities for one key — the exact bug this ticket closes
+ * - `npub1…` bech32 (any case) → decoded to `nostr:<lowercase hex>` (EFB-41),
+ *   so the spelling a Nostr client shows the user resolves to the same
+ *   identity as the hex the roster stores. Invalid checksum → null.
  * - any other `<provider>:<id>` → passed through unchanged, because provider
  *   ids are opaque and case can be significant in them
- * - anything else, including `npub1…` → null
+ * - anything else → null
  *
  * Returns null rather than throwing so callers can raise their own typed
  * failure in the Effect channel; an exception here would escape the error
@@ -75,6 +110,14 @@ export const canonicalizeIdentityRef = (v: unknown): IdentityRef | null => {
   const trimmed = v.trim();
   if (trimmed === "") return null;
   if (HEX64.test(trimmed)) return `${NOSTR_PROVIDER}:${trimmed.toLowerCase()}`;
+  // Before the generic shape check: an npub carries no ":" and would other-
+  // wise fall out as an unrecognized shape. Gated on the NPUB regex so that
+  // `nsec1…`/`nprofile1…` never reach the decoder at all — belt and braces
+  // with decodeNpub's own type check.
+  if (NPUB.test(trimmed)) {
+    const hex = decodeNpub(trimmed);
+    return hex === null ? null : `${NOSTR_PROVIDER}:${hex}`;
+  }
   if (!PROVIDER_REF.test(trimmed)) return null;
   const sep = trimmed.indexOf(":");
   const provider = trimmed.slice(0, sep);
@@ -87,7 +130,16 @@ export const canonicalizeIdentityRef = (v: unknown): IdentityRef | null => {
   return trimmed;
 };
 
-/** True when the value is a bech32 npub — recognized, not yet supported. */
+/**
+ * True when the value is spelled as a bech32 npub.
+ *
+ * SHAPE ONLY — says nothing about whether it decodes. Since EFB-41 an npub
+ * that passes the checksum is canonicalized like any other reference, so
+ * this is no longer a reason to reject anything; callers that used it as an
+ * "unsupported" gate were removed with that change. Kept because it is a
+ * genuine spelling test (the members UI uses it to decide how to display a
+ * key), and a shape check is not the same as a validity check.
+ */
 export const isNpub = (v: unknown): boolean => typeof v === "string" && NPUB.test(v.trim());
 
 /** Rosters an identity reference can be checked against. */
