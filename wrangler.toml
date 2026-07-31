@@ -17,7 +17,14 @@ enabled = true
 # The read path already closes out a day on the first visit; this exists for
 # boards nobody visited, so their history has no gaps. Handler: src/scheduled.ts.
 [triggers]
-crons = ["17 6 * * *"]
+# "17 6 * * *" — nightly tide roll-forward (EFB-22).
+# "* * * * *"  — outbound webhook delivery sweep (EFB-13). This is the ONLY
+#                thing that POSTs a webhook: the emit path writes pending rows
+#                and never calls out, because emitSecureBoardEvent has no
+#                ExecutionContext to reach ctx.waitUntil with. If this schedule
+#                is removed, outbound webhooks stop entirely — they do not
+#                degrade to slow. src/scheduled.ts branches on `event.cron`.
+crons = ["17 6 * * *", "* * * * *"]
 
 [vars]
 # Default Evenflow-managed Blossom host for issue attachments (phase 18a).

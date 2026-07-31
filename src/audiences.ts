@@ -27,6 +27,7 @@ import {
   generateEpochKeypair,
 } from "./lib/audience/audience-keys";
 import { encrypt, encryptString } from "./lib/audience/nip44";
+import { enqueueOutboundWebhooks } from "./lib/webhook-dispatch";
 import { __signEvent, wrap, type NostrEvent } from "./lib/audience/nip17";
 import {
   buildAudienceDeclaration,
@@ -680,6 +681,21 @@ export const emitSecureBoardEvent = (
           }),
         ),
       );
+    }
+    // EFB-13: queue outbound webhook deliveries. ROWS ONLY — deliberately no
+    // network I/O here. The comment above explains why anything else is not
+    // available at this site: there is no ExecutionContext to reach
+    // ctx.waitUntil with, and forkDaemon demonstrably runs nothing. So the
+    // emit path writes pending rows and a once-a-minute cron sweep performs
+    // every POST (src/lib/webhook-dispatch.ts).
+    //
+    // `enqueueOutboundWebhooks` cannot fail by construction — a webhook
+    // bookkeeping problem must never turn a committed board mutation into an
+    // error — so this needs no catch of its own. Uses `event.at_ms` as the
+    // enqueue clock so the delivery row carries the same instant the event
+    // does, and so this line adds no new dependency to the emit path.
+    if (board !== null) {
+      yield* enqueueOutboundWebhooks(board, event, event.at_ms);
     }
     return secured.substrate_event_id;
   });
