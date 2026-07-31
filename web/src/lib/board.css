@@ -2335,6 +2335,22 @@ input.sprint-name:focus {
   background: rgba(23, 35, 59, 0.06);
 }
 
+/* EFB-31 — the Done-window chip lifted. Every other chip state means "narrowed";
+   this one means "deliberately wider than default", so it reads brighter than
+   .on rather than sharing it. Solid border + fuller wash: visible at a glance
+   on a long Done column, which is exactly when you want to be reminded. */
+.filter-chip.lifted {
+  border-color: var(--color-ink);
+  color: var(--color-cream);
+  background: var(--color-ink);
+}
+
+.filter-chip.lifted:hover {
+  border-color: var(--color-ink);
+  color: var(--color-cream);
+  opacity: 0.88;
+}
+
 .filter-picker {
   position: relative;
   display: inline-block;

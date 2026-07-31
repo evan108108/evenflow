@@ -45,6 +45,22 @@ interface PickableSprint {
  * Mirrors BoardPage's activeSprint: null (never undefined) when there
  * isn't one, so callers can compare against null.
  */
+/**
+ * Which sprint the board views should narrow to, or null for "show everything".
+ *
+ * A named helper rather than an inline ternary because the inline form it
+ * replaces tested the active sprint against `undefined` — but the sprint
+ * accessors return `null` when a board has no active sprint, so that guard was
+ * always true and the no-sprint case fell through to dereferencing `null.id`.
+ * Boards without an active sprint are exactly the kanban-mode boards whose Done
+ * column EFB-31 windows, so this path has to stay correct and covered.
+ */
+export const activeSprintFilterId = (
+  activeSprint: { id: string } | null | undefined,
+  sprintFilterOff: boolean,
+): string | null =>
+  activeSprint !== null && activeSprint !== undefined && !sprintFilterOff ? activeSprint.id : null;
+
 export const currentSprint = <S extends PickableSprint>(sprints: readonly S[]): S | null =>
   [...sprints]
     .filter((s) => s.status === "active")
