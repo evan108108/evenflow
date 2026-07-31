@@ -8,7 +8,9 @@
 
 A board's `visibility: "private"` gates reads of issues, comments, sprints and the board row itself on membership. **It does not gate attachment blobs.**
 
-`attachment.blob_url` is a Blossom BUD-01/02 URL of the form `<host>/<sha256>`. It carries no token, no signature and no expiry, and the path *is* the hash of the bytes. Anyone holding the URL can fetch the file. So can anyone who happens to hash the same file, since identical content produces an identical address.
+`attachment.blob_url` is a Blossom BUD-01/02 URL of the form `<host>/<sha256>`. It carries no token, no signature and no expiry, and the path *is* the hash of the bytes. Anyone holding the URL can fetch the file, so **sharing a link is sharing the file** — that is the primary exposure and the one the UI notice names.
+
+Content-addressing adds a second, much narrower effect that is easy to overstate. It is tempting to say "anyone who hashes the same file can fetch it," but deriving the address requires the bytes, and someone holding the bytes already holds the file — the fetch teaches them nothing. What it actually yields is an **existence oracle**: anyone with a copy can probe whether those bytes are stored on the host. Two qualifiers keep it in proportion — a hit proves "these bytes are on this shared host," not "this was uploaded to Evenflow," and the oracle only becomes content-disclosing for low-entropy files whose contents can be enumerated and hashed until one hits. Real, worth documenting, not the headline.
 
 This is not a bug. It is the defining property of content-addressed storage, and it buys real things: deduplication, host portability, and verifiability (you can check the bytes against the name). The cost is that it does not compose with membership-gated privacy, and users reasonably read "private board" as "private everything."
 
@@ -40,8 +42,8 @@ Encrypt the blob before upload; decrypt on read for members.
 
 Derive the storage key from content *plus* a board secret, so the same file on a public and a private board lands at different addresses.
 
-- **Closes the hash-guessing vector** specifically — you can no longer find a private board's file by hashing a copy you already have.
-- **Does not close the URL-sharing vector.** The derived URL is still public once known, so this fixes the narrower half of the problem.
+- **Closes the existence oracle** specifically — without the board secret you can no longer probe whether a given file is stored, and the low-entropy enumeration case goes with it.
+- **Does not close the URL-sharing vector**, which is the primary exposure. The derived URL is still public once known. So this option addresses the *narrower* half of the problem and leaves the common one untouched — worth weighing hard against its cost.
 - **Breaks content-addressing's actual benefit** — no cross-board dedup, and the address no longer verifies the bytes.
 - **Lift:** medium-large, and the payoff is partial. Weakest ratio of the four.
 

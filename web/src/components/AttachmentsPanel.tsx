@@ -20,12 +20,18 @@ export interface AttachmentActionError {
 }
 
 /**
- * EFB-57. TODO: copy pending Evan's voice review — variant B is the standing
- * proposal, not the decision. Swap this string only; nothing else depends on
- * its wording.
+ * EFB-57. Reviewed copy — do not reword without another voice pass.
+ *
+ * Every clause is load-bearing. "Board members see these links" is narrowly
+ * true (the API gates the attachment list on membership) and is deliberately
+ * NOT the broader "links stay on the board", which would claim a protection
+ * the storage does not provide: a blob URL is `<host>/<sha256 of the bytes>`,
+ * so anyone holding the same file can derive it without anyone sharing
+ * anything. Naming sharing as the exposure vector is honest about the common
+ * case; the docs page carries the content-hash case.
  */
 const PRIVACY_NOTE =
-  "This board is private — its attachments aren't. Anyone with a file's link can open it, member or not.";
+  "Board members see these links — but a link, once shared, opens for anyone.";
 
 /**
  * Does this board need the attachment-privacy notice?
