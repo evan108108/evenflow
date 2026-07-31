@@ -46,6 +46,7 @@ type BoardEventKind =
   | "comment.deleted"
   | "board.created"
   | "board.updated"
+  | "board.deleted"
   | "sprint.created"
   | "sprint.updated"
   | "sprint.started"

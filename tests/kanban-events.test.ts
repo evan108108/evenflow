@@ -76,6 +76,61 @@ describe("buildKanbanBoard", () => {
       archived: false,
     });
   });
+
+  it("carries no fa:deleted tag when the board is live", () => {
+    expect(ev.tags.find((t) => t[0] === "fa:deleted")).toBeUndefined();
+    expect(JSON.parse(ev.content).deleted).toBe(false);
+  });
+
+  // EFB-32. Same in-place rule as the issue tombstone below: a 30550 is
+  // replaceable, so retiring a board means publishing at the BOARD'S OWN
+  // address. Anywhere else and the last live 30550 survives, which is the
+  // whole bug — a replaying consumer resurrects a board deleted months ago.
+  describe("tombstone", () => {
+    const dead = buildKanbanBoard({
+      boardId: BOARD,
+      slug: "tide-test-public",
+      title: "Tide Test Public",
+      description: null,
+      orgId: "org-1",
+      issuePrefix: "TTP",
+      defaultSprintDays: 14,
+      doneWindowDays: 14,
+      columns: [{ id: "c1", name: "Todo" }],
+      labels: [],
+      memberPolicy: "org",
+      deleted: true,
+      createdAt: AT,
+    });
+
+    it("tombstones in place — same d tag, deleted flag and tag set", () => {
+      expect(dead.kind).toBe(KIND_KANBAN_BOARD);
+      expect(dead.tags.find((t) => t[0] === "d")?.[1]).toBe(BOARD);
+      expect(dead.tags.find((t) => t[0] === "fa:deleted")?.[1]).toBe("1");
+      expect(JSON.parse(dead.content).deleted).toBe(true);
+    });
+
+    // The gateway's 30550 spec (kanban-plaintext-validator.ts) requires
+    // d === fa:board and a non-empty fa:slug. A tombstone built from an
+    // envelope rather than a real row — the shape issue.deleted uses, since
+    // its row is already gone — would fail that check with an empty slug.
+    // The board delete handler snapshots the row first precisely so this
+    // holds, and this assertion is what pins that requirement.
+    it("still satisfies the gateway's 30550 envelope", () => {
+      expectEnvelope(dead, BOARD);
+      expect(dead.tags.find((t) => t[0] === "fa:slug")?.[1]).toBe("tide-test-public");
+    });
+
+    it("retires the board's full last-known state, not a stub", () => {
+      expect(JSON.parse(dead.content)).toMatchObject({
+        "@type": "KanbanBoard",
+        slug: "tide-test-public",
+        title: "Tide Test Public",
+        member_policy: "org",
+        deleted: true,
+      });
+    });
+  });
 });
 
 describe("buildKanbanIssue", () => {

@@ -90,6 +90,7 @@ export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate
       labels: b.labels,
       memberPolicy: b.member_policy,
       archived: b.archived_at_ms !== null,
+      deleted: event.kind === "board.deleted",
     });
   }
 
