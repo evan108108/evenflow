@@ -28,6 +28,7 @@ import {
   matchesFilters,
   type BoardFilters,
 } from "../../lib/boardFilters";
+import { readFilters, writeFilters } from "../../lib/filterPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
 import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
 import { issuesInColumn } from "../../lib/order";
@@ -80,13 +81,32 @@ export const BoardPage = () => {
     if (!hasActiveFilters(active)) return undefined;
     return (issue: Issue) => matchesFilters(issue, active, viewer);
   });
+  // Persist on mutation rather than in an effect over `filters`: an effect
+  // would also fire when the STORAGE KEY changes (sign-in/out), writing the
+  // outgoing viewer's filters into the incoming viewer's slot before the
+  // restore below could run.
+  const applyFilters = (next: (f: BoardFilters) => BoardFilters) =>
+    setFilters((f) => {
+      const updated = next(f);
+      const boardId = store.board()?.id;
+      if (boardId !== undefined) writeFilters(boardId, callerPubkey(), updated);
+      return updated;
+    });
+  // Restore whenever the board or the viewer resolves or changes. Identity
+  // is part of the key, so signing in or out swaps to that scope's filters
+  // rather than carrying the previous viewer's over.
+  createEffect(() => {
+    const boardId = store.board()?.id;
+    const viewer = callerPubkey();
+    setFilters(boardId === undefined ? EMPTY_FILTERS : readFilters(boardId, viewer));
+  });
   const toggleIn = (key: "assignees" | "labels") => (value: string) =>
-    setFilters((f) => ({
+    applyFilters((f) => ({
       ...f,
       [key]: f[key].includes(value) ? f[key].filter((v) => v !== value) : [...f[key], value],
     }));
   const clearIn = (key: "assignees" | "labels") => () =>
-    setFilters((f) => ({ ...f, [key]: [] }));
+    applyFilters((f) => ({ ...f, [key]: [] }));
   // Assignee options come from the members list, unioned with anyone actually
   // holding a card. Two reasons for the union: /members needs contributor
   // scope, so a plain viewer's list comes back empty, and a former member can
@@ -471,7 +491,7 @@ export const BoardPage = () => {
                         ? "Showing only issues assigned to you. Click to show everyone's."
                         : "Showing everyone's issues. Click to show only yours."
                     }
-                    onClick={() => setFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
+                    onClick={() => applyFilters((f) => ({ ...f, mineOnly: !f.mineOnly }))}
                   >
                     Show my tickets
                   </button>
