@@ -14,10 +14,16 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
+import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
 import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
+import {
+  IdentityRefFromInput,
+  ImmutableField,
+  parseRouteBody,
+  requireAnyOf,
+} from "../lib/route-body";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -217,6 +223,87 @@ const validateLabels = (v: unknown) =>
   Array.isArray(v) && v.every((l) => typeof l === "string")
     ? Effect.succeed(v as string[])
     : Effect.fail(new ValidationError({ reason: "labels" }));
+
+// ── EFB-54: PATCH /issues/:id body schema (the reference migration) ───────
+//
+// The four invariants come from parseRouteBody, not from anything below:
+// unknown keys 400, wrong types 400, missing-required 400, canonical output.
+// See docs/BOUNDARY_DISCIPLINE.md.
+//
+// Fields listed as `ImmutableField` are real columns that this route may not
+// write. They are declared rather than left to the unknown-key rule so the
+// caller is told `sprint_id-immutable` ("real field, wrong endpoint") instead
+// of `sprint_id-unknown` ("no such field") — a distinction existing tests pin,
+// and the more useful of the two answers. column_id is immutable here on
+// purpose: status (name) is the PATCH vocabulary, /transition is the
+// column_id-first mover, and position moves only through /reorder, which knows
+// the neighbour midpoint math.
+const PATCHABLE = [
+  "title",
+  "body",
+  "body_format",
+  "type",
+  "status",
+  "assignee_pubkey",
+  "priority",
+  "estimate",
+  "labels",
+] as const;
+
+const PatchIssueBody = Schema.Struct({
+  title: Schema.optional(
+    Schema.String.pipe(Schema.filter((s) => s.trim() !== "")),
+  ),
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  body_format: Schema.optional(Schema.Literal(...BODY_FORMATS)),
+  type: Schema.optional(Schema.Literal(...ISSUE_TYPES)),
+  // Deliberately `Unknown`, not `String`. A status is a NAME that has to resolve
+  // against THIS board's columns, which is board state the schema cannot see —
+  // so the whole check, type included, stays in validateStatus and keeps
+  // answering `status-not-a-column`. Splitting it would report `status` for a
+  // non-string and `status-not-a-column` for an unknown name: two reasons for
+  // one broken field, and a changed error string for a case already tested.
+  status: Schema.optional(Schema.Unknown),
+  assignee_pubkey: Schema.optional(Schema.NullOr(IdentityRefFromInput)),
+  priority: Schema.optional(Schema.NullOr(Schema.Int)),
+  estimate: Schema.optional(Schema.NullOr(Schema.Int)),
+  labels: Schema.optional(Schema.Array(Schema.String)),
+  id: ImmutableField,
+  board_id: ImmutableField,
+  created_at_ms: ImmutableField,
+  github_links: ImmutableField,
+  container: ImmutableField,
+  column_id: ImmutableField,
+  completed_at_ms: ImmutableField,
+  updated_at_ms: ImmutableField,
+  position: ImmutableField,
+  sprint_id: ImmutableField,
+}).pipe(Schema.filter(requireAnyOf(PATCHABLE)));
+
+/**
+ * The half of the old `validateAssignee` that a schema cannot do.
+ *
+ * Canonicalization moved into `IdentityRefFromInput`, so by the time this runs
+ * the value is already the one accepted spelling. What remains needs the
+ * database and a board id the route resolves after parsing: is this person on
+ * THIS board's roster? That is authorization, not shape — EFB-38's second half,
+ * kept as a named step rather than smuggled into the schema.
+ */
+const assertRosterMember = (
+  ref: string | null,
+  board: BoardShape,
+): Effect.Effect<string | null, ValidationError, Db> =>
+  Effect.gen(function* () {
+    if (ref === null) return null;
+    if (!(yield* isRosterMember("boardMemberCache", board.id, ref))) {
+      return yield* new ValidationError({ reason: "not-a-member" });
+    }
+    return ref;
+  }).pipe(
+    // Same posture as before: a failed roster read is our outage, not the
+    // caller's mistake, so it dies as a 500 rather than becoming a 400.
+    Effect.catchTag("DbError", (e) => Effect.die(e)),
+  );
 
 // ── shared lookups + writes ───────────────────────────────────────────────
 
@@ -798,45 +885,37 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
-      // column_id is immutable here on purpose: status (name) is the PATCH
-      // vocabulary, /transition is the column_id-first mover. position only
-      // moves through /reorder, which knows the neighbor midpoint math.
-      for (const immutable of ["id", "board_id", "created_at_ms", "github_links", "container", "column_id", "completed_at_ms", "updated_at_ms", "position", "sprint_id"]) {
-        if (body[immutable] !== undefined) {
-          return yield* new ValidationError({ reason: `${immutable}-immutable` });
-        }
-      }
-      const patchable = ["title", "body", "body_format", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"];
-      if (!patchable.some((k) => body[k] !== undefined)) {
-        return yield* new ValidationError({ reason: "empty-patch" });
-      }
+      // EFB-54 reference route. Everything the old hand-rolled preamble did —
+      // the immutable-key loop, the empty-patch guard, and eight per-field
+      // validators — is now PatchIssueBody, and the thing it never did (reject
+      // a key we don't recognize) comes free with it. That omission was EFB-53:
+      // `{"assignee": "..."}` returned 200 and assigned nobody.
+      const body = yield* parseRouteBody(c, PatchIssueBody);
 
       const { issue: current, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
       const db = yield* Db;
 
-      const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
-      const issueBody = body["body"] === undefined ? current.body : yield* validateBody(body["body"]);
-      const body_format =
-        body["body_format"] === undefined
-          ? current.body_format
-          : yield* validateBodyFormat(body["body_format"]);
-      const type = body["type"] === undefined ? current.type : yield* validateType(body["type"]);
+      const title = body.title ?? current.title;
+      const issueBody = body.body === undefined ? current.body : body.body;
+      const body_format = body.body_format ?? current.body_format;
+      const type = body.type ?? current.type;
+      // status and assignee are the two fields the schema deliberately does
+      // NOT finish. Both need board state the schema cannot see: which columns
+      // this board has, and who is on its roster. Shape is settled above;
+      // these are authorization and lookup, so they stay here, named.
       const toColumn =
-        body["status"] === undefined
+        body.status === undefined
           ? issueColumn(board, current)
-          : yield* validateStatus(board.columns, body["status"]);
+          : yield* validateStatus(board.columns, body.status);
       const status = toColumn?.name ?? current.status;
       const column_id = toColumn?.id ?? current.column_id;
       const assignee =
-        body["assignee_pubkey"] === undefined
+        body.assignee_pubkey === undefined
           ? current.assignee_pubkey
-          : yield* validateAssignee(body["assignee_pubkey"], board);
-      const priority =
-        body["priority"] === undefined ? current.priority : yield* validateIntOrNull("priority")(body["priority"]);
-      const estimate =
-        body["estimate"] === undefined ? current.estimate : yield* validateIntOrNull("estimate")(body["estimate"]);
-      const labels = body["labels"] === undefined ? current.labels : yield* validateLabels(body["labels"]);
+          : yield* assertRosterMember(body.assignee_pubkey, board);
+      const priority = body.priority === undefined ? current.priority : body.priority;
+      const estimate = body.estimate === undefined ? current.estimate : body.estimate;
+      const labels = body.labels === undefined ? current.labels : [...body.labels];
 
       const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
