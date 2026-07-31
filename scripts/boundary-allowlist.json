@@ -1,0 +1,222 @@
+{
+  "$comment": "EFB-54 boundary discipline. Routes whose request bodies do NOT yet go through parseRouteBody (see docs/BOUNDARY_DISCIPLINE.md). This list is a RATCHET, not an amnesty: it may only shrink. Every entry carries a sunset date, and scripts/check-boundary-discipline.mjs FAILS the build once that date passes rather than warning, so extending a deadline is a visible decision in code review instead of a silent one. Sunsets more than 180 days out are rejected outright: a ratchet whose end can be pushed arbitrarily forward is an amnesty wearing a ratchet's clothes. New routes may not be added here - write them against parseRouteBody. The noBody list is separate: those routes read no request body at all, and they are DECLARED rather than detected because body reads hide behind helpers the checker cannot follow, and a checker that infers safety from silence is the bug this ticket exists to close.",
+  "unmigrated": [
+    {
+      "route": "POST /boards/:slug/issues/:issue_ref/attachments",
+      "file": "src/routes/attachments.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "PATCH /attachments/:id",
+      "file": "src/routes/attachments.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /session",
+      "file": "src/routes/auth.ts",
+      "sunset": "2026-09-30"
+    },
+    {
+      "route": "POST /boards",
+      "file": "src/routes/boards.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "PATCH /boards/:slug",
+      "file": "src/routes/boards.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "POST /issues/:id/comments",
+      "file": "src/routes/comments.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "POST /webhooks/github/:board_id",
+      "file": "src/routes/github.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "PUT /boards/:slug/github",
+      "file": "src/routes/github.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "PUT /boards/:slug/github/rules",
+      "file": "src/routes/github.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /boards/:slug/github/test",
+      "file": "src/routes/github.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /invites",
+      "file": "src/routes/invites.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /boards/:slug/issues",
+      "file": "src/routes/issues.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "POST /issues/:id/transition",
+      "file": "src/routes/issues.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "POST /issues/:id/move-to-board",
+      "file": "src/routes/issues.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "PATCH /issues/:id/reorder",
+      "file": "src/routes/issues.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "POST /keys",
+      "file": "src/routes/keys.ts",
+      "sunset": "2026-09-30"
+    },
+    {
+      "route": "POST /mcp",
+      "file": "src/routes/mcp.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "PATCH /notifications/config",
+      "file": "src/routes/notifications.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /orgs",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "PATCH /orgs/:slug",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "POST /orgs/:slug/transfer",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "POST /orgs/:slug/members",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "PATCH /orgs/:slug/members/:pubkey",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "POST /orgs/:org_slug/boards/:slug/members",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "PATCH /orgs/:org_slug/boards/:slug/members/:pubkey",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "POST /profile/picture",
+      "file": "src/routes/profile.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "PUT /profile/me",
+      "file": "src/routes/profile.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "POST /session/bootstrap",
+      "file": "src/routes/session.ts",
+      "sunset": "2026-09-30"
+    },
+    {
+      "route": "POST /session/register-key",
+      "file": "src/routes/session.ts",
+      "sunset": "2026-09-30"
+    },
+    {
+      "route": "POST /signin/nostr",
+      "file": "src/routes/signin.ts",
+      "sunset": "2026-09-30"
+    },
+    {
+      "route": "POST /boards/:slug/sprints",
+      "file": "src/routes/sprints.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "PATCH /boards/:slug/sprints/:id",
+      "file": "src/routes/sprints.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "POST /boards/:slug/sprints/:id/complete",
+      "file": "src/routes/sprints.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "PUT /orgs/:handle/storage",
+      "file": "src/routes/storage.ts",
+      "sunset": "2026-12-31"
+    }
+  ],
+  "noBody": [
+    {
+      "route": "POST /boards/:slug/request-regrant",
+      "file": "src/routes/audiences.ts",
+      "reason": "Re-issues the caller's own key grant; identity comes from the JWT, nothing is read from the request."
+    },
+    {
+      "route": "POST /boards/:slug/archive",
+      "file": "src/routes/boards.ts",
+      "reason": "Flag flip. The archive/unarchive state is encoded in the route, not a body."
+    },
+    {
+      "route": "POST /boards/:slug/unarchive",
+      "file": "src/routes/boards.ts",
+      "reason": "Flag flip. The archive/unarchive state is encoded in the route, not a body."
+    },
+    {
+      "route": "POST /boards/:slug/github/secret",
+      "file": "src/routes/github.ts",
+      "reason": "Rotates a generated secret server-side; the caller supplies nothing."
+    },
+    {
+      "route": "POST /invites/:code/accept",
+      "file": "src/routes/invites.ts",
+      "reason": "Acts on the :code path param plus caller identity."
+    },
+    {
+      "route": "POST /invites/:code/decline",
+      "file": "src/routes/invites.ts",
+      "reason": "Acts on the :code path param plus caller identity."
+    },
+    {
+      "route": "POST /invites/:id/email",
+      "file": "src/routes/invites.ts",
+      "reason": "Re-sends to the address already stored on the invite row."
+    },
+    {
+      "route": "POST /boards/:slug/sprints/:id/start",
+      "file": "src/routes/sprints.ts",
+      "reason": "State transition addressed entirely by path params."
+    },
+    {
+      "route": "POST /orgs/:handle/storage/test",
+      "file": "src/routes/storage.ts",
+      "reason": "Probes the org's configured storage with server-generated bytes."
+    }
+  ]
+}
