@@ -263,6 +263,52 @@ describe("membership hooks", () => {
     expect(bobGrant).toMatchObject({ board_id: boardId, recipient_pubkey: bobSession.pub, epoch: 1, revoked_at_ms: null });
   });
 
+  // EFB-36. The test above asserts the D1 grant row and stops there, which is
+  // exactly the gap the bug lived in: a grant existed that the gateway's wrap
+  // validator had never heard of. runPublishWraps pre-flights every wrap
+  // against the declaration's member set and fail-fasts 400 on the first
+  // non-member, so one un-declared recipient rejected the ENTIRE fan-out —
+  // the dogfood board carried 6 recipients against a 2-member declaration and
+  // had never landed a single encrypted event.
+  it("board member add republishes the declaration with the FULL roster (EFB-36)", async () => {
+    const h = makeHarness();
+    const { owner, orgSlug } = await setupPrivateBoard(h);
+    const bobSession = generateEpochKeypair();
+    await registerKey(h, bobSession.pub, tokenFor("bob"));
+
+    // Drop the flip's own declaration so this asserts on what the JOIN sent.
+    h.audience.calls.length = 0;
+
+    const res = await h.app.request(
+      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
+      {},
+    );
+    expect(res.status).toBe(201);
+
+    const decl = h.audience.calls
+      .filter((c) => c.path === "/v0/audience/raw/publish-declaration")
+      .at(-1);
+    expect(decl, "member add must republish the 30520 declaration").toBeDefined();
+    const declared = ((decl!.body as { declaration: { tags: string[][] } }).declaration.tags)
+      .filter((t) => t[0] === "p")
+      .map((t) => t[1]!);
+
+    // Two assertions that fail for OPPOSITE reasons, which is the point:
+    // omit the republish entirely and the new member is missing; publish the
+    // `issued` delta instead of the full set and the incumbent is missing.
+    expect(declared, "new member must enter the declaration").toContain(bobSession.pub);
+    expect(declared, "incumbents must not be dropped by the republish").toContain(owner.pub);
+
+    // The declaration and the wrap fan-out must enumerate the SAME set — the
+    // fan-out reads unrevoked grants, so anything else is drift waiting to
+    // happen rather than a fixed relationship.
+    const liveRecipients = h.db.keyGrants
+      .filter((g) => g["revoked_at_ms"] === null)
+      .map((g) => g["recipient_pubkey"] as string);
+    expect(new Set(declared)).toEqual(new Set(liveRecipients));
+  });
+
   it("board member remove rotates: epoch bumps, old grants die, remaining re-granted", async () => {
     const h = makeHarness();
     const { orgSlug } = await setupPrivateBoard(h);
