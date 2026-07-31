@@ -26,6 +26,26 @@ export interface AppliedAction {
   readonly detail: string | null;
   /** False when the effect was planned but deliberately not performed. */
   readonly applied: boolean;
+  /**
+   * EFB-66 — what the route needs to emit a BoardEvent for this action.
+   *
+   * Present only on the two transition kinds (`set_column`, `set_container`);
+   * absent everywhere else, which is what the route filters on. The id is the
+   * statusChangeCache row EFB-56's helper returned: the 30553's `d` tag IS that
+   * row id, so an action that reaches the route without it cannot be published,
+   * which was the whole pre-EFB-56 defect.
+   *
+   * The from/to pairs are carried rather than re-derived at the route because
+   * `input.statusByIssue` holds the state as it was BEFORE this webhook's
+   * effects ran. Re-reading at the route would report the post-update value as
+   * the "from", producing an audit row that says an issue moved from where it
+   * now is to where it now is.
+   */
+  readonly statusChangeId?: string;
+  readonly fromStatus?: string | null;
+  readonly toStatus?: string | null;
+  readonly fromContainer?: string | null;
+  readonly toContainer?: string | null;
 }
 
 interface ExecuteInput {
@@ -99,7 +119,7 @@ const applyEffect = (
             [effect.column_name, effect.column_id, now, issueId],
           );
         }
-        yield* insertStatusChange({
+        const statusChangeId = yield* insertStatusChange({
           issue_id: issueId,
           board_id: input.boardId,
           actor_pubkey: input.actor,
@@ -110,7 +130,14 @@ const applyEffect = (
           container_at_completion: toDone ? (prev?.container ?? null) : null,
           occurred_at_ms: now,
         });
-        return done("set_column", effect.column_name);
+        // EFB-66: kept, not discarded. The route turns this into an
+        // issue.transitioned whose 30553 keys on exactly this row.
+        return {
+          ...done("set_column", effect.column_name),
+          statusChangeId,
+          fromStatus: prev?.status ?? null,
+          toStatus: effect.column_name,
+        };
       }
 
       case "set_container": {
@@ -120,7 +147,7 @@ const applyEffect = (
           now,
           issueId,
         ]);
-        yield* insertStatusChange({
+        const statusChangeId = yield* insertStatusChange({
           issue_id: issueId,
           board_id: input.boardId,
           actor_pubkey: input.actor,
@@ -131,7 +158,15 @@ const applyEffect = (
           container_at_completion: null,
           occurred_at_ms: now,
         });
-        return done("set_container", effect.container);
+        // EFB-66: the container twin of the branch above. Emitting only the
+        // status kind would leave every github-driven container move as
+        // invisible and unpublished as both were before this ticket.
+        return {
+          ...done("set_container", effect.container),
+          statusChangeId,
+          fromContainer: prev?.container ?? null,
+          toContainer: effect.container,
+        };
       }
 
       case "add_comment": {
