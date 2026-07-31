@@ -37,7 +37,12 @@ const registerKey = async (h: Harness, sessionPub: string) => {
   expect(res.status).toBe(201);
 };
 
-/** The daemon fiber publishes off the request path — let it run. */
+/**
+ * Yield once before asserting. The publish is awaited inside the request now,
+ * so this is belt-and-braces rather than load-bearing — it stays because it
+ * costs nothing and keeps these assertions correct if the publish ever moves
+ * off the request path again (see the fork comment in audiences.ts).
+ */
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 const plaintextPosts = (h: { audience: { calls: Array<{ path: string; body: unknown }> } }) =>

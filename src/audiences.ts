@@ -40,6 +40,13 @@ import { realPubkeyOfMember } from "./nostr";
 import type { BoardEvent } from "./durable-objects/BoardDO";
 import { publishPlaintextEvent, publishesPlaintext } from "./lib/kanban/publish";
 
+/**
+ * Ceiling on what a board mutation will wait for the substrate mirror.
+ * Generous enough for a healthy gateway round-trip including relay fan-out,
+ * short enough that an unhealthy one is a blip rather than a hang.
+ */
+const PUBLISH_TIMEOUT_MS = 3_000;
+
 const bytesToHexLocal = (bytes: Uint8Array): string =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -586,29 +593,47 @@ export const emitSecureBoardEvent = (
     // for why the difference matters (a board can be private with no
     // audience, and that state's negation is not "public").
     //
-    // Forked as a daemon so gateway latency never lands in the request path:
-    // callers get their response as soon as D1 and SSE are done. The trade is
-    // that a Worker isolate torn down early can kill the fiber mid-flight,
-    // which costs a substrate event and leaves substrate_event_id NULL —
-    // already the documented meaning of that column. Reaching ctx.waitUntil
-    // from here would mean threading the Hono ExecutionContext through every
-    // one of the 22 call sites, for a best-effort publish.
+    // AWAITED, not forked. The first cut used Effect.forkDaemon to keep
+    // gateway latency off the request path, and it did not publish a single
+    // event in production: Cloudflare cancels outstanding work as soon as the
+    // response is returned, so the fiber never got scheduled. Verified by
+    // `wrangler tail` — the request logged outcome "ok" with the audit line
+    // and NONE of this module's warn logs, not even the no-key one, which
+    // only happens if the code never ran at all.
+    //
+    // ctx.waitUntil is the runtime's answer to that, but reaching it means
+    // threading Hono's ExecutionContext through 52 `layerFor(c.env)`
+    // boundaries and reshaping the LayerFor testability seam. Not worth it
+    // for a best-effort mirror, so the publish is awaited and bounded
+    // instead: a mutation pays at most PUBLISH_TIMEOUT_MS, and a gateway that
+    // is slow or down costs a substrate event rather than a board write.
+    //
+    // A publish that adds latency beats a publish that silently never
+    // happens — which is precisely what this ticket exists to fix.
     if (board !== null && publishesPlaintext(board)) {
-      yield* Effect.forkDaemon(
-        publishPlaintextEvent(board, event).pipe(
-          Effect.catchAll((e) =>
-            Effect.sync(() => {
-              console.log(
-                JSON.stringify({
-                  warn: "kanban-publish-failed",
-                  board_id,
-                  kind: event.kind,
-                  error: String(e),
-                }),
-              );
-              return null;
-            }),
-          ),
+      yield* publishPlaintextEvent(board, event).pipe(
+        Effect.timeoutTo({
+          duration: PUBLISH_TIMEOUT_MS,
+          onTimeout: () => {
+            console.log(
+              JSON.stringify({ warn: "kanban-publish-timeout", board_id, kind: event.kind }),
+            );
+            return null;
+          },
+          onSuccess: (id: string | null) => id,
+        }),
+        Effect.catchAll((e) =>
+          Effect.sync(() => {
+            console.log(
+              JSON.stringify({
+                warn: "kanban-publish-failed",
+                board_id,
+                kind: event.kind,
+                error: String(e),
+              }),
+            );
+            return null;
+          }),
         ),
       );
     }
