@@ -15,6 +15,7 @@ import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Db, DbError, FourA, FourAError, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { callerPubkey } from "../authz";
+import { canonicalizeIdentityRef } from "../lib/identity";
 
 export const PROFILE_CACHE_TTL_MS = 15 * 60 * 1000;
 export const BULK_MAX = 100;
@@ -359,7 +360,26 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
       if (raw === undefined || raw.trim() === "") {
         return yield* new ValidationError({ reason: "pubkeys" });
       }
-      const pubkeys = [...new Set(raw.split(",").map((p) => p.trim()).filter((p) => p !== ""))];
+      // EFB-51: normalize BEFORE the Set, not after. Dedupe on raw strings
+      // would let `049b628c…` and `nostr:049b628c…` survive as two entries
+      // that then resolve to one identity — the caller gets the same person
+      // twice and the cache is read under a key nothing writes.
+      //
+      // Unnormalizable input is passed through UNCHANGED rather than
+      // rejected, deliberately and unlike the single-pubkey routes. This is
+      // the chip-rendering path: today a junk pubkey yields one empty
+      // profile, and turning that into a 400 would fail an entire board's
+      // avatars over one stale id. Leniency here is a UX decision, not an
+      // oversight — see the test that pins it.
+      const pubkeys = [
+        ...new Set(
+          raw
+            .split(",")
+            .map((p) => p.trim())
+            .filter((p) => p !== "")
+            .map((p) => canonicalizeIdentityRef(p) ?? p),
+        ),
+      ];
       if (pubkeys.length === 0) return yield* new ValidationError({ reason: "pubkeys" });
       if (pubkeys.length > BULK_MAX) {
         return yield* new ValidationError({ reason: `pubkeys-max-${BULK_MAX}` });
@@ -374,9 +394,23 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /profile/:pubkey ────────────────────────────────────────────────
+  //
+  // EFB-51: the last `:pubkey` route reading the param raw. profileCache is
+  // keyed by the canonical ref every write path stores (EFB-38), so passing
+  // the URL through unnormalized meant `/profile/049b628c…` and
+  // `/profile/npub1qjdk…` both missed the row written as
+  // `nostr:049b628c…` — one person, three spellings, two of them invisible.
+  // Reading through the same canonicalizer the write paths use is what keeps
+  // the cache single-keyed; a second normalization rule here would just be a
+  // new way to drift.
   profile.get("/profile/:pubkey", async (c) => {
     const program = Effect.gen(function* () {
-      const me = yield* resolveProfile(c.req.param("pubkey"));
+      // 400 rather than 404: "that is not a pubkey" and "nobody by that
+      // pubkey" are different answers, and collapsing them would report a
+      // typo as an absent person.
+      const ref = canonicalizeIdentityRef(c.req.param("pubkey"));
+      if (ref === null) return yield* new ValidationError({ reason: "pubkey" });
+      const me = yield* resolveProfile(ref);
       return { profile: me };
     });
     return runJson(c, program);

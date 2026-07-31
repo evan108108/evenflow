@@ -12,11 +12,12 @@
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { decryptString } from "./audience/nip44";
 
-export const NOSTR_PROVIDER = "nostr";
 export const HEX64_RE = /^[0-9a-f]{64}$/i;
 
-export const nostrMemberPubkey = (hexPubkey: string): string =>
-  `${NOSTR_PROVIDER}:${hexPubkey.toLowerCase()}`;
+// EFB-52 removed a `nostrMemberPubkey` here that had zero callers and
+// duplicated `src/nostr.ts`'s live one. The Worker still owns that function —
+// minting a `nostr:<hex>` member ref is a server concern (signin.ts) and the
+// client never needed its own copy.
 
 // ── npub decoding (bech32, BIP-173 charset) ───────────────────────────────
 
@@ -39,8 +40,33 @@ const fromWords = (words: number[]): Uint8Array => {
 
 /**
  * Accept an npub1… or bare hex pubkey; return lowercase hex64, or null.
- * Checksum is NOT verified — this is input normalization, and the server
- * re-validates the key by verifying a signature made with it.
+ *
+ * TWO DECODERS EXIST ON PURPOSE (EFB-52). The Worker has its own in
+ * `src/lib/identity-shared.ts`, and this is NOT drift waiting to be
+ * consolidated — they answer different questions:
+ *
+ *   * The Worker's `canonicalizeIdentityRef` returns `nostr:<hex>` and
+ *     ENFORCES the bech32 checksum via nostr-tools. There a bad-checksum
+ *     pubkey is a category error: it would be stored as an identity nobody
+ *     can ever be, so it must be refused at the door.
+ *
+ *   * This one returns BARE HEX and deliberately does NOT verify the
+ *     checksum. Its single caller is the sign-in page, which uses the result
+ *     only to request a challenge; the user must then produce a SIGNED event
+ *     that the server verifies against that key. A mistyped npub therefore
+ *     cannot authenticate anybody — the signature check is the real gate, and
+ *     a checksum here would be redundant with it.
+ *
+ * Importing the Worker's version to "unify" them would silently add checksum
+ * rejection to that flow and change the error the user sees, while pulling
+ * nostr-tools into a bundle that hand-rolls bech32 precisely to stay small.
+ * Duplication with a stated contract, per the convention in
+ * `web/src/lib/audience/README.md`. If you change one, read the other.
+ *
+ * The TYPE GATE is `startsWith("npub1")`, and it is load-bearing: it is what
+ * stops an `nsec1…` (a PRIVATE key) or a `note1…` from being decoded as a
+ * pubkey. It is cheap and easy to "simplify" away — see nostr.test.ts, which
+ * fails loudly if it goes.
  */
 export const normalizePubkey = (input: string): string | null => {
   const trimmed = input.trim().toLowerCase();
