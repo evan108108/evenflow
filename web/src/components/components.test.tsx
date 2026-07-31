@@ -430,6 +430,73 @@ describe("IssueSheet", () => {
     cleanup();
   });
 
+  // EFB-26 — delete lives in the ⋯ menu, behind a confirm.
+  describe("delete issue", () => {
+    const openMenu = (container: HTMLElement) => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Issue actions"]')!.click();
+      return [...container.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].find((b) =>
+        b.textContent!.startsWith("Delete"),
+      );
+    };
+
+    const sheet = (store: Partial<BoardStore>, onClose = () => undefined) =>
+      mountRouted(() => (
+        <IssueSheet
+          issue={issue}
+          board={board}
+          store={{ ...storeStub, ...store } as unknown as BoardStore}
+          callerPubkey={"test:0"}
+          commentsVersion={() => 0}
+          onClose={onClose}
+        />
+      ));
+
+    it("deletes and closes the sheet once confirmed", async () => {
+      const deleteIssue = vi.fn(async () => undefined);
+      const onClose = vi.fn();
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const { container, cleanup } = sheet({ deleteIssue }, onClose);
+      await flush();
+      openMenu(container)!.click();
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("KB-7"));
+      expect(deleteIssue).toHaveBeenCalledWith("i1");
+      await flush();
+      expect(onClose).toHaveBeenCalledTimes(1);
+      confirmSpy.mockRestore();
+      cleanup();
+    });
+
+    it("does nothing at all when the confirm is dismissed", async () => {
+      const deleteIssue = vi.fn(async () => undefined);
+      const onClose = vi.fn();
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const { container, cleanup } = sheet({ deleteIssue }, onClose);
+      await flush();
+      openMenu(container)!.click();
+      await flush();
+      expect(deleteIssue).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+      cleanup();
+    });
+
+    it("is not offered to a signed-out viewer", async () => {
+      const { container, cleanup } = mountRouted(() => (
+        <IssueSheet
+          issue={issue}
+          board={board}
+          store={storeStub as unknown as BoardStore}
+          callerPubkey={null}
+          commentsVersion={() => 0}
+          onClose={() => undefined}
+        />
+      ));
+      await flush();
+      expect(container.querySelector('[aria-label="Issue actions"]')).toBeNull();
+      cleanup();
+    });
+  });
+
   // EFB-27 — the sheet can assign to and unassign from any sprint.
   describe("sprint dropdown", () => {
     const sprints = [

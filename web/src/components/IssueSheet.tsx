@@ -244,6 +244,32 @@ export const IssueSheet = (props: {
                 >
                   Move to another board…
                 </button>
+                {/* Deleting one issue sits with the other issue-level
+                    actions rather than in a danger zone of its own — the
+                    sheet has no room for one, and the confirm is the
+                    safety net. window.confirm matches how the app already
+                    guards deleting a sprint; typing the ref back is what
+                    Board settings reserves for deleting a whole board. */}
+                <button
+                  type="button"
+                  class="user-nav-item"
+                  style={{ color: "#9b2c2c" }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    const ref = props.issue.short_id ?? props.issue.title;
+                    if (!window.confirm(`Delete ${ref}? Its comments go too. This can't be undone.`))
+                      return;
+                    // The store removes it optimistically and puts it back
+                    // if the server refuses, so closing here is safe: a
+                    // failed delete surfaces on the board, not in a sheet
+                    // the issue no longer has.
+                    void Promise.resolve(props.store.deleteIssue(props.issue.id)).then(() =>
+                      props.onClose(),
+                    );
+                  }}
+                >
+                  Delete issue…
+                </button>
               </div>
             </Show>
           </div>
