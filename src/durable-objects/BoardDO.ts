@@ -11,6 +11,17 @@
 // hibernatable-WebSocket machinery). A 30s comment heartbeat keeps proxies
 // and browsers from reaping idle connections.
 
+// EFB-24 added the board.* and sprint.* families. Before that, renaming a
+// board or starting a sprint reached no SSE client at all — those mutations
+// emitted nothing, so a connected board sat on stale settings and a stale
+// sprint header until the user reloaded. They also gave the substrate
+// publisher nothing to hang kinds 30550 and 30554 on.
+//
+// board.deleted is deliberately absent: the fork in emitSecureBoardEvent
+// re-reads the board to decide whether it may publish, and by the time a
+// delete handler could emit, the row is gone and the read fails closed. A
+// tombstone would need emitting BEFORE the delete, which is a change to
+// delete ordering rather than a new event. See the EFB-24 PR description.
 export type BoardEventKind =
   | "issue.created"
   | "issue.updated"
@@ -19,6 +30,13 @@ export type BoardEventKind =
   | "issue.deleted"
   | "comment.created"
   | "comment.deleted"
+  | "board.created"
+  | "board.updated"
+  | "sprint.created"
+  | "sprint.updated"
+  | "sprint.started"
+  | "sprint.completed"
+  | "sprint.deleted"
   | "sprint.tide.updated";
 
 export interface BoardEvent {

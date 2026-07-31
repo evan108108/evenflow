@@ -171,11 +171,11 @@ describe("tools/call", () => {
     const items = structured(activity.body)["activity"] as Array<{ kind: string }>;
     expect(items.map((a) => a.kind)).toEqual(["status", "creation"]);
 
-    // MCP writes ride the same emit path as REST.
-    expect(h.emitter.events.map((e) => e.event.kind)).toEqual([
-      "issue.created",
-      "issue.transitioned",
-    ]);
+    // MCP writes ride the same emit path as REST. Scoped to the issue
+    // family — board creation emits board.created since EFB-24.
+    expect(
+      h.emitter.events.map((e) => e.event.kind).filter((k) => k.startsWith("issue.")),
+    ).toEqual(["issue.created", "issue.transitioned"]);
   });
 
   it("kanban_comment_post + kanban_comment_list round-trip", async () => {
