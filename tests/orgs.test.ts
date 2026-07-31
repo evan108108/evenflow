@@ -538,3 +538,106 @@ describe("EFB-38 identity references on membership writes", () => {
     });
   });
 });
+
+// EFB-42: a `:pubkey` route param is a lookup key, and the rosters it looks
+// into store canonical refs (EFB-38). Passing the param through raw meant
+// `…/members/049b628c…` missed a member stored as `nostr:049b628c…` and came
+// back 404 — the member existed, the caller just spelled them differently.
+// Since EFB-41 that includes the `npub1…` spelling a Nostr client displays.
+describe("EFB-42 :pubkey route param normalization", () => {
+  const HEX = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+  const CANON = `nostr:${HEX}`;
+  const NPUB = "npub1qjdk9rzwrr2kycnlmyjda2xadl5c6nwnp98askjnmpxq75sek0pqr3fl3a";
+
+  /** The four lookup endpoints, each seeded with the SAME member as CANON. */
+  const SITES = [
+    {
+      label: "PATCH /orgs/:slug/members/:pubkey",
+      setup: async (h: Harness) => {
+        await createTeam(h);
+        seedOrgMember(h, h.db.orgs.find((o) => o["slug"] === "acme")!["id"] as string, CANON, "member");
+      },
+      req: (p: string) => ["/api/v0/orgs/acme/members/" + p, jsonReq("PATCH", { role: "admin" })] as const,
+    },
+    {
+      label: "DELETE /orgs/:slug/members/:pubkey",
+      setup: async (h: Harness) => {
+        await createTeam(h);
+        seedOrgMember(h, h.db.orgs.find((o) => o["slug"] === "acme")!["id"] as string, CANON, "member");
+      },
+      req: (p: string) =>
+        ["/api/v0/orgs/acme/members/" + p, { method: "DELETE", headers: bearer }] as const,
+    },
+    {
+      label: "PATCH /orgs/:org_slug/boards/:slug/members/:pubkey",
+      setup: async (h: Harness) => {
+        await createBoard(h);
+        seedBoardMember(h, h.db.boards[0]!["id"] as string, CANON, "viewer");
+      },
+      req: (p: string) =>
+        ["/api/v0/orgs/tester/boards/kb/members/" + p, jsonReq("PATCH", { role: "contributor" })] as const,
+    },
+    {
+      label: "DELETE /orgs/:org_slug/boards/:slug/members/:pubkey",
+      setup: async (h: Harness) => {
+        await createBoard(h);
+        seedBoardMember(h, h.db.boards[0]!["id"] as string, CANON, "viewer");
+      },
+      req: (p: string) =>
+        ["/api/v0/orgs/tester/boards/kb/members/" + p, { method: "DELETE", headers: bearer }] as const,
+    },
+  ] as const;
+
+  describe.each(SITES)("$label", ({ setup, req }) => {
+    // Baseline: the spelling the roster already stores must keep working.
+    // Without this the other two cases can't tell "normalization works" from
+    // "this endpoint accepts anything".
+    it("resolves the canonical ref", async () => {
+      const h = makeHarness();
+      await setup(h);
+      const [url, init] = req(CANON);
+      expect((await h.app.request(url, init as RequestInit, {})).status).toBe(200);
+    });
+
+    // The actual bug: same member, hex spelling, used to 404.
+    it("resolves the raw-hex spelling of that same member", async () => {
+      const h = makeHarness();
+      await setup(h);
+      const [url, init] = req(HEX);
+      expect((await h.app.request(url, init as RequestInit, {})).status).toBe(200);
+    });
+
+    // EFB-41 + EFB-42 composed: the spelling a Nostr client shows the user.
+    it("resolves the npub spelling of that same member", async () => {
+      const h = makeHarness();
+      await setup(h);
+      const [url, init] = req(NPUB);
+      expect((await h.app.request(url, init as RequestInit, {})).status).toBe(200);
+    });
+
+    // 400, not 404: "you sent junk" and "no such member" are different
+    // answers, and collapsing them makes a typo look like a removed teammate.
+    it.each(["not-a-pubkey", "deadbeef", "nostr:", "npub1bad"])(
+      "400s reason=pubkey on malformed %j, not 404",
+      async (bad) => {
+        const h = makeHarness();
+        await setup(h);
+        const [url, init] = req(bad);
+        const res = await h.app.request(url, init as RequestInit, {});
+        expect(res.status).toBe(400);
+        expect(await res.json()).toMatchObject({ reason: "pubkey" });
+      },
+    );
+
+    // Shape-valid but absent stays 404 — normalization must not turn a
+    // genuine "no such member" into a 400.
+    it("still 404s a well-formed pubkey that is not a member", async () => {
+      const h = makeHarness();
+      await setup(h);
+      const [url, init] = req("nostr:" + "1".repeat(64));
+      const res = await h.app.request(url, init as RequestInit, {});
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({ reason: "member" });
+    });
+  });
+});
