@@ -22,6 +22,25 @@ export const KIND_CLAIM = 30522;
 /** Public sprint-tide snapshot (EFB-22). Encrypted variant is 30565, in audiences.ts. */
 export const KIND_SPRINT_TIDE = 30560;
 
+// ── plaintext kanban kinds (EFB-24) ───────────────────────────────────────
+//
+// The public half of the board vocabulary. Each has an encrypted counterpart
+// at +5 (30555-30557, in audiences.ts) used when a board's audience is live;
+// a board publishes through exactly one of the two, never both.
+//
+// All five are parameterized-replaceable (NIP-01 30000-39999), so the `d` tag
+// is the entity's identity and a republish CORRECTS the entity rather than
+// appending to it. That is the property that makes the *Cache tables
+// reconstructible by replay, which is the whole point of the ticket: content
+// therefore carries the entity's current state, not the delta that produced
+// it. The one exception is KanbanStatusChange, which is an append-only audit
+// record whose identity is the change itself.
+export const KIND_KANBAN_BOARD = 30550;
+export const KIND_KANBAN_ISSUE = 30551;
+export const KIND_KANBAN_COMMENT = 30552;
+export const KIND_KANBAN_STATUS_CHANGE = 30553;
+export const KIND_KANBAN_SPRINT = 30554;
+
 export interface EventTemplate {
   kind: number;
   created_at: number;
@@ -299,6 +318,263 @@ export function buildSprintTide(input: BuildSprintTideInput): EventTemplate {
     kind: KIND_SPRINT_TIDE,
     created_at: input.createdAt ?? nowSec(),
     tags,
+    content,
+  };
+}
+
+// ── plaintext kanban builders (EFB-24) ────────────────────────────────────
+//
+// Every builder here follows buildSprintTide's shape exactly: a `d` tag
+// carrying the entity id, `fa:context`, a human `alt`, the `blake3` content
+// tag, `fa:board`, then kind-specific `fa:` tags. The gateway's validators
+// pin this shape against golden events captured from these functions, so a
+// change on either side that isn't mirrored fails the cross-repo test rather
+// than silently going out on the wire.
+//
+// `deleted` is a flag rather than a NIP-09 deletion request: these are
+// replaceable events, so the tombstone must occupy the same address as the
+// row it retires, or a replaying consumer resurrects a deleted issue from the
+// last surviving version.
+
+export interface BuildKanbanBoardInput {
+  boardId: string;
+  slug: string;
+  title: string;
+  description?: string | null;
+  orgId?: string | null;
+  issuePrefix?: string | null;
+  defaultSprintDays: number;
+  doneWindowDays: number;
+  columns: ReadonlyArray<unknown>;
+  labels: ReadonlyArray<unknown>;
+  memberPolicy: string;
+  archived?: boolean;
+  createdAt?: number;
+}
+
+export function buildKanbanBoard(input: BuildKanbanBoardInput): EventTemplate {
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanBoard",
+    slug: input.slug,
+    title: input.title,
+    description: input.description ?? null,
+    org_id: input.orgId ?? null,
+    issue_prefix: input.issuePrefix ?? null,
+    default_sprint_days: input.defaultSprintDays,
+    done_window_days: input.doneWindowDays,
+    columns: input.columns,
+    labels: input.labels,
+    member_policy: input.memberPolicy,
+    archived: input.archived ?? false,
+  });
+  return {
+    kind: KIND_KANBAN_BOARD,
+    created_at: input.createdAt ?? nowSec(),
+    tags: [
+      ["d", input.boardId],
+      ["fa:context", FA_CONTEXT_V0],
+      ["alt", `Board ${input.title}`],
+      ["blake3", blake3ContentTag(content)],
+      ["fa:board", input.boardId],
+      ["fa:slug", input.slug],
+    ],
+    content,
+  };
+}
+
+export interface BuildKanbanIssueInput {
+  issueId: string;
+  boardId: string;
+  shortId?: string | null;
+  title: string;
+  body?: string | null;
+  bodyFormat: string;
+  type: string;
+  status: string;
+  columnId?: string | null;
+  container: string;
+  assigneePubkey?: string | null;
+  priority?: number | null;
+  estimate?: number | null;
+  labels: ReadonlyArray<string>;
+  position?: number | null;
+  sprintId?: string | null;
+  externalState?: string | null;
+  deleted?: boolean;
+  createdAt?: number;
+}
+
+export function buildKanbanIssue(input: BuildKanbanIssueInput): EventTemplate {
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanIssue",
+    short_id: input.shortId ?? null,
+    title: input.title,
+    body: input.body ?? null,
+    body_format: input.bodyFormat,
+    type: input.type,
+    status: input.status,
+    column_id: input.columnId ?? null,
+    container: input.container,
+    assignee_pubkey: input.assigneePubkey ?? null,
+    priority: input.priority ?? null,
+    estimate: input.estimate ?? null,
+    labels: input.labels,
+    position: input.position ?? null,
+    sprint_id: input.sprintId ?? null,
+    external_state: input.externalState ?? null,
+    deleted: input.deleted ?? false,
+  });
+  const tags: string[][] = [
+    ["d", input.issueId],
+    ["fa:context", FA_CONTEXT_V0],
+    ["alt", `Issue ${input.shortId ?? input.issueId}: ${input.title}`],
+    ["blake3", blake3ContentTag(content)],
+    ["fa:board", input.boardId],
+    ["fa:type", input.type],
+    ["fa:status", input.status],
+    ["fa:container", input.container],
+  ];
+  if (input.sprintId != null) tags.push(["fa:sprint", input.sprintId]);
+  if (input.deleted === true) tags.push(["fa:deleted", "1"]);
+  return {
+    kind: KIND_KANBAN_ISSUE,
+    created_at: input.createdAt ?? nowSec(),
+    tags,
+    content,
+  };
+}
+
+export interface BuildKanbanCommentInput {
+  commentId: string;
+  issueId: string;
+  boardId: string;
+  authorPubkey: string;
+  body: string;
+  bodyFormat: string;
+  inReplyTo?: string | null;
+  deleted?: boolean;
+  createdAt?: number;
+}
+
+export function buildKanbanComment(input: BuildKanbanCommentInput): EventTemplate {
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanComment",
+    issue_id: input.issueId,
+    author_pubkey: input.authorPubkey,
+    body: input.body,
+    body_format: input.bodyFormat,
+    in_reply_to: input.inReplyTo ?? null,
+    deleted: input.deleted ?? false,
+  });
+  const tags: string[][] = [
+    ["d", input.commentId],
+    ["fa:context", FA_CONTEXT_V0],
+    ["alt", `Comment on issue ${input.issueId}`],
+    ["blake3", blake3ContentTag(content)],
+    ["fa:board", input.boardId],
+    ["fa:issue", input.issueId],
+  ];
+  if (input.deleted === true) tags.push(["fa:deleted", "1"]);
+  return {
+    kind: KIND_KANBAN_COMMENT,
+    created_at: input.createdAt ?? nowSec(),
+    tags,
+    content,
+  };
+}
+
+/**
+ * Append-only audit record — the one builder here whose `d` tag is the change
+ * rather than the entity changed. Republishing a status change would mean the
+ * transition itself was misrecorded, which never happens; the issue's own
+ * 30551 carries the current status.
+ */
+export interface BuildKanbanStatusChangeInput {
+  statusChangeId: string;
+  issueId: string;
+  boardId: string;
+  actorPubkey: string;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  fromContainer?: string | null;
+  toContainer?: string | null;
+  occurredAtMs: number;
+  createdAt?: number;
+}
+
+export function buildKanbanStatusChange(input: BuildKanbanStatusChangeInput): EventTemplate {
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanStatusChange",
+    issue_id: input.issueId,
+    actor_pubkey: input.actorPubkey,
+    from_status: input.fromStatus ?? null,
+    to_status: input.toStatus ?? null,
+    from_container: input.fromContainer ?? null,
+    to_container: input.toContainer ?? null,
+    occurred_at_ms: input.occurredAtMs,
+  });
+  return {
+    kind: KIND_KANBAN_STATUS_CHANGE,
+    created_at: input.createdAt ?? nowSec(),
+    tags: [
+      ["d", input.statusChangeId],
+      ["fa:context", FA_CONTEXT_V0],
+      ["alt", `Issue ${input.issueId}: ${input.fromStatus ?? "—"} → ${input.toStatus ?? "—"}`],
+      ["blake3", blake3ContentTag(content)],
+      ["fa:board", input.boardId],
+      ["fa:issue", input.issueId],
+    ],
+    content,
+  };
+}
+
+export interface BuildKanbanSprintInput {
+  sprintId: string;
+  boardId: string;
+  name: string;
+  goal?: string | null;
+  status: string;
+  plannedDays?: number | null;
+  startedAtMs?: number | null;
+  completedAtMs?: number | null;
+  pointsCommittedStart?: number | null;
+  pointsCompleted?: number | null;
+  pointsCarried?: number | null;
+  addsMidSprint: number;
+  createdAt?: number;
+}
+
+export function buildKanbanSprint(input: BuildKanbanSprintInput): EventTemplate {
+  const content = JSON.stringify({
+    "@context": FA_CONTEXT_V0,
+    "@type": "KanbanSprint",
+    name: input.name,
+    goal: input.goal ?? null,
+    status: input.status,
+    planned_days: input.plannedDays ?? null,
+    started_at_ms: input.startedAtMs ?? null,
+    completed_at_ms: input.completedAtMs ?? null,
+    points_committed_start: input.pointsCommittedStart ?? null,
+    points_completed: input.pointsCompleted ?? null,
+    points_carried: input.pointsCarried ?? null,
+    adds_mid_sprint: input.addsMidSprint,
+  });
+  return {
+    kind: KIND_KANBAN_SPRINT,
+    created_at: input.createdAt ?? nowSec(),
+    tags: [
+      ["d", input.sprintId],
+      ["fa:context", FA_CONTEXT_V0],
+      ["alt", `Sprint ${input.name} (${input.status})`],
+      ["blake3", blake3ContentTag(content)],
+      ["fa:board", input.boardId],
+      ["fa:sprint", input.sprintId],
+      ["fa:status", input.status],
+    ],
     content,
   };
 }
