@@ -30,7 +30,14 @@ const durationDays = (from: number | null, to: number | null): string => {
 const MembershipRow = (props: {
   m: SprintMembership;
   basePath: string;
-  extra?: string;
+  // `| undefined` explicitly, not just `?`. Under `exactOptionalPropertyTypes`
+  // those are different types: `?` alone means "may be absent", while the sole
+  // caller passes `props.extraFor?.(m)` — a value that is PRESENT and
+  // `undefined`. Widening to match is the honest shape, because `extraFor` is
+  // itself declared to return `string | undefined`; the alternative (spreading
+  // the prop conditionally at the callsite) would preserve a stricter contract
+  // that nothing upstream can actually satisfy.
+  extra?: string | undefined;
 }) => (
   <li
     style={{
