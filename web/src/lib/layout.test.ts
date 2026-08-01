@@ -4,6 +4,7 @@ import {
   FORCE_VERTICAL_MAX_PX,
   WIDE_VERTICAL_MIN_PX,
   effectiveKanbanLayout,
+  isMobileHeader,
   isWideVertical,
   resolveKanbanLayout,
 } from "./layout";
@@ -50,5 +51,50 @@ describe("isWideVertical", () => {
 
   it("never applies to the columns layout — it already uses full width", () => {
     expect(isWideVertical("columns", 1920)).toBe(false);
+  });
+});
+
+// EFB-67 — the mobile board header.
+describe("isMobileHeader", () => {
+  it("engages on the phone widths the ticket was filed about", () => {
+    // 375×812, 393×873, 428×926 — the viewports named in the brief.
+    expect(isMobileHeader(375)).toBe(true);
+    expect(isMobileHeader(393)).toBe(true);
+    expect(isMobileHeader(428)).toBe(true);
+  });
+
+  // The desktop-regression guard. A mobile header that quietly reflows desktop
+  // is the failure mode this ticket is one flip away from becoming, and it is
+  // cheaper to assert here than to catch in a screenshot.
+  it("leaves desktop alone", () => {
+    expect(isMobileHeader(1024)).toBe(false);
+    expect(isMobileHeader(1440)).toBe(false);
+    expect(isMobileHeader(1920)).toBe(false);
+  });
+
+  // The exact edge is where drift shows up first — an off-by-one here is
+  // precisely the bug the existing `@media (max-width: 479px)` vs
+  // FORCE_VERTICAL_MAX_PX = 480 pair already demonstrates elsewhere.
+  // The exact edge is where drift shows up first, and the comparison must be
+  // STRICT to match resolveKanbanLayout. An inclusive `<=` would hand 640px a
+  // mobile header while the board still defaulted to columns.
+  it("switches exactly at the threshold, exclusive", () => {
+    expect(isMobileHeader(AUTO_VERTICAL_MAX_PX - 1)).toBe(true);
+    expect(isMobileHeader(AUTO_VERTICAL_MAX_PX)).toBe(false);
+    expect(isMobileHeader(639)).toBe(true);
+    expect(isMobileHeader(640)).toBe(false);
+  });
+
+  // THE load-bearing test. The lockstep invariant encoded as an executable
+  // assertion rather than prose — which is what caught the original `<=`
+  // off-by-one at exactly 640, a mismatch a comment would have shipped.
+  //
+  // This is the test that catches a future author who nudges either threshold
+  // without the other. Do not weaken it to a fixed expectation; its whole value
+  // is that it derives the expectation from the other function.
+  it("switches in lockstep with the board's vertical default, at every width", () => {
+    for (const w of [320, 375, 393, 428, 480, 500, 600, 639, 640, 641, 800, 1024, 1440]) {
+      expect(isMobileHeader(w)).toBe(resolveKanbanLayout(null, w) === "vertical");
+    }
   });
 });
