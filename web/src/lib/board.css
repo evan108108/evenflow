@@ -2784,112 +2784,180 @@ input.sprint-name:focus {
   opacity: 0.7;
 }
 
-/* ── EFB-67: mobile board header ────────────────────────────────────────
+/* ── EFB-67 v2: mobile board header ────────────────────────────────────
    Evan's report: "on mobile the header gets messy and cut off ... pure
-   visibility and usability." The screenshots showed the header consuming
-   roughly three-quarters of the viewport before the first card, the
-   breadcrumb stacking to three lines into the avatar, and the sprint tab
-   clipped off the right edge with the page scrolling horizontally to reach
-   it.
+   visibility and usability."
 
-   Engaged by the `mobile` class, NOT a media query. `lib/layout.ts`
-   isMobileHeader() owns the threshold, sharing AUTO_VERTICAL_MAX_PX with
-   resolveKanbanLayout so header-mode and column-mode switch together — see
-   the note above .vertical-split for why one breakpoint in one place beats
-   two that drift, and why window.innerWidth and media-query px disagree.
+   ── WHY THE BREAKPOINT MOVED INTO CSS ──
 
-   Everything below is inside `.board-page.mobile`, so the desktop path is
-   untouched by construction rather than by inspection. */
+   v1 chose the header in JS from `window.innerWidth` and shipped as a
+   regression. The reason was not the threshold and not the styles: once a
+   document overflows horizontally, Chromium reports `window.innerWidth` as
+   the SCROLLABLE width rather than the layout viewport. Measured on prod, at
+   a 393px iPhone viewport, with `.tabs-row` overflowing:
 
-.board-page.mobile .board-header {
-  flex-wrap: wrap;
-  gap: 0.5rem 0.75rem;
-  align-items: center;
-}
+       document.documentElement.clientWidth : 393
+       window.visualViewport.width          : 393
+       matchMedia("(max-width: 768px)")     : true
+       window.innerWidth                    : 792   <- what v1 read
+       document.body.scrollWidth            : 791
 
-/* 48pt → ~28pt. The title took a full band of vertical space it did not
-   earn on a phone; the breadcrumb above it already says where you are. */
-.board-page.mobile .board-header h1 {
-  font-size: 1.75rem;
-  line-height: 1.15;
-  flex: 1 1 100%;
-  min-width: 0;
-  /* A long board name should shorten, not push the row wider than the
-     viewport — the overflow this ticket exists to remove. */
-  overflow-wrap: anywhere;
-}
+   So `isMobileHeader(792)` was false on a real phone and the DESKTOP header
+   rendered inside 393px. The predicate was correct; its input was corrupted
+   by the CSS bug fixed further down this file.
 
-/* The desktop header uses a flexible spacer to push actions right. On a
-   wrapped mobile layout that spacer would eat a whole row. */
-.board-page.mobile .board-header .spacer {
+   A media query cannot be corrupted that way — it keys off the layout
+   viewport by construction. That is why this stays a media query even now
+   that `.tabs-row` no longer overflows: a layout that only works while
+   nothing else on the page overflows is the same trap wearing a new hat.
+
+   768px, not AUTO_VERTICAL_MAX_PX (640). The two no longer have to agree,
+   because the header no longer shares a mechanism with the kanban layout —
+   and 768 is the conventional tablet-portrait line, which is where a
+   two-row action header stops being the better rendering. */
+
+/* The gate. Both headers are always in the DOM; exactly one is displayed,
+   with no runtime decision and therefore no flash of the wrong one. */
+.board-header-mobile {
   display: none;
 }
 
-/* + New issue stays the primary action and stays visible without scrolling
-   or opening a menu. It takes the remaining width beside the two icons. */
-.board-page.mobile .board-header .btn-solid {
-  flex: 1 1 auto;
-  text-align: center;
+@media (max-width: 768px) {
+  .board-header-desktop {
+    display: none;
+  }
+
+  .board-header-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Row: title. Truncates rather than wrapping — v1 let the title wrap and
+     it took a band of vertical space before the first card. */
+  .mbh-title-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .mbh-title {
+    font-size: 1.75rem;
+    line-height: 1.15;
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mbh-title-row .prefix-chip {
+    flex: 0 0 auto;
+  }
+
+  /* Row: actions. Content-sized, in source order, no growth. v1's
+     `+ New issue` carried `flex: 1 1 auto` inside a wrapped row and rendered
+     as a full-height slab; nothing here grows. */
+  .mbh-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+  }
+
+  .mbh-actions > * {
+    flex: 0 0 auto;
+  }
+
+  .mbh-new {
+    /* Sized to its text, not to the row. */
+    padding-inline: 0.9rem;
+    white-space: nowrap;
+  }
+
+  /* Icon-only controls shed their label; the tap target must not shrink with
+     it. 2.75rem ≈ 44px, the platform minimum for a reliable touch target. */
+  .mbh-icon-btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 0.5rem;
+  }
+
+  .mbh-icon-btn .btn-icon {
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  /* The breadcrumb is the four-line wrap Evan photographed. It lives in
+     TopBar, ABOVE .board-header, so no header-only fix could ever have
+     reached it — this is the piece v1's own postmortem flagged and v1 did
+     not touch. On a phone it is pure chrome: the board name is in the
+     header, the path is in the address bar. Hidden, not restyled. */
+  .topbar-crumbs {
+    display: none;
+  }
 }
 
-/* Settings and Sprints shed their labels; the tap target must not shrink
-   with them. 44px is the platform minimum for a reliable touch target. */
-.board-page.mobile .board-header .btn:not(.btn-solid) {
-  flex: 0 0 auto;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-inline: 0.5rem;
-}
+/* ── The overflow that corrupted window.innerWidth ─────────────────────
+   `.tabs-row` was `display: flex` with no overflow rule and no wrap, so its
+   children (view tabs, layout toggle, tide badge) laid out to ~743px inside
+   a 321px content box and spilled out of the document. Measured before the
+   fix, at a 393px viewport:
 
-.board-page.mobile .btn-icon {
-  font-size: 1.1rem;
-  line-height: 1;
-}
+       div.tabs-row > div.current.tide   right = 791px
+       .tabs-row  scrollWidth 743  clientWidth 321  overflow-x: visible
 
-/* Scroll INSIDE the row, never the page.
-   `overflow-x: auto` on these two rows is deliberately scoped to the rows
-   themselves. The Kanban columns own their own horizontal scroll context in
-   columns mode, and two competing contexts on one page is the failure this
-   is written to avoid. It cannot collide in practice either: the mobile
-   class engages only below AUTO_VERTICAL_MAX_PX, where the board has
-   already defaulted to the vertical layout and the columns context does not
-   exist. The scoping is belt-and-braces for anyone who later widens the
-   threshold. */
-.board-page.mobile .tabs-row,
-.board-page.mobile .filter-chips {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  /* Momentum scrolling without a visible bar — the partially-visible next
-     tab is the affordance that says "there is more this way". */
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-}
+   That one row is what pushed document.body.scrollWidth to 791, which is
+   what made window.innerWidth report 792, which is what made v1 render the
+   desktop header on a phone. Scrolling INSIDE the row instead of pushing the
+   page wider fixes the visible clipping AND the corrupted measurement.
 
-.board-page.mobile .tabs-row::-webkit-scrollbar,
-.board-page.mobile .filter-chips::-webkit-scrollbar {
-  display: none;
-}
+   Scoped to the rows rather than the page on purpose: in columns mode the
+   Kanban board owns its own horizontal scroll context, and two competing
+   contexts on one page is its own bug. These rows never nest inside it. */
+@media (max-width: 768px) {
+  .tabs-row,
+  .filter-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    /* Momentum scrolling with no visible bar — the half-visible next tab is
+       the affordance that says "there is more this way". */
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
 
-/* Children must not shrink, or they compress to fit instead of scrolling
-   and the row silently stops being scrollable. */
-.board-page.mobile .tabs-row > *,
-.board-page.mobile .view-tabs > *,
-.board-page.mobile .filter-chips > * {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
+  .tabs-row::-webkit-scrollbar,
+  .filter-chips::-webkit-scrollbar {
+    display: none;
+  }
 
-.board-page.mobile .view-tabs {
-  flex-wrap: nowrap;
-}
+  /* Children must not shrink, or they compress to fit instead of scrolling
+     and the row silently stops being scrollable. */
+  .tabs-row > *,
+  .view-tabs > *,
+  .filter-chips > * {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
 
-/* The sprint badge wrapped to two lines inside its own pill and still
-   clipped. On one line it scrolls into view like everything else. */
-.board-page.mobile .sprint-badge {
-  white-space: nowrap;
+  .view-tabs {
+    flex-wrap: nowrap;
+  }
+
+  /* The spacer exists to push desktop actions right. Inside a scrolling row
+     it would consume the scroll distance instead. */
+  .tabs-row .spacer {
+    display: none;
+  }
+
+  .sprint-badge {
+    white-space: nowrap;
+  }
 }
 
 /* Visually hidden, still announced. The icon buttons above drop their
