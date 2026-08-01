@@ -2919,44 +2919,66 @@ input.sprint-name:focus {
 
    Scoped to the rows rather than the page on purpose: in columns mode the
    Kanban board owns its own horizontal scroll context, and two competing
-   contexts on one page is its own bug. These rows never nest inside it. */
+   contexts on one page is its own bug. These rows never nest inside it.
+
+   ── NOT INSIDE A MEDIA QUERY (EFB-67 v2 follow-up) ──
+
+   The first cut gated this on `max-width: 768px`, which left a live 22px
+   band: the tide badge sits at a natural right edge of 791px, so any viewport
+   between 769 and 791 still overflowed the page. Verified on prod at 769px —
+   `bodyScrollW 791` against `clientWidth 769`, one offender, `.tabs-row`
+   computing `overflow-x: visible`.
+
+   `overflow-x: auto` is inert until content actually exceeds the box, so
+   applying it at every width costs desktop nothing and closes the band by
+   construction rather than by choosing a second magic number. Guarding an
+   overflow at only some widths is what created the band in the first place.
+
+   The ONE rule that stays mobile-only is `.spacer`, below — it is desktop
+   layout, not an overflow guard. */
+.tabs-row,
+.filter-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  /* Momentum scrolling with no visible bar — the half-visible next tab is
+     the affordance that says "there is more this way". */
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tabs-row::-webkit-scrollbar,
+.filter-chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* Children must not shrink, or they compress to fit instead of scrolling
+   and the row silently stops being scrollable.
+
+   `.tabs-row .spacer { flex: 1 }` (declared far above) still wins on desktop:
+   two classes out-specify one class plus a universal, so the spacer keeps
+   growing and desktop actions stay right-aligned. That is asserted at 1440px
+   in the verification, not assumed from the specificity arithmetic. */
+.tabs-row > *,
+.view-tabs > *,
+.filter-chips > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.view-tabs {
+  flex-wrap: nowrap;
+}
+
+.sprint-badge {
+  white-space: nowrap;
+}
+
 @media (max-width: 768px) {
-  .tabs-row,
-  .filter-chips {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    /* Momentum scrolling with no visible bar — the half-visible next tab is
-       the affordance that says "there is more this way". */
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .tabs-row::-webkit-scrollbar,
-  .filter-chips::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Children must not shrink, or they compress to fit instead of scrolling
-     and the row silently stops being scrollable. */
-  .tabs-row > *,
-  .view-tabs > *,
-  .filter-chips > * {
-    flex: 0 0 auto;
-    white-space: nowrap;
-  }
-
-  .view-tabs {
-    flex-wrap: nowrap;
-  }
-
   /* The spacer exists to push desktop actions right. Inside a scrolling row
-     it would consume the scroll distance instead. */
+     it would consume the scroll distance instead. Mobile-only on purpose —
+     this is the one rule here that is layout rather than overflow. */
   .tabs-row .spacer {
     display: none;
-  }
-
-  .sprint-badge {
-    white-space: nowrap;
   }
 }
 
