@@ -1,0 +1,57 @@
+// EFB-68 — the project that actually enforces "worker code gets worker types".
+//
+// ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────
+//
+// `tsconfig.json` pins `types` to @cloudflare/workers-types, and that pin was
+// believed to keep node's type surface out of `src/`. It does not, and never
+// did. Two separate reasons, both verified rather than reasoned about:
+//
+//   1. The `types` array only gates AUTOMATIC GLOBAL inclusion. A `node:`
+//      module import resolves through @types/node regardless, and once any
+//      file in a program pulls @types/node in, its global declarations —
+//      `process`, `Buffer`, `ImportMeta.url` — are visible to EVERY file in
+//      that program, `src/` included.
+//
+//   2. It does not even take a `node:` import to trigger it. The root project
+//      includes `tests/**/*.ts`, every test imports `vitest`, and vitest's own
+//      type surface transitively pulls @types/node. So the pin has been open
+//      since the first test file entered the program — long before any test
+//      imported a node builtin directly.
+//
+// Measured, by varying only the root `include` and probing with
+// `process.env["X"]` inside `src/slug.ts`:
+//
+//   include: src/** only                     -> TS2591, `process` not found
+//   include: src/** + tests/slug.test.ts     -> compiles clean
+//   include: full, minus the node-using test -> compiles clean
+//
+// `tests/slug.test.ts` imports nothing but `vitest` and the module under test.
+//
+// The reason nobody noticed is that `src/` happens not to use `process` or
+// `fs` today. That is a coincidence, not a defence — and the failure it was
+// protecting against is a bad one: node built-ins typecheck fine and then
+// throw at runtime on the Workers runtime, so the mistake surfaces in
+// production rather than in the editor.
+//
+// ── WHAT THIS PROJECT IS ─────────────────────────────────────────────────
+//
+// The same compiler options as the root, over `src/` ALONE. No tests, so no
+// vitest, so no @types/node, so `process` and `node:fs` genuinely fail to
+// resolve — which is the invariant the comments elsewhere have been claiming
+// all along.
+//
+// Run it with `npm run typecheck:src`. It is a separate script from
+// `typecheck` rather than chained onto it because `typecheck` exits non-zero
+// on pre-existing errors, so an `&&` chain would never reach this project —
+// the same reasoning tsconfig.integration.json records for its own script.
+//
+// This project is the enforcement. Keep it that way: do not add `tests/**` to
+// the include below to make some test typecheck, because that single edit
+// silently restores the hole this file exists to close.
+{
+  "extends": "./tsconfig.json",
+  // `exclude` is restated because it is inherited and the base excludes
+  // directories that are already outside this project's `include`.
+  "exclude": ["node_modules", ".wrangler"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "worker-configuration.d.ts"]
+}

@@ -3,11 +3,21 @@
 // hashes with node:crypto. That needs @types/node.
 //
 // It gets its own project rather than adding "node" to the root tsconfig's
-// `types` on purpose. The root pin to @cloudflare/workers-types is a guardrail
-// — it is what stops `fs.readFileSync` from typechecking inside src/, which
-// would deploy and then fail in production. (tests/raw.d.ts documents the same
-// pin from the other side.) Widening it globally to serve one directory would
-// trade a real safety property for a small convenience.
+// `types` on purpose: widening the root globally to serve one directory would
+// trade a safety property for a small convenience.
+//
+// CORRECTED (EFB-68). This header used to claim that the root pin to
+// @cloudflare/workers-types "is what stops `fs.readFileSync` from typechecking
+// inside src/". That was false, and had been for a long time. The root project
+// includes `tests/**`, every test imports `vitest`, and vitest's type surface
+// transitively pulls @types/node — whose globals then reach every file in the
+// program, `src/` included. Verified: `fs.readFileSync` and `process.env` in a
+// src/ file BOTH typecheck clean under `npm run typecheck`.
+//
+// The pin that actually holds is `tsconfig.src.json` / `npm run typecheck:src`,
+// which compiles `src/` with no tests in the program. Run THAT to know whether
+// worker code has reached for a node built-in. See that file's header for the
+// measurements.
 //
 // Checked by `npm run typecheck:integration`. It is a separate script rather
 // than being chained onto `typecheck` because `typecheck` currently exits

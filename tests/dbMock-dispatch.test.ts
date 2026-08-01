@@ -26,10 +26,13 @@
 // changes.
 
 import { describe, expect, it } from "vitest";
-// `?raw` hands us dbMock's source as a string. node:fs would do the same but
-// does not typecheck here — the Worker tsconfig pins `types` to
-// @cloudflare/workers-types and there is no @types/node in this program.
-// See tests/raw.d.ts for the declaration.
+// `?raw` hands us dbMock's source as a string, resolved by vitest at build
+// time. See tests/raw.d.ts for the declaration.
+//
+// CORRECTED (EFB-68): this used to say node:fs "does not typecheck here"
+// because the program has no @types/node. It does — vitest pulls @types/node
+// in transitively — so that was never the reason. `?raw` is preferred because
+// it needs no node type surface at all, not because node:fs would fail.
 import SOURCE from "./dbMock.ts?raw";
 
 /** One dispatch guard: the literal it matches on, and where it lives. */
