@@ -20,7 +20,6 @@ import {
   isWideVertical,
   resolveKanbanLayout,
   type KanbanLayout,
-  isMobileHeader,
 } from "../../lib/layout";
 import { boardViewOf, issuePath, viewPath } from "../../lib/boardView";
 import {
@@ -42,6 +41,7 @@ import { TopBar } from "../../components/TopBar";
 import { TideBadge } from "../../components/TideBadge";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
+import { MobileBoardHeader } from "./MobileBoardHeader";
 import { KanbanView } from "./KanbanView";
 import { BacklogView } from "./BacklogView";
 import { IceboxView } from "./IceboxView";
@@ -189,10 +189,13 @@ export const BoardPage = () => {
   );
   const [viewportWidth, setViewportWidth] = createSignal(window.innerWidth);
   const kanbanLayout = () => effectiveKanbanLayout(layoutPref(), viewportWidth());
-  // EFB-67: reuses the viewport signal above rather than adding a second
-  // listener or a media query. Switches in lockstep with the board's vertical
-  // default, so mobile chrome never sits over columns-mode content.
-  const mobileHeader = () => isMobileHeader(viewportWidth());
+  // EFB-67 v2: the header no longer reads this signal. `window.innerWidth` is
+  // not the layout viewport once the document overflows horizontally — it was
+  // 792 on a 393px phone — so the header is chosen by a CSS media query
+  // instead. The kanban-layout uses above are unchanged and left alone
+  // deliberately: their live behaviour is correct today (the overflow appears
+  // after mount, and effectiveKanbanLayout's thresholds happen to absorb it),
+  // and swapping them is its own ticket rather than a rider on this one.
   // Wide + vertical → the Backlog/Icebox rail sits beside the stack. The
   // rail's markup renders either way; this only decides beside vs below.
   const wideRail = () => isWideVertical(kanbanLayout(), viewportWidth());
@@ -434,11 +437,11 @@ export const BoardPage = () => {
   };
 
   return (
-    // EFB-67: the mobile flag rides the page root so the tab and chip rows can
-    // be targeted from CSS without another binding per row. This and the one on
-    // .board-header read the same `mobileHeader()` accessor, so they cannot
-    // disagree.
-    <main class="board-page" classList={{ mobile: mobileHeader() }}>
+    // EFB-67 v2: no `mobile` class. Which header shows is decided by a CSS
+    // media query off the layout viewport, not by a JS reading of
+    // window.innerWidth — see MobileBoardHeader.tsx for the measurement showing
+    // why the JS reading is unsafe on this page specifically.
+    <main class="board-page">
       <Show when={!store.loading()} fallback={<p class="empty-state">{loadingLine}</p>}>
         <Show
           when={store.board()}
@@ -461,14 +464,14 @@ export const BoardPage = () => {
                     : [{ label: board().title }]),
                 ]}
               />
-              {/* EFB-67: one JSX tree, not a parallel mobile header. A separate
-                  component would have to restate the signed-out / read-only
-                  conditions below and would drift out of sync with them; the
-                  desktop path staying structurally identical is also what makes
-                  "desktop must not regress" cheap to guarantee. Layout is CSS
-                  off the `mobile` class; markup only changes where it must —
-                  the two label→icon swaps. */}
-              <header class="board-header" classList={{ mobile: mobileHeader() }}>
+              {/* EFB-67 v2 — BOTH headers render; CSS `display: none` hides the
+                  one that does not match the viewport. No runtime decision, no
+                  flicker, no resize listener in the path, and nothing that a
+                  future overflow bug can corrupt. The duplication of the
+                  signed-out / read-only conditions into MobileBoardHeader is
+                  the deliberate cost of that; signedOutBoard.test.tsx asserts
+                  both together so they cannot drift apart silently. */}
+              <header class="board-header board-header-desktop">
                 <h1>{board().title}</h1>
                 <Show when={board().issue_prefix}>
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
@@ -477,15 +480,7 @@ export const BoardPage = () => {
                 {/* Sprint history stays: it is a read-only view, and a
                     signed-out visitor on a public board may read it. */}
                 <a class="btn" href={`${base()}/sprints`} title="Sprint history">
-                  {/* The visible label goes away on mobile; the semantic one
-                      must not. `title` alone is not an accessible name on a
-                      touch device, where there is no hover to reveal it. */}
-                  <Show when={mobileHeader()} fallback="Sprints">
-                    <span class="btn-icon" aria-hidden="true">
-                      ▦
-                    </span>
-                    <span class="sr-only">Sprint controls</span>
-                  </Show>
+                  Sprints
                 </a>
                 {/* Settings and New issue are mutation entry points, so they
                     are hidden rather than disabled for a signed-out viewer —
@@ -493,12 +488,7 @@ export const BoardPage = () => {
                     way to take (EFB-47). */}
                 <Show when={orgHandle() && !boardReadOnly()}>
                   <a class="btn" href={`${base()}/settings`} title="Board settings">
-                    <Show when={mobileHeader()} fallback="Settings">
-                      <span class="btn-icon" aria-hidden="true">
-                        ⚙
-                      </span>
-                      <span class="sr-only">Board settings</span>
-                    </Show>
+                    Settings
                   </a>
                 </Show>
                 <Show when={!boardReadOnly()}>
@@ -507,6 +497,15 @@ export const BoardPage = () => {
                   </button>
                 </Show>
               </header>
+
+              <MobileBoardHeader
+                title={board().title}
+                issuePrefix={board().issue_prefix ?? null}
+                base={base()}
+                orgHandle={orgHandle()}
+                readOnly={boardReadOnly()}
+                onNewIssue={() => setShowNewIssue(true)}
+              />
 
               <div class="tabs-row">
                 <nav class="view-tabs">

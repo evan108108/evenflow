@@ -21,27 +21,39 @@ export const FORCE_VERTICAL_MAX_PX = 480;
 export const WIDE_VERTICAL_MIN_PX = 1024;
 
 /**
- * Whether the board header renders in its mobile shape (EFB-67).
+ * Whether a board header of the given width renders in its mobile shape.
  *
- * Mobile header engages at the same threshold the board defaults to vertical
- * (AUTO_VERTICAL_MAX_PX = 640). Design invariant: header-mode and column-mode
- * switch together, so we never present mobile-density chrome over desktop-
- * density content. Landscape phones in 641–800 currently see columns + desktop
- * header; extending the mobile header up to that range needs its own design
- * pass on the mixed-density question (follow-up if it becomes a real ask).
+ * ⚠️ DO NOT FEED `window.innerWidth` TO THIS on a page that can overflow
+ * horizontally. Once a document overflows, Chromium reports `window.innerWidth`
+ * as the SCROLLABLE width, not the layout viewport width. Measured on prod at a
+ * 393px iPhone viewport while `.tabs-row` overflowed:
  *
- * Deliberately NOT a CSS media query. See the note above `.vertical-split` in
- * board.css: window.innerWidth and media-query pixels disagree by the scrollbar
- * width, and one breakpoint in one place beats two that drift. This reuses an
- * existing constant rather than adding a fourth.
+ *     document.documentElement.clientWidth : 393
+ *     window.visualViewport.width          : 393
+ *     matchMedia("(max-width: 768px)")     : true
+ *     window.innerWidth                    : 792   <- what EFB-67 v1 read
+ *
+ * EFB-67 v1 shipped as a regression because of exactly that: it selected the
+ * header with `isMobileHeader(window.innerWidth)`, got 792 on a real phone, and
+ * rendered the DESKTOP header inside 393px. Use
+ * `matchMedia("(max-width: 768px)")` or `document.documentElement.clientWidth`.
+ * The board header is now chosen by a CSS media query and no longer calls this.
+ *
+ * THE PROPERTY TEST BELOW STRESSES THE PREDICATE AND CANNOT PROTECT AGAINST A
+ * CORRUPTED INPUT. It passed throughout v1. A pure function tested with clean
+ * synthetic widths is not evidence about the number the caller actually has.
+ *
+ * Kept rather than deleted (EFB-67 v2): nothing else in the codebase records
+ * the innerWidth hazard, and this is the site a future author reaching for
+ * `window.innerWidth` would land on. The comment is the point.
+ *
+ * The old note here claimed innerWidth and media-query px "disagree by the
+ * scrollbar width." On this page they disagreed by 399px. That claim is the
+ * reason v1 avoided a media query, so it is corrected rather than removed.
  *
  * STRICT `<`, matching resolveKanbanLayout's comparison exactly rather than
- * approximately. An inclusive `<=` here would put a 640px viewport on the
- * mobile header while the board still defaulted to columns — a one-pixel band
- * of mobile chrome over desktop content, which is the same inclusive-vs-
- * exclusive drift the `@media (max-width: 479px)` / FORCE_VERTICAL_MAX_PX = 480
- * pair already demonstrates elsewhere in this codebase. Sharing the symbol is
- * not enough; the comparison has to match too.
+ * approximately — an inclusive `<=` would put a 640px viewport on the mobile
+ * header while the board still defaulted to columns.
  */
 export const isMobileHeader = (viewportWidth: number): boolean =>
   viewportWidth < AUTO_VERTICAL_MAX_PX;
