@@ -5,8 +5,13 @@
 // read are kept deliberately — the point of a vendored fixture is that it
 // is realistic, so a test that passes here passes against a real delivery.
 //
-// Imported rather than read with node:fs because the Worker tsconfig ships
-// @cloudflare/workers-types only; there is no node type surface to lean on.
+// Imported as modules rather than read with node:fs. The original reason given
+// here — "there is no node type surface to lean on" — was wrong (EFB-68):
+// vitest pulls @types/node into this program transitively, so node:fs would
+// typecheck. The real reasons to keep importing them are better ones: the JSON
+// is type-checked and shape-checked at compile time rather than parsed blindly
+// at runtime, and the fixtures resolve identically whatever the type surface
+// happens to be.
 
 import prOpened from "./pull_request.opened.json";
 import prOpenedDraft from "./pull_request.opened_draft.json";
