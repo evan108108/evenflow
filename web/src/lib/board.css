@@ -2783,3 +2783,128 @@ input.sprint-name:focus {
   color: var(--color-ink-soft);
   opacity: 0.7;
 }
+
+/* ── EFB-67: mobile board header ────────────────────────────────────────
+   Evan's report: "on mobile the header gets messy and cut off ... pure
+   visibility and usability." The screenshots showed the header consuming
+   roughly three-quarters of the viewport before the first card, the
+   breadcrumb stacking to three lines into the avatar, and the sprint tab
+   clipped off the right edge with the page scrolling horizontally to reach
+   it.
+
+   Engaged by the `mobile` class, NOT a media query. `lib/layout.ts`
+   isMobileHeader() owns the threshold, sharing AUTO_VERTICAL_MAX_PX with
+   resolveKanbanLayout so header-mode and column-mode switch together — see
+   the note above .vertical-split for why one breakpoint in one place beats
+   two that drift, and why window.innerWidth and media-query px disagree.
+
+   Everything below is inside `.board-page.mobile`, so the desktop path is
+   untouched by construction rather than by inspection. */
+
+.board-page.mobile .board-header {
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+
+/* 48pt → ~28pt. The title took a full band of vertical space it did not
+   earn on a phone; the breadcrumb above it already says where you are. */
+.board-page.mobile .board-header h1 {
+  font-size: 1.75rem;
+  line-height: 1.15;
+  flex: 1 1 100%;
+  min-width: 0;
+  /* A long board name should shorten, not push the row wider than the
+     viewport — the overflow this ticket exists to remove. */
+  overflow-wrap: anywhere;
+}
+
+/* The desktop header uses a flexible spacer to push actions right. On a
+   wrapped mobile layout that spacer would eat a whole row. */
+.board-page.mobile .board-header .spacer {
+  display: none;
+}
+
+/* + New issue stays the primary action and stays visible without scrolling
+   or opening a menu. It takes the remaining width beside the two icons. */
+.board-page.mobile .board-header .btn-solid {
+  flex: 1 1 auto;
+  text-align: center;
+}
+
+/* Settings and Sprints shed their labels; the tap target must not shrink
+   with them. 44px is the platform minimum for a reliable touch target. */
+.board-page.mobile .board-header .btn:not(.btn-solid) {
+  flex: 0 0 auto;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 0.5rem;
+}
+
+.board-page.mobile .btn-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Scroll INSIDE the row, never the page.
+   `overflow-x: auto` on these two rows is deliberately scoped to the rows
+   themselves. The Kanban columns own their own horizontal scroll context in
+   columns mode, and two competing contexts on one page is the failure this
+   is written to avoid. It cannot collide in practice either: the mobile
+   class engages only below AUTO_VERTICAL_MAX_PX, where the board has
+   already defaulted to the vertical layout and the columns context does not
+   exist. The scoping is belt-and-braces for anyone who later widens the
+   threshold. */
+.board-page.mobile .tabs-row,
+.board-page.mobile .filter-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  /* Momentum scrolling without a visible bar — the partially-visible next
+     tab is the affordance that says "there is more this way". */
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.board-page.mobile .tabs-row::-webkit-scrollbar,
+.board-page.mobile .filter-chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* Children must not shrink, or they compress to fit instead of scrolling
+   and the row silently stops being scrollable. */
+.board-page.mobile .tabs-row > *,
+.board-page.mobile .view-tabs > *,
+.board-page.mobile .filter-chips > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.board-page.mobile .view-tabs {
+  flex-wrap: nowrap;
+}
+
+/* The sprint badge wrapped to two lines inside its own pill and still
+   clipped. On one line it scrolls into view like everything else. */
+.board-page.mobile .sprint-badge {
+  white-space: nowrap;
+}
+
+/* Visually hidden, still announced. The icon buttons above drop their
+   visible label on mobile; the accessible name has to survive that. `title`
+   alone does not qualify — there is no hover on a touch device — and
+   display:none or visibility:hidden would remove it from the accessibility
+   tree along with the pixels. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

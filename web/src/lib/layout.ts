@@ -20,6 +20,32 @@ export const FORCE_VERTICAL_MAX_PX = 480;
  */
 export const WIDE_VERTICAL_MIN_PX = 1024;
 
+/**
+ * Whether the board header renders in its mobile shape (EFB-67).
+ *
+ * Mobile header engages at the same threshold the board defaults to vertical
+ * (AUTO_VERTICAL_MAX_PX = 640). Design invariant: header-mode and column-mode
+ * switch together, so we never present mobile-density chrome over desktop-
+ * density content. Landscape phones in 641–800 currently see columns + desktop
+ * header; extending the mobile header up to that range needs its own design
+ * pass on the mixed-density question (follow-up if it becomes a real ask).
+ *
+ * Deliberately NOT a CSS media query. See the note above `.vertical-split` in
+ * board.css: window.innerWidth and media-query pixels disagree by the scrollbar
+ * width, and one breakpoint in one place beats two that drift. This reuses an
+ * existing constant rather than adding a fourth.
+ *
+ * STRICT `<`, matching resolveKanbanLayout's comparison exactly rather than
+ * approximately. An inclusive `<=` here would put a 640px viewport on the
+ * mobile header while the board still defaulted to columns — a one-pixel band
+ * of mobile chrome over desktop content, which is the same inclusive-vs-
+ * exclusive drift the `@media (max-width: 479px)` / FORCE_VERTICAL_MAX_PX = 480
+ * pair already demonstrates elsewhere in this codebase. Sharing the symbol is
+ * not enough; the comparison has to match too.
+ */
+export const isMobileHeader = (viewportWidth: number): boolean =>
+  viewportWidth < AUTO_VERTICAL_MAX_PX;
+
 /** The user's effective preference: stored value, else viewport default. */
 export const resolveKanbanLayout = (
   stored: string | null,
