@@ -2,7 +2,7 @@
 
 **A boundary that says "yes" when it should say "no, and here's why" is a bug — even when nothing crashes and every test passes.**
 
-This is the developer guide for how request bodies enter evenflow. Read it before you write a route handler.
+This is the developer guide for how request bodies **and query strings** enter evenflow. Read it before you write a route handler.
 
 ## Why this exists
 
@@ -188,8 +188,87 @@ Existing behavior must not change except that previously-silent failures now ret
 
 **A note for the first per-subsystem migration:** `readJsonBody` is currently defined *six times* — exported from `src/routes/errors.ts` and copy-pasted into five route files. Consolidating those into the one in `errors.ts` should be that migration's first move. It is the same drift this document is about, living inside the tooling the document describes.
 
+## Query strings (EFB-71)
+
+Everything above is about bodies. A query string is the same boundary with the same disease, and it went unnoticed a year longer because the API for reading one *looks* safe.
+
+```ts
+const status = c.req.query("status");
+```
+
+That reads a param. It cannot report an unknown one — not because it forgets to, but because it was never shown the rest of the query string. A handler reading seven params from a request carrying eight is blind to the eighth by construction.
+
+The bug that filed this ticket:
+
+```
+GET /boards/evan-s-flow-board/issues?status_id=deadbeef&limit=3   → 200, 3 issues
+GET /boards/evan-s-flow-board/issues?limit=3                      → 200, 3 issues
+```
+
+Identical. `status_id` is not a field — the real one is `column_id` — and the endpoint said yes anyway. The caller reasoned from a filtered-looking answer that had never been filtered, and got three diagnoses wrong before checking the field name.
+
+### `parseRouteQuery`
+
+Same file, same parse options, same reason grammar:
+
+```ts
+import { Schema } from "effect";
+import { parseRouteQuery, QueryString } from "../lib/route-body";
+
+const ListIssuesQuery = Schema.Struct({
+  status: QueryString,
+  container: QueryString,
+  column_id: QueryString,
+  limit: QueryString,
+  after: QueryString,
+});
+
+// In the handler:
+const q = yield* parseRouteQuery(c, ListIssuesQuery);
+```
+
+The load-bearing detail is that the wrapper reads the **whole** query string (`c.req.query()` with no argument). That is the only shape from which "you sent something I do not accept" is answerable at all.
+
+Three things follow from query strings being untyped text:
+
+- **Values are strings.** A param that must be a number is a string the schema constrains. The schema is mostly a list of *accepted keys*, and the key set is the point.
+- **Policy stays in the handler.** `limit`'s ceiling, `container`'s vocabulary, `column_id`'s existence on this board, a cursor's stream agreement — all still named handler steps, exactly as the DB-free rule requires. The schema validates SHAPE.
+- **Errors answer `invalid-query`, not `invalid-body`.** A `QueryValidationError` carries the same `<key>-unknown` reason grammar, under an envelope that doesn't send a GET's caller looking at a body they never wrote.
+
+Repeated keys (`?status=a&status=b`) still collapse to the last value, unchanged from before. Rejecting them is the same class of tightening and is deliberately *not* bundled in — it is its own decision.
+
+### The query CI check
+
+```
+npm run check:boundary-query
+```
+
+`scripts/check-boundary-query.mjs`, with `scripts/boundary-query-allowlist.json` as its ratchet. Same contract as the body check: sunsets fail rather than warn, 180-day horizon, new routes may not be added. It scans **every verb**, since a query string rides any request.
+
+It shares `scripts/lib/route-scan.mjs` with the body check — handler location is identical work, and two copies would diverge on the first fix.
+
+**One deliberate difference: there is no `noQuery` declaration list.** Applying the declare-don't-detect rule literally here would have meant ~50 declarations written in a single commit, because query params ride every verb rather than the body-bearing three. Fifty entries added in one sitting is not fifty routes read — it is a checkbox, and it is *worse* than honest silence, because it launders an inference into a human declaration that gets cited later as verification.
+
+> **A declaration's evidentiary weight cannot exceed what the process that produced it could have earned.**
+
+So the check states its blind spot instead of papering over it. Every successful run prints:
+
+```
+[boundary-query] 89 handler(s) had no detected query read — that is not proof they read none.
+[boundary-query] 10 registration(s) use a non-literal path and are invisible to this scan entirely.
+```
+
+The `noQuery` declarations land in the per-subsystem migration tickets, where someone is actually reading the route. That is earned declaration rather than inherited.
+
+### The check proves it can fail, on every run
+
+`tests/boundary-query.test.ts` runs the checker against synthetic fixtures in `tests/fixtures/boundary-query/` and asserts a **non-zero exit** on an un-migrated handler and zero on a migrated one.
+
+A check that has only ever been observed passing is indistinguishable from a check that cannot fail — if the marker list stops matching, or the registration regex silently misses every route, the output is a cheerful `OK` either way. Pinning the failure in a test makes the guard's own decay a red test instead of a quiet green one. Evidence stapled to a PR proves the check worked once; a test proves it still does.
+
 ## Related tickets
 
+- **EFB-71** *(shipped)* — the same strict-unknown rule for query params. `parseRouteQuery`, the `check:boundary-query` ratchet, and `GET /boards/:slug/issues` as the reference migration. See the query-string section above.
 - **EFB-53** — `PATCH /issues/:id` accepted unknown keys silently. Closed by construction when the reference route migrated; the strict-unknown tests in `tests/boundary-discipline.test.ts` are its regression guard.
 - **EFB-58** *(shipped)* — typed provenance for identity references in signed-event contexts. Applied the `Provenance` struct to both signed-event builders that have an actor slot, and added the constructors. See the Provenance section above.
 - **EFB-38 / EFB-42 / EFB-51** — the identity bugs `IdentityRefFromInput` exists to prevent.
@@ -204,3 +283,7 @@ The checker was, in other words, a boundary that said "yes" when it should have 
 Generalize it as **declaration over detection**. Any detector's silence is ambiguous: it can mean "no violation here" or "my detection didn't reach here", and those are indistinguishable from the outside. Worse, the pattern list is an implicit contract — adding a new way to read a body silently exempts every route that adopts it. A declaration inverts that: the declaration is the evidence of intent, and the scanner's job shrinks to detecting *drift from what was declared*. Silence stops being load-bearing.
 
 Apply the same suspicion to any tool that promises to protect you. Ask what its silence actually proves.
+
+**It recurred while EFB-71 was being built.** The shared scanner resolves a same-file helper's body so a read hiding one level deep is still seen — but only for helpers written as `= (c) => { … }`. A helper written in the *concise* arrow form, `= (c) => Effect.gen(function* () { … })`, had its argument list captured and its body silently discarded. `requestedDays` in `sprints.ts` is written exactly that way and reads `c.req.query("days")`; both GET tide routes call it, and both were reported as reading no query at all.
+
+Nobody found that by reviewing the scanner. It surfaced because a *second* check was pointed at the same machinery and the numbers didn't match what a human count of `grep -rn 'c.req.query'` produced. The generalizable move is the cheap one: **when you build a detector, compare its output against a dumber tool's output on the same input.** Where they disagree, the sophisticated one is usually the one that is wrong, and the disagreement is the only signal that a blind spot exists at all.

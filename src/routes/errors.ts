@@ -9,6 +9,19 @@ import type { AppHonoEnv } from "../http";
 export class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
+/**
+ * EFB-71 — a request's QUERY STRING was malformed, as opposed to its body.
+ *
+ * Separate from `ValidationError` for one reason: the envelope. Every 400 in
+ * this app answered `{"error":"invalid-body"}`, which on a GET that carries no
+ * body at all is a small lie of exactly the kind this ticket exists to delete —
+ * a caller who sent a bad query param was told to go look at a body they never
+ * wrote. The `reason` grammar is unchanged (`<key>-unknown`, `<key>`), because
+ * callers already parse it; only the envelope tells the truth now.
+ */
+export class QueryValidationError extends Data.TaggedError("QueryValidationError")<{
+  readonly reason: string;
+}> {}
 export class ConflictError extends Data.TaggedError("ConflictError")<{
   readonly reason: string;
 }> {}
@@ -39,6 +52,8 @@ export const errorResponse = (
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason }, 400);
+      case "QueryValidationError":
+        return c.json({ error: "invalid-query", reason }, 400);
       case "UnauthorizedError":
         return c.json({ error: "unauthorized", reason }, 401);
       case "ForbiddenError":

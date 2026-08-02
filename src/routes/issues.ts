@@ -22,9 +22,12 @@ import {
   IdentityRefFromInput,
   ImmutableField,
   NonEmptyString,
+  QueryString,
   parseRouteBody,
+  parseRouteQuery,
   requireAnyOf,
 } from "../lib/route-body";
+import { QueryValidationError } from "./errors";
 import type { AppHonoEnv, LayerFor } from "../http";
 import {
   ForbiddenError,
@@ -85,6 +88,28 @@ const MIN_POSITION_GAP = 1e-6;
 // sized to any expected depth.
 const DUPLICATE_CHAIN_MAX_HOPS = 10;
 
+/**
+ * EFB-71 — every query param `GET /boards/:slug/issues` accepts.
+ *
+ * Module scope and pure, per the EFB-54 rule: a schema that needs no Db and no
+ * Context is a schema that unit-tests without either. The VALUES are only
+ * shape-checked here — `limit`'s ceiling, `container`'s vocabulary,
+ * `column_id`'s existence on this board and `after`'s stream agreement are all
+ * policy or database questions, and they stay in the handler as named steps
+ * where they already were.
+ */
+const ListIssuesQuery = Schema.Struct({
+  status: QueryString,
+  container: QueryString,
+  assignee: QueryString,
+  label: QueryString,
+  column_id: QueryString,
+  sprint_id: QueryString,
+  q: QueryString,
+  limit: QueryString,
+  after: QueryString,
+});
+
 class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly reason: string;
 }> {}
@@ -94,6 +119,7 @@ class NotFoundError extends Data.TaggedError("NotFoundError")<{
 
 type IssuesFailure =
   | ValidationError
+  | QueryValidationError
   | NotFoundError
   | BoardOwnershipError
   | UnauthorizedError
@@ -107,6 +133,10 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<IssuesFailure>
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
+      // EFB-71 — a GET carries no body, so telling its caller the BODY was
+      // invalid sent them to look at something they never wrote.
+      case "QueryValidationError":
+        return c.json({ error: "invalid-query", reason: f.reason }, 400);
       case "UnauthorizedError":
         return c.json({ error: "unauthorized", reason: f.reason }, 401);
       case "ForbiddenError":
@@ -708,23 +738,23 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program, 201);
   });
 
-  // ── GET /boards/:slug/issues — list with single-filter + keyset ─────────
+  // ── GET /boards/:slug/issues — list with composable filters + keyset ────
+  //
+  // EFB-71 reference route. Before the migration this read seven params by
+  // name and never looked at the eighth, so `?status_id=<uuid>` — a field that
+  // does not exist, mistaken for the real `column_id` — returned 200 and the
+  // unfiltered list. The caller's wrong belief about the API was confirmed by
+  // a successful response.
   issues.get("/boards/:slug/issues", async (c) => {
-    const q = {
-      status: c.req.query("status"),
-      container: c.req.query("container"),
-      assignee: c.req.query("assignee"),
-      label: c.req.query("label"),
-      // Phase 22: column_id selects one Kanban column's paged stream;
-      // sprint_id and q are wired through for a later filter-chip UI.
-      column_id: c.req.query("column_id"),
-      sprint_id: c.req.query("sprint_id"),
-      q: c.req.query("q"),
-    };
-    const limitRaw = c.req.query("limit");
-    const after = c.req.query("after");
-
     const program = Effect.gen(function* () {
+      // The accepted key set, and therefore the whole of the fix: anything not
+      // named here is a 400 that names it. Phase 22 wired column_id (one
+      // Kanban column's paged stream) plus sprint_id and q for a later
+      // filter-chip UI.
+      const q = yield* parseRouteQuery(c, ListIssuesQuery);
+      const limitRaw = q.limit;
+      const after = q.after;
+
       const { board } = yield* resolveBoardScope(
         { org_slug: orgSlugOf(c), slug: c.req.param("slug") },
         callerPubkeyOrNull(c.get("claims")),

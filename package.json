@@ -19,6 +19,7 @@
     "d1:migrate:local": "wrangler d1 migrations apply evenflow --local",
     "d1:migrate:remote": "wrangler d1 migrations apply evenflow --remote",
     "check:boundary": "node scripts/check-boundary-discipline.mjs",
+    "check:boundary-query": "node scripts/check-boundary-query.mjs",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
