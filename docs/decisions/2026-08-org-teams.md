@@ -19,7 +19,7 @@ Two files carry it, both worth opening rather than taking on trust here:
 Nothing in the UI says this, which is why the ticket didn't notice. What EFB-18 actually names is **subsetting**, in two forms that should not share a ticket:
 
 - **Gap 1 — additive.** Grant to *some* org members rather than all. Genuinely absent; this is the ticket's real request.
-- **Gap 2 — restrictive.** Make a board *narrower* than its org. Also absent, and differently shaped: `strongest()` (`authz.ts:144-149`) is a floor nothing can lower, so a `visibility:"private"` board inside a shared org is readable **and writable** by every org member. That violates the `private` contract rather than merely lacking a feature — filed separately.
+- **Gap 2 — restrictive.** Make a board *narrower* than its org. Also absent, and differently shaped: `strongest()` (`authz.ts:144-149`) is a floor nothing can lower, so a `visibility:"private"` board inside a shared org is readable by every org member — and writable too, if `contributor` clears the write guard. *That second half is reasoned from `ROLE_RANK` rather than observed; the probe has not been run (see Follow-ups).* Either way this violates the `private` contract rather than merely lacking a feature, so it is filed separately.
 
 ## The constraint that shapes every option
 
@@ -37,7 +37,7 @@ One number should drive this more than any UI question.
 
 `rotateBoardAudience` (`src/audiences.ts:373-456`) runs when a member is removed from a private board. It bumps the epoch, revokes **every** grant on the board — not just the departing member's (`:389-392`) — and re-issues for each remaining member, one row per member **per live device** per epoch (`issueGrantsForMember` :175, `liveSessionPubkeys` :93). It is deliberately **not** best-effort: `src/routes/orgs.ts:77-84` requires that "the epoch bump must land before the roster shrinks; failures abort the removal."
 
-So removing one person from a group applied to six private boards costs six epoch bumps × remaining members × devices, all of which must succeed or the removal fails. **Every decision about *when* to bump the epoch is a hidden performance and availability decision.**
+So removing one person from a group applied to six private boards costs six epoch bumps × remaining members × devices — and because rotation is not best-effort, **all six must land or the removal fails**. That makes it an availability question, not merely a performance one: a group-scoped removal is only as reliable as the least healthy board it touches. **Every decision about *when* to bump the epoch is a hidden availability decision.**
 
 The asymmetry that follows drives the recommendation: **additive** grants only add rows and never rotate; **restrictive** scoping is where the entire epoch cost lands.
 
@@ -83,7 +83,7 @@ A recommendation, not a verdict — and the case for doing nothing until a real 
 
 Both found while writing this doc; both to be filed as their own tickets, neither fixed here.
 
-1. **`visibility:"private"` boards inside shared orgs are org-readable/writable** — `strongest()` (`authz.ts:144-149`) is a floor that cannot be lowered. Shaped like a security defect rather than a design question; wants a security read-through and a prod probe (post an issue to a private board as an org member holding no `boardMemberCache` row — expect 200 where 403 is intended).
+1. **`visibility:"private"` boards inside shared orgs are org-readable** — `strongest()` (`authz.ts:144-149`) is a floor that cannot be lowered. Shaped like a security defect rather than a design question, so it wants a security read-through. **First step before any fix: run the probe.** Whether the exposure extends to *writes* is currently reasoned from `ROLE_RANK` (org `member` → board `contributor`) and not observed — post an issue to a private board as an org member holding no `boardMemberCache` row, and record whether it returns 200 where 403 is intended. Mechanism is not outcome; the doc stays hedged until someone runs it.
 2. **Reserved-handle-child list is missing** — `/:handle/members` (and any future `/:handle/teams`) silently shadows a board of that slug. `RESERVED_ORG_SLUGS` (`src/roles.ts:39-59`) guards org slugs only; no board-slug equivalent exists.
 
 ## Revisit when
