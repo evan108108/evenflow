@@ -186,3 +186,87 @@ button:not([class]):disabled {
   width: clamp(88px, 18vw, 128px);
   height: auto;
 }
+
+/* EFB-39 — free-tier callouts, below the hero.
+   Its own measure, wider than the hero's 42rem. The hero is a poster and
+   centers; this is a spec and doesn't. Centered bullets read as marketing,
+   and the whole point of the band is that it reads as checkable fact. */
+.landing-free {
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: 0 1.5rem 7rem;
+}
+
+.landing-free-head {
+  text-align: center;
+  margin-bottom: 3.2rem;
+}
+
+.landing-free-head h2 {
+  font-size: clamp(2.1rem, 7vw, 3.4rem);
+}
+
+/* Sona's lean: the subhead is commentary on the header's claim, not a
+   second claim — so it sits quieter and closer than a standalone line would. */
+.landing-free-subhead {
+  font-style: italic;
+  font-size: 1.05rem;
+  margin: 0.9rem 0 0;
+}
+
+.landing-band + .landing-band {
+  margin-top: 3.2rem;
+}
+
+/* Echoes the uppercase letterspaced github line already on the page — the
+   register the band headers borrow so they read as part of this page. */
+.landing-band-title {
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  color: var(--color-ink-soft);
+  margin: 0 0 0.4rem;
+}
+
+.landing-band ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.landing-band li {
+  padding: 0.95rem 0;
+  border-bottom: 1px solid var(--color-ink-faint);
+  line-height: 1.55;
+}
+
+.landing-band li:first-child {
+  border-top: 1px solid var(--color-ink-faint);
+}
+
+/* The closer opens with its own heavier rule; without this the list's last
+   hairline sits a few rem above it and reads as a stray second divider. */
+.landing-band:last-of-type li:last-child {
+  border-bottom: none;
+}
+
+.landing-free-closer {
+  margin: 3.2rem 0 0;
+  padding-top: 2rem;
+  border-top: 1.5px solid var(--color-ink);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 480px) {
+  .landing-free {
+    padding-bottom: 5rem;
+  }
+
+  .landing-band li {
+    padding: 0.85rem 0;
+  }
+}
