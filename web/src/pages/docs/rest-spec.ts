@@ -76,10 +76,16 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
       {
         method: "GET",
         path: "/orgs/:org/boards/:slug/issues",
-        summary: "Issues on a board, newest-updated first. One filter at a time.",
+        summary:
+          "Issues on a board, newest-updated first. Filters compose. Unknown query params are rejected — see the note below.",
         params: [
-          { name: "status | container | assignee | label", note: "optional single filter" },
+          { name: "status | container | assignee | label", note: "optional filters, combinable" },
+          { name: "column_id | sprint_id | q", note: "column stream, sprint, title/body substring" },
           { name: "limit / after", note: "keyset pagination" },
+          {
+            name: "(anything else)",
+            note: '400 {"error":"invalid-query","reason":"<key>-unknown"} — a misspelled or invented param fails loudly instead of being ignored',
+          },
         ],
         response: "{ issues: Issue[], total, has_more } — each issue carries cover_url when a cover is set",
         curl: `curl "${BASE}/orgs/acme/boards/flow/issues?container=active" -H "Authorization: Bearer ${KEY}"`,

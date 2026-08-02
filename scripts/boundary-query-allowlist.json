@@ -1,0 +1,82 @@
+{
+  "$comment": "EFB-71 boundary discipline, query-string half. Routes that read query params WITHOUT parseRouteQuery (see docs/BOUNDARY_DISCIPLINE.md). Same ratchet contract as scripts/boundary-allowlist.json: it may only shrink, every entry carries a sunset, scripts/check-boundary-query.mjs FAILS once that date passes rather than warning, and sunsets more than 180 days out are rejected outright. New routes may not be added here - write them against parseRouteQuery.",
+  "$declarationDebt": "There is NO noQuery list here, and that is a deliberate, dated gap rather than a claim of safety. The body check requires a human declaration for every route where no read was detected, because reads hide behind helpers the scanner cannot follow. Applied here that would have meant ~50 declarations written in a single commit - query params ride every verb, not just the body-bearing three - and fifty entries added in one sitting is not fifty routes read. It is a checkbox, and it is worse than honest silence because it launders an inference into a human declaration that would be cited later as verification. A declaration's evidentiary weight cannot exceed what the process that produced it could have earned. So the check instead PRINTS its blind spot on every successful run ('N handlers had no detected query read - that is not proof they read none'), and the noQuery declarations land in the per-subsystem migration tickets below, where someone is actually reading the route. Follow-up: the per-subsystem query-migration ticket filed after EFB-71, which is where each noQuery declaration gets made by someone reading that route. Deliberately not pre-assigned a number here - a number written before the ticket exists is a pointer that may resolve to something else entirely, which is how EFB-71 itself nearly shipped pointing at EFB-69.",
+  "unmigrated": [
+    {
+      "route": "GET /oauth/start",
+      "file": "src/routes/auth.ts",
+      "note": "OAuth provider/state params. Touching the signin path needs its own change window.",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /callback",
+      "file": "src/routes/auth.ts",
+      "note": "OAuth code/state callback. Same window as /oauth/start; a strict schema here can lock users out of signin.",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /boards",
+      "file": "src/routes/boards.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /boards/:slug/velocity",
+      "file": "src/routes/boards.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /issues/:id/comments",
+      "file": "src/routes/comments.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "GET /boards/:slug/activity",
+      "file": "src/routes/feed.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "GET /issues/:id/activity",
+      "file": "src/routes/feed.ts",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "GET /boards/:slug/github/audit",
+      "file": "src/routes/github.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "GET /issues/:id",
+      "file": "src/routes/issues.ts",
+      "note": "Reads ?include=. Same file as the migrated reference route, deliberately left for the issues-subsystem pass so this PR migrates exactly one route.",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "GET /orgs/:slug/boards",
+      "file": "src/routes/orgs.ts",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /profile",
+      "file": "src/routes/profile.ts",
+      "sunset": "2026-12-31"
+    },
+    {
+      "route": "GET /signin/nostr/challenge",
+      "file": "src/routes/signin.ts",
+      "note": "Signin path; same caution as the OAuth pair.",
+      "sunset": "2026-11-30"
+    },
+    {
+      "route": "GET /boards/:slug/sprints/:id/tide",
+      "file": "src/routes/sprints.ts",
+      "note": "Reads ?days= through the requestedDays helper. INVISIBLE to the checker until EFB-71 taught resolveIdentifierBody to follow concise-arrow helper bodies - it was reported as reading no query at all. Found by building this check, not by review.",
+      "sunset": "2026-10-31"
+    },
+    {
+      "route": "GET /boards/:slug/tide",
+      "file": "src/routes/sprints.ts",
+      "note": "Reads ?days= through the same requestedDays helper; same invisibility, same fix.",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

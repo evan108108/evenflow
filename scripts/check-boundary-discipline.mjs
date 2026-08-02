@@ -24,11 +24,19 @@
 
 import fs from "node:fs";
 import path from "node:path";
+// EFB-71 extracted the handler-locating machinery here so the query-param
+// check could reuse it. Policy — what counts as migrated, what the allowlist
+// means, what fails — stayed in this file.
+import { scanRoutes, withHelpers } from "./lib/route-scan.mjs";
 
 const LOG = "[boundary]";
+
 const ROUTES_DIR = "src/routes";
+
 const ALLOWLIST_PATH = "scripts/boundary-allowlist.json";
+
 const MIGRATED_MARKER = "parseRouteBody";
+
 /**
  * Every way this codebase currently gets at a request body.
  *
@@ -48,153 +56,15 @@ const UNMIGRATED_MARKERS = [
   "c.req.formData(",
   "c.req.blob(",
 ];
+
 /** Body-bearing verbs. GET/DELETE carry no body in this API. */
 const VERBS = ["post", "patch", "put"];
+
 const MAX_SUNSET_HORIZON_DAYS = 180;
 
 const args = new Set(process.argv.slice(2));
+
 const jsonOut = args.has("--json");
-
-/**
- * Registration: `<router>.<verb>("<path>", <handler...` — or the same with a
- * template literal for the path.
- *
- * EFB-17: the first form of this pattern accepted ONLY a double-quoted
- * literal, which silently excluded `sprints.post(\`…/${verb}\`, …)` — a
- * factory registering `add-issue` and `remove-issue`, both of which read a
- * body through `readJsonBody` with a hand-rolled typeof check. Two
- * body-reading routes were therefore invisible to the ratchet: not migrated,
- * not allowlisted, not reported. The tool said "47 handlers scanned, 0
- * problems" and meant "47 of the 49 registration sites I know how to see".
- *
- * That is this file's own meta-lesson recurring (see the bottom of
- * docs/BOUNDARY_DISCIPLINE.md): a detector's silence is ambiguous, and the
- * pattern list is an implicit contract — here, over how a route may be
- * REGISTERED rather than how its body is read.
- *
- * A template path keeps its `${…}` verbatim in the reported id, because the
- * substitution is not resolvable without an AST walk and inventing a
- * concrete-looking route name would be a worse lie than an honest one.
- * Registrations whose path is a bare identifier (`issues.post(path, …)`) are
- * STILL invisible; those three are declared in the allowlist's `noBody`
- * section instead, and a declaration-based enumeration is filed as follow-up.
- */
-const REGISTRATION = new RegExp(
-  String.raw`\b([A-Za-z_$][\w$]*)\.(${VERBS.join("|")})\(\s*(?:"([^"]+)"|\x60([^\x60]+)\x60)\s*,`,
-  "g",
-);
-
-/**
- * Span of the balanced (), starting at the index of an opening paren.
- * Quote- and comment-aware: a brace inside a string literal must not move the
- * depth counter, or a handler containing `"("` truncates and the check reads
- * the wrong span — silently passing a route it never actually looked at.
- */
-function balancedSpan(src, openIdx, open = "(", close = ")") {
-  let depth = 0;
-  let i = openIdx;
-  let quote = null;
-  let inLine = false;
-  let inBlock = false;
-  for (; i < src.length; i++) {
-    const ch = src[i];
-    const next = src[i + 1];
-    if (inLine) {
-      if (ch === "\n") inLine = false;
-      continue;
-    }
-    if (inBlock) {
-      if (ch === "*" && next === "/") {
-        inBlock = false;
-        i++;
-      }
-      continue;
-    }
-    if (quote) {
-      if (ch === "\\") i++;
-      else if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === "/" && next === "/") {
-      inLine = true;
-      i++;
-      continue;
-    }
-    if (ch === "/" && next === "*") {
-      inBlock = true;
-      i++;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      continue;
-    }
-    if (ch === open) depth++;
-    else if (ch === close) {
-      depth--;
-      if (depth === 0) return { start: openIdx, end: i };
-    }
-  }
-  return null;
-}
-
-/**
- * Body of a same-file `const <name> = ...` declaration.
- *
- * Balanced to the end of the declaration's own block rather than sliced to the
- * next `const`. The slice-to-next-const version over-captured: an unrelated
- * neighbouring function containing a body read got pulled in, and helpers were
- * misreported as reading bodies they never touch. Over-reporting is cheaper
- * than under-reporting here, but a checker nobody trusts gets switched off.
- */
-function resolveIdentifierBody(src, name) {
-  const decl = new RegExp(String.raw`\bconst\s+${name}\s*[=:]`).exec(src);
-  if (!decl) return null;
-  const brace = src.indexOf("{", decl.index);
-  const paren = src.indexOf("(", decl.index);
-  // Whichever opens first delimits the declaration's body: `= (c) => …` opens
-  // on a paren, `= { … }` and `=> { … }` on a brace.
-  const useBrace = brace !== -1 && (paren === -1 || brace < paren);
-  const openIdx = useBrace ? brace : paren;
-  if (openIdx === -1) return null;
-  const span = useBrace
-    ? balancedSpan(src, openIdx, "{", "}")
-    : balancedSpan(src, openIdx, "(", ")");
-  if (span === null) return null;
-  // For an arrow declared `= (args) => { body }`, the balanced paren span only
-  // covers the ARGS. Extend through the arrow body when one follows.
-  const after = src.slice(span.end + 1, span.end + 400);
-  const arrow = /^\s*(:[^=]*)?=>\s*\{/.exec(after);
-  if (!useBrace && arrow) {
-    const bodyOpen = src.indexOf("{", span.end + arrow[0].length - 1);
-    const bodySpan = balancedSpan(src, bodyOpen, "{", "}");
-    if (bodySpan !== null) return src.slice(decl.index, bodySpan.end + 1);
-  }
-  return src.slice(decl.index, span.end + 1);
-}
-
-/**
- * Body reads hide behind helpers. `POST .../attachments` reads multipart via
- * `readUpload(c)`, and five route files keep private `readJsonBody` copies —
- * none of which contain a marker at the call site. So before classifying, pull
- * in the source of every same-file helper the handler calls (one level deep,
- * which is all this codebase needs) and classify against the union.
- *
- * Cross-file helpers are still invisible to this, which is why a handler with
- * no detected body read is NOT assumed safe — see the `noBody` declaration
- * requirement in the allowlist.
- */
-function withHelpers(handlerSrc, fileSrc) {
-  const called = new Set();
-  for (const m of handlerSrc.matchAll(/\b([a-z][\w$]*)\s*\(/g)) called.add(m[1]);
-  let combined = handlerSrc;
-  for (const name of called) {
-    if (name === "if" || name === "for" || name === "while" || name === "switch") continue;
-    const body = resolveIdentifierBody(fileSrc, name);
-    if (body !== null) combined += "\n" + body;
-  }
-  return combined;
-}
 
 function classify(handlerSrc, fileSrc) {
   const src = withHelpers(handlerSrc, fileSrc);
@@ -204,57 +74,6 @@ function classify(handlerSrc, fileSrc) {
   if (migrated && unmigrated) return "mixed";
   if (unmigrated) return "unmigrated";
   return "no-body";
-}
-
-function scanFile(absPath, relPath) {
-  const src = fs.readFileSync(absPath, "utf8");
-  const found = [];
-  REGISTRATION.lastIndex = 0;
-  let m;
-  while ((m = REGISTRATION.exec(src)) !== null) {
-    const [, , verb, quotedPath, templatePath] = m;
-    const routePath = quotedPath ?? templatePath;
-    const openIdx = src.indexOf("(", m.index);
-    const span = balancedSpan(src, openIdx);
-    const line = src.slice(0, m.index).split("\n").length;
-    if (!span) {
-      found.push({
-        id: `${verb.toUpperCase()} ${routePath}`,
-        file: relPath,
-        line,
-        state: "unparsed",
-      });
-      continue;
-    }
-    let handlerSrc = src.slice(m.index, span.end + 1);
-    // Non-inline handler: `router.post("/x", someHandler(true))` — the body
-    // lives in a const, so follow it. Without this the span holds no body
-    // read and the route is misreported as "no-body".
-    const afterComma = handlerSrc.slice(handlerSrc.indexOf(",") + 1).trim();
-    if (!/^(async\s*)?\(/.test(afterComma) && !afterComma.startsWith("async")) {
-      const ident = /^([A-Za-z_$][\w$]*)/.exec(afterComma);
-      if (ident) {
-        const resolved = resolveIdentifierBody(src, ident[1]);
-        if (resolved === null) {
-          found.push({
-            id: `${verb.toUpperCase()} ${routePath}`,
-            file: relPath,
-            line,
-            state: "unparsed",
-          });
-          continue;
-        }
-        handlerSrc = resolved;
-      }
-    }
-    found.push({
-      id: `${verb.toUpperCase()} ${routePath}`,
-      file: relPath,
-      line,
-      state: classify(handlerSrc, src),
-    });
-  }
-  return found;
 }
 
 function loadAllowlist() {
@@ -287,14 +106,7 @@ function loadAllowlist() {
 }
 
 function main() {
-  const routeFiles = fs
-    .readdirSync(ROUTES_DIR)
-    .filter((f) => f.endsWith(".ts"))
-    .sort();
-
-  const handlers = routeFiles.flatMap((f) =>
-    scanFile(path.join(ROUTES_DIR, f), `${ROUTES_DIR}/${f}`),
-  );
+  const handlers = scanRoutes(ROUTES_DIR, { verbs: VERBS, classify });
 
   const { byId, noBody } = loadAllowlist();
   const today = new Date(process.env["BOUNDARY_TODAY"] ?? Date.now());

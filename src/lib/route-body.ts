@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { callerPubkey } from "../authz";
 import type { Claims } from "../effects";
 import type { AppHonoEnv } from "../http";
-import { ValidationError } from "../routes/errors";
+import { QueryValidationError, ValidationError } from "../routes/errors";
 import { canonicalizeIdentityRef } from "./identity";
 
 /**
@@ -51,9 +51,19 @@ const PARSE_OPTIONS = { onExcessProperty: "error", errors: "all" } as const;
  */
 const REASON_CODE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-const reasonFor = (error: ParseResult.ParseError): string => {
+/**
+ * Which part of the request a reason is about.
+ *
+ * Only ever appears in the fallback strings — a reason that names a field says
+ * the field's name and nothing else, so `status_id-unknown` reads identically
+ * whether it came off a body or a query string. The scope exists for the two
+ * cases where there IS no field to name.
+ */
+type BoundaryScope = "body" | "query";
+
+const reasonFor = (error: ParseResult.ParseError, scope: BoundaryScope = "body"): string => {
   const issues = ParseResult.ArrayFormatter.formatErrorSync(error);
-  if (issues.length === 0) return "invalid-body";
+  if (issues.length === 0) return `invalid-${scope}`;
   // One reason per FIELD, not per issue. A single bad field can raise several
   // issues — a refinement failure arrives alongside the underlying type issue —
   // and reporting `sprint_id-immutable,sprint_id` tells the caller nothing the
@@ -69,7 +79,7 @@ const reasonFor = (error: ParseResult.ParseError): string => {
     const field = i.path.length > 0 ? String(i.path[0]) : "";
     const coded =
       i._tag === "Unexpected"
-        ? `${field || "body"}-unknown`
+        ? `${field || scope}-unknown`
         : REASON_CODE.test(i.message)
           ? field === ""
             ? i.message
@@ -77,7 +87,7 @@ const reasonFor = (error: ParseResult.ParseError): string => {
           : null;
     const existing = byField.get(field);
     if (coded !== null) byField.set(field, coded);
-    else if (existing === undefined) byField.set(field, field || "body");
+    else if (existing === undefined) byField.set(field, field || scope);
   }
   return [...byField.values()].join(",");
 };
@@ -120,6 +130,73 @@ export const parseRouteBody = <A, I>(
     ),
     Effect.flatMap((body) => decodeBody(schema, body)),
   );
+
+// ── query strings ─────────────────────────────────────────────────────────
+//
+// EFB-71. `c.req.query()` is the query-string twin of the `readJsonBody`
+// problem this file was written to delete: it answers whatever the caller
+// asked for and says nothing at all about what the caller ALSO sent. A handler
+// that reads seven named params from a request carrying eight has no way to
+// notice the eighth, so a caller who misremembers a field name gets 200 and a
+// result computed as though they had never filtered.
+//
+// That is not hypothetical. `GET /boards/:slug/issues?status_id=<uuid>` on prod
+// answers 200 with the full unfiltered list — byte-identical to sending no
+// query at all — because `status_id` is not a field (the real one is
+// `column_id`). The caller reads "0 matching issues" or "all the issues" and
+// concludes something about their data, when the true answer was "that param
+// does not exist."
+//
+// Same fix, same file, same PARSE_OPTIONS: the schema is the list of params
+// this route accepts, and anything else is a 400 that names the key.
+
+/**
+ * Decode an already-materialized query object against a schema.
+ *
+ * Split out from `parseRouteQuery` for the same reason `decodeBody` is split
+ * out of `parseRouteBody`: a query schema is a pure value, and its unit tests
+ * should not have to build a Hono Context to assert what it rejects.
+ */
+export const decodeQuery = <A, I>(
+  schema: Schema.Schema<A, I, never>,
+  input: unknown,
+): Effect.Effect<A, QueryValidationError, never> =>
+  Schema.decodeUnknown(schema)(input, PARSE_OPTIONS).pipe(
+    Effect.mapError((e) => new QueryValidationError({ reason: reasonFor(e, "query") })),
+  );
+
+/**
+ * Read this request's ENTIRE query string and decode it against `schema`.
+ *
+ * The load-bearing word is "entire". `c.req.query("status")` pulls one key and
+ * is blind to the rest by construction; `c.req.query()` with no argument hands
+ * back every key the caller sent, which is the only shape from which "you sent
+ * something I do not accept" is answerable at all.
+ *
+ * Repeated keys (`?status=a&status=b`) collapse to the last value here, exactly
+ * as they did before this migration — Hono's own behavior, unchanged. Rejecting
+ * repeats is the same class of tightening as this ticket and deliberately NOT
+ * bundled into it; see the PR body.
+ *
+ * Schemas are written in terms of strings because a query string has no types.
+ * A param that must be a number is a string the schema constrains, and the
+ * handler's own policy checks (clamping, vocabulary, cursor semantics) stay in
+ * the handler where EFB-54 put them — this validates SHAPE.
+ */
+export const parseRouteQuery = <A, I>(
+  c: Context<AppHonoEnv>,
+  schema: Schema.Schema<A, I, never>,
+): Effect.Effect<A, QueryValidationError, never> => decodeQuery(schema, c.req.query());
+
+/**
+ * An optional query param carrying a free-form string.
+ *
+ * Nearly every param is this, and spelling it once keeps a route's schema a
+ * readable list of ACCEPTED KEYS rather than a wall of `Schema.optional(
+ * Schema.String)`. The key set is the point of the schema; the types are
+ * incidental.
+ */
+export const QueryString = Schema.optional(Schema.String);
 
 // ── composable primitives ─────────────────────────────────────────────────
 
