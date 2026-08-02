@@ -255,8 +255,30 @@ describe("default preset ordering", () => {
     expect(hit?.do).toEqual({ type: "set_external_state", value: "pr_draft" });
   });
 
-  it("a normal opened PR reads pr_review", () => {
+  it("a normal opened PR sets pr_review AND transitions to in_review", () => {
     const hit = firstMatchingRule(rules, "match", facts({ action: "opened", draft: false }));
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ]);
+  });
+
+  it("reopened and ready_for_review transition too — the same three-rule set", () => {
+    for (const action of ["reopened", "ready_for_review"]) {
+      const hit = firstMatchingRule(rules, "match", facts({ action, draft: false }));
+      expect(hit?.do, action).toEqual([
+        { type: "set_external_state", value: "pr_review" },
+        { type: "transition_to_column", category: "in_review" },
+      ]);
+    }
+  });
+
+  // EFB-72's one deliberate exclusion. `synchronize` fires on every push to the
+  // branch, so a transition here would drag the card back to In Review each
+  // time someone pushed — overriding any manual move for the life of the PR.
+  // This is the regression guard for that: the rule must stay pill-only.
+  it("synchronize stays pill-only — never re-transitions on a push", () => {
+    const hit = firstMatchingRule(rules, "match", facts({ action: "synchronize", draft: false }));
     expect(hit?.do).toEqual({ type: "set_external_state", value: "pr_review" });
   });
 
@@ -285,6 +307,26 @@ describe("default preset ordering", () => {
     };
     expect(DEFAULT_PRESET_RULES.some(hasTransition)).toBe(true);
     expect(STATUS_ONLY_PRESET_RULES.some(hasTransition)).toBe(false);
+  });
+
+  // EFB-72 drift guard, both directions. status_only is DERIVED from defaults
+  // by filtering transitions out, so adding a transition to a defaults rule
+  // silently changes what status_only strips. These two assertions pin the
+  // pair: defaults.opened carries BOTH actions, status_only.opened carries
+  // ONLY the pill — and it collapses back to single-action form rather than a
+  // one-element array, which is the shape the seeder writes to the DB.
+  it("adding the opened transition leaves status_only pill-only", () => {
+    const openedIn = (preset: ReadonlyArray<PresetRule>) =>
+      preset.find((r) => r.when.event === "pull_request" && r.when.action === "opened" && r.when.draft === undefined);
+
+    expect(openedIn(DEFAULT_PRESET_RULES)?.do).toEqual([
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ]);
+    expect(openedIn(STATUS_ONLY_PRESET_RULES)?.do).toEqual({
+      type: "set_external_state",
+      value: "pr_review",
+    });
   });
 
   it("off and custom seed nothing", () => {
@@ -468,6 +510,68 @@ describe("evaluateDelivery", () => {
       column_id: "col-done",
       column_name: "Done",
     });
+  });
+
+  // ── EFB-72: the opened side transitions too ─────────────────────────────
+
+  it("an opened PR plans the in_review move alongside the pill", () => {
+    const plan = evaluate("pull_request.opened", "pull_request", [target()]);
+    expect(plan.outcomes[0]?.effects).toContainEqual({
+      kind: "set_external_state",
+      value: "pr_review",
+    });
+    expect(plan.outcomes[0]?.effects).toContainEqual({
+      kind: "set_column",
+      column_id: "col-rev",
+      column_name: "In Review",
+    });
+  });
+
+  // ── EFB-73: a move out of the backlog carries the card into active ──────
+
+  it("promotes a backlog ticket to active when a transition fires", () => {
+    const plan = evaluate("pull_request.closed_merged", "pull_request", [
+      target({ container: "backlog" }),
+    ]);
+    expect(plan.outcomes[0]?.effects).toContainEqual({
+      kind: "set_column",
+      column_id: "col-done",
+      column_name: "Done",
+    });
+    expect(plan.outcomes[0]?.effects).toContainEqual({ kind: "set_container", container: "active" });
+  });
+
+  it("leaves an already-active ticket's container alone", () => {
+    const plan = evaluate("pull_request.closed_merged", "pull_request", [
+      target({ container: "active" }),
+    ]);
+    expect(plan.outcomes[0]?.effects.some((e) => e.kind === "set_container")).toBe(false);
+  });
+
+  // The deliberate divergence from the client, which DOES promote out of the
+  // icebox on a manual drag. A human drag is an explicit un-park; a PR event
+  // is not — someone may open a PR against an iceboxed ticket before the
+  // human has decided to bring it back.
+  it("never un-parks an iceboxed ticket — icebox is sticky under webhooks", () => {
+    const plan = evaluate("pull_request.closed_merged", "pull_request", [
+      target({ container: "icebox" }),
+    ]);
+    expect(plan.outcomes[0]?.effects).toContainEqual({
+      kind: "set_column",
+      column_id: "col-done",
+      column_name: "Done",
+    });
+    expect(plan.outcomes[0]?.effects.some((e) => e.kind === "set_container")).toBe(false);
+  });
+
+  // No transition, no promotion. The container follows a move that actually
+  // happened — a skipped transition must not drag the card out of the backlog.
+  it("does not promote when the transition itself is skipped", () => {
+    const plan = evaluate("pull_request.closed_merged", "pull_request", [
+      target({ column_id: "col-done", container: "backlog" }),
+    ]);
+    expect(plan.outcomes[0]?.effects).toContainEqual({ kind: "skipped", reason: "already-in-column" });
+    expect(plan.outcomes[0]?.effects.some((e) => e.kind === "set_container")).toBe(false);
   });
 
   it("skips the move when the board has no done column, keeping the link", () => {

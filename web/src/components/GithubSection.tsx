@@ -38,7 +38,9 @@ interface WireRule {
   bucket: "match" | "no_match";
   priority: number;
   when: Record<string, unknown>;
-  do: Record<string, unknown>;
+  /** One action or a list — see the `Rule` type in src/github/rules.ts. A rule
+   *  that both sets the pill and moves the card sends the array form. */
+  do: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>;
   enabled: boolean;
 }
 
@@ -85,6 +87,21 @@ const describeWhen = (when: Record<string, unknown>): string => {
   }
   return bits.join(" · ");
 };
+
+/**
+ * One-line English for a rule's action list.
+ *
+ * `do` has accepted an ARRAY since the engine learned multi-action rules, and
+ * this read it as a single action — so the defaults preset's merged rule, which
+ * has been array-form on every board since then, rendered as a bare "?" in this
+ * table: `["type"]` on an array is undefined, which fell straight to the
+ * default branch. Anyone reading their own rules saw the automation that
+ * actually runs described as an unknown. EFB-72 turns three more rules into
+ * arrays, which would have made it four unreadable rows instead of one.
+ */
+export const describeActions = (
+  actions: Record<string, unknown> | ReadonlyArray<Record<string, unknown>>,
+): string => (Array.isArray(actions) ? actions : [actions]).map(describeDo).join(", then ");
 
 const describeDo = (action: Record<string, unknown>): string => {
   switch (action["type"]) {
@@ -368,7 +385,7 @@ export const GithubSection = (props: { apiBase: string }) => {
                       <td>
                         <code>{describeWhen(r.when)}</code>
                       </td>
-                      <td>{describeDo(r.do)}</td>
+                      <td>{describeActions(r.do)}</td>
                       <td class="muted">{r.bucket === "no_match" ? "no ticket matched" : "matched"}</td>
                       <td>
                         <button

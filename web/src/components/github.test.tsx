@@ -6,6 +6,7 @@ import { render } from "solid-js/web";
 import type { Issue } from "../lib/types";
 import type { DndHandle } from "../lib/dnd";
 import { IssueCard } from "./IssueCard";
+import { describeActions } from "./GithubSection";
 import {
   externalStateLabel,
   externalStateTone,
@@ -162,5 +163,36 @@ describe("IssueCard external_state pill", () => {
     // following the PR link would also pop the issue sheet.
     expect(opened).toBe(false);
     cleanup();
+  });
+});
+
+// ── the rules table's action column ──────────────────────────────────────
+//
+// `do` accepts an array, and this renderer read it as a single action — so the
+// defaults preset's merged rule (array-form on every board since the engine
+// learned multi-action rules) rendered as a bare "?". EFB-72 turns three more
+// rules into arrays, so the same bug would have hidden four rules instead of one.
+describe("describeActions", () => {
+  it("describes a single action", () => {
+    expect(describeActions({ type: "set_external_state", value: "pr_review" })).toBe(
+      "set pill → PR in review",
+    );
+  });
+
+  it("describes every action in an array, in order", () => {
+    expect(
+      describeActions([
+        { type: "set_external_state", value: "pr_review" },
+        { type: "transition_to_column", category: "in_review" },
+      ]),
+    ).toBe('set pill → PR in review, then move to first "in_review" column');
+  });
+
+  it("never renders a known action list as an unknown", () => {
+    const merged = [
+      { type: "set_external_state", value: "pr_merged" },
+      { type: "transition_to_column", category: "done" },
+    ];
+    expect(describeActions(merged)).not.toContain("?");
   });
 });

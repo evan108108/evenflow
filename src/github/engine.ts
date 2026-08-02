@@ -244,8 +244,33 @@ const planAction = (
       if (resolved.column.id === issue.column_id) {
         return [{ kind: "skipped", reason: "already-in-column" }];
       }
+      // EFB-73: a column move out of the backlog carries the card into active.
+      //
+      // One rule, one mental model. Container promotion follows the TRANSITION,
+      // not the target category. Custom rules stay predictable — a user who adds
+      // a `to: category=blocked` rule gets the same backlog→active promotion the
+      // client gives them on a manual drag; no special-case surprise.
+      //
+      // This mirrors web/src/pages/board/store.ts, where a rail drop promotes to
+      // active before transitioning because `/transition` only touches status.
+      // The server had no equivalent, so github-driven moves left tickets at
+      // `column=Done, container=backlog` — Done cards sitting in the Backlog view.
+      //
+      // Planned here rather than inside execute.ts's `set_column` because
+      // "a move out of backlog implies activation" is a decision about WHAT
+      // should happen. The executor already knows how to apply `set_container`,
+      // and routes/github.ts already turns it into an issue.container_changed
+      // (EFB-66) — so planning the pair reuses both instead of teaching the
+      // executor to return two actions from one effect.
+      //
+      // Icebox is sticky under webhooks even though the client promotes it — a
+      // PR event isn't the deliberate un-park signal a human drag is. Someone
+      // may open a PR against an iceboxed ticket before the human has decided
+      // to bring it back.
+      const promotes = issue.container === "backlog";
       return [
         { kind: "set_column", column_id: resolved.column.id, column_name: resolved.column.name },
+        ...(promotes ? [{ kind: "set_container" as const, container: "active" }] : []),
       ];
     }
     case "set_container":

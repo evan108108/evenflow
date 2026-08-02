@@ -319,15 +319,31 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
     do: { type: "set_external_state", value: "pr_closed" },
   },
   // Opened / reopened / synchronize / ready_for_review → in review.
+  //
+  // EFB-72: opened / reopened / ready_for_review also MOVE the card, mirroring
+  // what the merged rule above does on the closing edge. The pill alone was
+  // most of the mechanism and none of the payoff — every PR still needed a
+  // manual drag to In Review.
+  //
+  // `synchronize` is deliberately excluded: it fires on every push to the
+  // branch, so transitioning there would drag the card back to In Review each
+  // time someone pushed — overriding any manual move for the life of the PR.
+  // The three rules that DO transition each fire once per state change.
   {
     bucket: "match",
     when: { event: "pull_request", action: "opened" },
-    do: { type: "set_external_state", value: "pr_review" },
+    do: [
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ],
   },
   {
     bucket: "match",
     when: { event: "pull_request", action: "reopened" },
-    do: { type: "set_external_state", value: "pr_review" },
+    do: [
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ],
   },
   {
     bucket: "match",
@@ -337,7 +353,10 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
   {
     bucket: "match",
     when: { event: "pull_request", action: "ready_for_review" },
-    do: { type: "set_external_state", value: "pr_review" },
+    do: [
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ],
   },
   // Reviews.
   {

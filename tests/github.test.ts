@@ -579,10 +579,16 @@ describe("EFB-66 — github transitions emit board events", () => {
     const res = await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
     expect(res.status).toBe(200);
 
+    // Two events, not one, since EFB-73: the harness ticket is created in the
+    // backlog (the API's default container), so the merge both moves the column
+    // AND promotes the container. This test still speaks only for the column
+    // half — the container half is pinned by its own test below.
     const emitted = transitions().slice(before);
-    expect(emitted).toHaveLength(1);
-    const event = emitted[0]!.event;
-    expect(event.kind).toBe("issue.transitioned");
+    expect(emitted.map((e) => e.event.kind).sort()).toEqual([
+      "issue.container_changed",
+      "issue.transitioned",
+    ]);
+    const event = emitted.find((e) => e.event.kind === "issue.transitioned")!.event;
     expect(event.issue_id).toBe(issueRow()["id"]);
 
     // The envelope id must be the statusChangeCache row this delivery wrote —
@@ -613,6 +619,58 @@ describe("EFB-66 — github transitions emit board events", () => {
     expect(issue!["id"]).toBe(issueRow()["id"]);
     expect(issue!["status"]).toBe("Done");
     expect(issue!["status"]).toBe(issueRow()["status"]);
+  });
+
+  // EFB-73 end to end. The bug this closes: a ticket that was in the backlog
+  // when its PR opened landed at `column=Done, container=backlog` — a Done card
+  // sitting in the Backlog view, which read as "stuck, never moved" when in
+  // fact the column HAD moved and the container simply didn't follow.
+  it("a merged PR carries a backlog ticket into active, column and container together", async () => {
+    expect(issueRow()["container"]).toBe("backlog");
+
+    const before = transitions().length;
+    const res = await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
+    expect(res.status).toBe(200);
+
+    expect(issueRow()["status"]).toBe("Done");
+    expect(issueRow()["container"]).toBe("active");
+
+    const emitted = transitions().slice(before);
+    const containerEvent = emitted.find((e) => e.event.kind === "issue.container_changed")!.event;
+    expect(containerEvent).toBeDefined();
+    const payload = containerEvent.payload as Record<string, unknown>;
+    expect(payload["from_container"]).toBe("backlog");
+    expect(payload["to_container"]).toBe("active");
+
+    // The container move gets its own statusChangeCache row, so the activity
+    // feed shows the promotion as its own fact rather than folding it into the
+    // column move.
+    const row = h.db.statusChanges.find((r) => r["to_container"] === "active")!;
+    expect(row).toBeDefined();
+    expect((containerEvent as { status_change_id?: string }).status_change_id).toBe(row["id"]);
+
+    // container_at_completion keeps the PRE-move container: it answers "where
+    // did this live when it entered done", which is a different question from
+    // "where did it end up", and that one is answered by the row above.
+    const doneRow = h.db.statusChanges.find((r) => r["to_status"] === "Done")!;
+    expect(doneRow["container_at_completion"]).toBe("backlog");
+  });
+
+  it("leaves an iceboxed ticket parked — icebox is sticky under webhooks", async () => {
+    const promote = await h.app.request(
+      `/api/v0/issues/${issueRow()["id"]}/send_to_icebox`,
+      jsonReq("POST", {}),
+      ENV,
+    );
+    expect(promote.status).toBe(200);
+    expect(issueRow()["container"]).toBe("icebox");
+
+    const res = await deliver("pull_request", retarget(fixture("pull_request.closed_merged"), shortId));
+    expect(res.status).toBe(200);
+
+    // The column still moves — only the container is left alone.
+    expect(issueRow()["status"]).toBe("Done");
+    expect(issueRow()["container"]).toBe("icebox");
   });
 
   it("emits issue.container_changed for a container move, with from/to container", async () => {
@@ -693,7 +751,13 @@ describe("EFB-66 — github transitions emit board events", () => {
       .filter((e): e is { kind: number; id: string } => e !== undefined);
     // Both, not one instead of the other — the 30551 is the issue's new state,
     // the 30553 is the record that it changed.
-    expect(posted.map((e) => e.kind).sort()).toEqual([30551, 30553]);
+    //
+    // Two of each since EFB-73: the harness ticket starts in the backlog, so a
+    // merge is now TWO status changes (column → Done, container → active), and
+    // each publishes its own pair. The 30553s describe different changes; the
+    // two 30551s are the same post-transition issue row published twice, which
+    // is the existing per-event contract rather than anything new here.
+    expect(posted.map((e) => e.kind).sort()).toEqual([30551, 30551, 30553, 30553]);
 
     const changeRow = h.db.statusChanges.find((r) => r["to_status"] === "Done")!;
     const issueRowNow = h.db.issues.find((r) => r["id"] === issue.id)!;
