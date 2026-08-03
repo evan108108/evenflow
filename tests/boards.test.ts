@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
-import { PatchBoardBody, PostBoardBody } from "../src/routes/boards";
+// EFB-98: the schemas live with the logic that consumes them now. The route
+// imports them back for parseRouteBody; a test that asserts what the SHAPE
+// accepts belongs against the shape's own module.
+import { PatchBoardBody, PostBoardBody } from "../src/actions/boards";
 import {
   CALLER,
   bearer,
