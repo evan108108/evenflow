@@ -9,6 +9,26 @@ import { DeveloperKeys } from "./DeveloperKeys";
 import { Docs } from "./Docs";
 import { pathOf, REST_SECTIONS, MCP_TOOLS } from "./docs/rest-spec";
 
+// EFB-95. `key.create` and `key.list` both render "/keys" and differ only by
+// verb, so a test that asserts the resulting URL cannot tell them apart — it
+// passes with either id in the source. (Verified, not assumed: reinstating the
+// bug left a URL-asserting version of this test green.) The only observable
+// that distinguishes them is the ARGUMENT handed to url(), so the manifest
+// module is wrapped to record ids. vi.hoisted because vi.mock is hoisted above
+// const initialisation.
+const { urlIds } = vi.hoisted(() => ({ urlIds: [] as string[] }));
+
+vi.mock("@routes-manifest", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@routes-manifest")>();
+  return {
+    ...mod,
+    url: (id: string, ...rest: unknown[]) => {
+      urlIds.push(id);
+      return (mod.url as unknown as (...a: unknown[]) => string)(id, ...rest);
+    },
+  };
+});
+
 const KEYS = [
   { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null },
   { id: "k2", name: "Old key", prefix: "evk_dead0000", created_at_ms: 1_600_000_000_000, last_used_at_ms: 1_650_000_000_000, revoked_at_ms: 1_690_000_000_000 },
@@ -18,6 +38,7 @@ let calls: Array<{ method: string; url: string; body?: unknown }>;
 
 beforeEach(() => {
   calls = [];
+  urlIds.length = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -105,13 +126,59 @@ describe("DeveloperKeys", () => {
     cleanup();
   });
 
-  it("revoke fires the DELETE", async () => {
+  // EFB-95. Asking for `key.create` and issuing a GET produced a working
+  // request, so the page and the manifest disagreed in silence about what it
+  // was doing — the exact class the manifest exists to eliminate. What is
+  // pinned is the id, because the URL cannot distinguish them (see the mock).
+  it("asks the manifest for the LIST id, not the create id", async () => {
+    const { cleanup } = await mountPage(DeveloperKeys);
+    expect(urlIds).toContain("key.list");
+    expect(urlIds).not.toContain("key.create");
+    cleanup();
+  });
+
+  // EFB-95. The page had a route and no way in: every link to /settings/keys
+  // lived in /docs prose, so the only users who could reach their own key
+  // management were the ones who already knew the URL. A management surface
+  // nobody can navigate to is not covered, whatever the page itself does — so
+  // the menu entry is pinned here alongside the page's own behaviour.
+  it("is reachable from the user menu, not just by knowing the URL", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    container.querySelector<HTMLButtonElement>(".user-nav-btn")!.click();
+    await flush();
+    const entry = [...container.querySelectorAll<HTMLAnchorElement>(".user-nav-menu a")].find(
+      (a) => a.getAttribute("href") === "/settings/keys",
+    );
+    expect(entry).toBeDefined();
+    expect(entry!.textContent!.trim()).toBe("API keys");
+    cleanup();
+  });
+
+  // EFB-95. Revoke is destructive and has no inverse, so it asks first — the
+  // same window.confirm gate the issue and sprint deletes use.
+  it("revoke fires the DELETE once confirmed, naming the key in the prompt", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const { container, cleanup } = await mountPage(DeveloperKeys);
     [...container.querySelectorAll<HTMLButtonElement>("button")]
       .find((b) => b.textContent === "Revoke")!
       .click();
     await flush();
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("CI bot"));
     expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith(url("key.delete", { id: "k1" })))).toBe(true);
+    confirmSpy.mockRestore();
+    cleanup();
+  });
+
+  it("sends nothing at all when the revoke confirm is dismissed", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "Revoke")!
+      .click();
+    await flush();
+    expect(confirmSpy).toHaveBeenCalled();
+    // The point of the gate: a dismissed prompt must not have already fired.
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     cleanup();
   });
 });
