@@ -244,13 +244,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { board: board.slug, sprint: sprint.id },
       });
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "sprint.created",
-        board_id: board.id,
-        sprint_id: sprint.id,
-        at_ms: now,
-        payload: { sprint },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "sprint.created",
+          board_id: board.id,
+          sprint_id: sprint.id,
+          at_ms: now,
+          payload: { sprint },
+        },
+        null,
+      );
       return { sprint };
     });
     return runJson(c, program, 201);
@@ -292,13 +296,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         details: { board: board.slug, sprint: current.id },
       });
       const sprint = { ...current, name, goal, planned_days };
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "sprint.updated",
-        board_id: board.id,
-        sprint_id: current.id,
-        at_ms: yield* Clock.currentTimeMillis,
-        payload: { sprint },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "sprint.updated",
+          board_id: board.id,
+          sprint_id: current.id,
+          at_ms: yield* Clock.currentTimeMillis,
+          payload: { sprint },
+        },
+        null,
+      );
       return { sprint };
     });
     return runJson(c, program);
@@ -339,17 +347,21 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [crypto.randomUUID(), issue.id, board.id, pubkey, null, null, "backlog", "active", null, now],
         );
-        yield* emitSecureBoardEvent(board.id, {
-          kind: "issue.container_changed",
-          board_id: board.id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload: {
-            issue: { ...issue, container: "active", updated_at_ms: now },
-            from_container: "backlog",
-            to_container: "active",
+        yield* emitSecureBoardEvent(
+          board.id,
+          {
+            kind: "issue.container_changed",
+            board_id: board.id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload: {
+              issue: { ...issue, container: "active", updated_at_ms: now },
+              from_container: "backlog",
+              to_container: "active",
+            },
           },
-        });
+          null,
+        );
       }
 
       // Phase 21 remodel — starting a sprint IS a commitment to what's
@@ -384,13 +396,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
           [crypto.randomUUID(), current.id, issue.id, now],
         );
-        yield* emitSecureBoardEvent(board.id, {
-          kind: "issue.updated",
-          board_id: board.id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload: { issue: { ...issue, sprint_id: current.id, updated_at_ms: now } },
-        });
+        yield* emitSecureBoardEvent(
+          board.id,
+          {
+            kind: "issue.updated",
+            board_id: board.id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload: { issue: { ...issue, sprint_id: current.id, updated_at_ms: now } },
+          },
+          null,
+        );
         sweptIn += 1;
       }
 
@@ -426,13 +442,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         started_at_ms: now,
         points_committed_start: pointsCommitted,
       };
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "sprint.started",
-        board_id: board.id,
-        sprint_id: current.id,
-        at_ms: now,
-        payload: { sprint },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "sprint.started",
+          board_id: board.id,
+          sprint_id: current.id,
+          at_ms: now,
+          payload: { sprint },
+        },
+        null,
+      );
       return {
         sprint,
         issues_moved: rows.length,
@@ -544,13 +564,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
             [crypto.randomUUID(), carriedTo, issue.id, now],
           );
         }
-        yield* emitSecureBoardEvent(board.id, {
-          kind: "issue.updated",
-          board_id: board.id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload: { issue: { ...issue, sprint_id: carriedTo, updated_at_ms: now } },
-        });
+        yield* emitSecureBoardEvent(
+          board.id,
+          {
+            kind: "issue.updated",
+            board_id: board.id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload: { issue: { ...issue, sprint_id: carriedTo, updated_at_ms: now } },
+          },
+          null,
+        );
       }
 
       yield* db.execute(
@@ -576,13 +600,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         points_completed: pointsCompleted,
         points_carried: pointsCarried,
       };
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "sprint.completed",
-        board_id: board.id,
-        sprint_id: current.id,
-        at_ms: now,
-        payload: { sprint },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "sprint.completed",
+          board_id: board.id,
+          sprint_id: current.id,
+          at_ms: now,
+          payload: { sprint },
+        },
+        null,
+      );
       return {
         sprint,
         carried_to_sprint_id: nextSprintId,
@@ -852,16 +880,20 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           container: promotedContainer ?? issue.container,
           updated_at_ms: now,
         };
-        yield* emitSecureBoardEvent(board.id, {
-          kind: promotedContainer !== null ? "issue.container_changed" : "issue.updated",
-          board_id: board.id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload:
-            promotedContainer !== null
-              ? { issue: updated, from_container: "backlog", to_container: "active" }
-              : { issue: updated },
-        });
+        yield* emitSecureBoardEvent(
+          board.id,
+          {
+            kind: promotedContainer !== null ? "issue.container_changed" : "issue.updated",
+            board_id: board.id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload:
+              promotedContainer !== null
+                ? { issue: updated, from_container: "backlog", to_container: "active" }
+                : { issue: updated },
+          },
+          null,
+        );
         return { issue: updated };
       });
       return runJson(c, program);
@@ -912,24 +944,32 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       for (const row of memberRows) {
         const issue = parseIssueRow(row);
         const updated = { ...issue, sprint_id: null, updated_at_ms: now };
-        yield* emitSecureBoardEvent(board.id, {
-          kind: "issue.updated",
-          board_id: board.id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload: { issue: updated },
-        });
+        yield* emitSecureBoardEvent(
+          board.id,
+          {
+            kind: "issue.updated",
+            board_id: board.id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload: { issue: updated },
+          },
+          null,
+        );
       }
       // Emitted after the member issues so a client applies the detachments
       // before the sprint disappears. The board row still exists, so unlike
       // a board delete this tombstone can reach the substrate.
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "sprint.deleted",
-        board_id: board.id,
-        sprint_id: current.id,
-        at_ms: now,
-        payload: { sprint: current, deleted: true },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "sprint.deleted",
+          board_id: board.id,
+          sprint_id: current.id,
+          at_ms: now,
+          payload: { sprint: current, deleted: true },
+        },
+        null,
+      );
       return { deleted: true, member_count: memberRows.length };
     });
     return runJson(c, program);

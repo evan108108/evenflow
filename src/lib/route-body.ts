@@ -267,9 +267,14 @@ export type Provenance = Schema.Schema.Type<typeof Provenance>;
  * `provider:oauth_id` here — one definition of what a caller's pubkey IS, so
  * the KMS backfill that replaces it has one place to change.
  *
- * Lane B seam — currently unused in src/; kept because dropping/re-adding
- * across Lane B is noise, and the Claims-not-string invariant preserved here is
- * the load-bearing safety.
+ * EFB-63 (Lane B) made this live: five route callsites construct it and pass
+ * the value to `emitSecureBoardEvent`, which carries it to the builders. Note
+ * what that does and does not license — the ROUTE asserts `route.caller`
+ * because the Claims are in scope there; the publisher never re-asserts it, it
+ * forwards a value. Which is exactly why the value travels as a typed argument
+ * and not on `BoardEvent.payload`: a struct rebuilt from an `unknown` bag would
+ * let any writer spell `route.caller` with no Claims anywhere, reopening the
+ * hole this constructor's signature exists to close.
  */
 export const ProvenanceFromCaller = (claims: Claims): Provenance => ({
   source: "route.caller",

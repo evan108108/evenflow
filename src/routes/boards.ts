@@ -351,12 +351,16 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { slug, org_slug: org.slug },
       });
-      yield* emitSecureBoardEvent(id, {
-        kind: "board.created",
-        board_id: id,
-        at_ms: now,
-        payload: { board },
-      });
+      yield* emitSecureBoardEvent(
+        id,
+        {
+          kind: "board.created",
+          board_id: id,
+          at_ms: now,
+          payload: { board },
+        },
+        null,
+      );
       return { board, org: orgView(org) };
     });
 
@@ -698,12 +702,16 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         audience_pubkey: audienceState.audience_pubkey,
         updated_at_ms: now,
       };
-      yield* emitSecureBoardEvent(current.id, {
-        kind: "board.updated",
-        board_id: current.id,
-        at_ms: now,
-        payload: { board },
-      });
+      yield* emitSecureBoardEvent(
+        current.id,
+        {
+          kind: "board.updated",
+          board_id: current.id,
+          at_ms: now,
+          payload: { board },
+        },
+        null,
+      );
       return { board };
     });
 
@@ -737,12 +745,16 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         details: { slug: board.slug },
       });
       const updated = { ...board, archived_at_ms, updated_at_ms: now };
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "board.updated",
-        board_id: board.id,
-        at_ms: now,
-        payload: { board: updated },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "board.updated",
+          board_id: board.id,
+          at_ms: now,
+          payload: { board: updated },
+        },
+        null,
+      );
       return { board: updated };
     });
 
@@ -794,6 +806,10 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
           at_ms: now,
           payload: { board: current },
         },
+        // `null`: buildKanbanBoard carries no pubkey at all, so the board
+        // tombstone has no actor slot to fill. EFB-63's ticket listed
+        // board.deleted as an actor-slot event; the builder says otherwise.
+        null,
         current,
       );
       return { deleted: true };

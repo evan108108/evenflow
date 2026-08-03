@@ -483,8 +483,16 @@ export interface BuildKanbanCommentInput {
    *
    * Unlike a status change, authorship is a property of the row and not of the
    * request doing the publishing: a comment republished by a backfill still has
-   * its original author, so the `source` here describes where THIS build got the
-   * identity, which for a stored comment is `user.explicit`.
+   * its original author, so the `source` here describes where THIS build got
+   * the identity.
+   *
+   * EFB-63 made that concrete, and the two comment paths land differently on
+   * purpose. `comment.created` passes `route.caller` — the caller IS the
+   * author, and the route holds the Claims to prove it. `comment.deleted`
+   * passes `ProvenanceFromSystem()`: the tombstone's actor slot is the AUTHOR,
+   * so naming whoever pressed delete would publish a signed, unretractable
+   * claim that they wrote someone else's comment. A tombstone attributes
+   * nobody. See tests/provenance-lane-b.test.ts.
    */
   author: Provenance;
   body: string;

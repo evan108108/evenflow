@@ -23,6 +23,7 @@ import {
   IdentityRefFromInput,
   ImmutableField,
   NonEmptyString,
+  ProvenanceFromCaller,
   QueryString,
   parseRouteBody,
   parseRouteQuery,
@@ -738,28 +739,41 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { board: board.slug, issue: id },
       });
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "issue.created",
-        board_id: board.id,
-        issue_id: id,
-        // Top level, matching `issue.transitioned` post-EFB-33 — a private
-        // board's payload arrives encrypted, so anything the publish path must
-        // read has to live on the envelope.
-        status_change_id: statusChangeId,
-        at_ms: now,
-        // The status fields ride the payload for the same reason they do on a
-        // transition: nothing in the issue row records who acted, and
-        // `buildKanbanStatusChange` needs the from/to pair. Additive keys — SSE
-        // consumers that only read `issue` are unaffected.
-        payload: {
-          issue,
-          actor_pubkey: pubkey,
-          from_status: null,
-          to_status: column.name,
-          from_container: null,
-          to_container: container,
+      // `route.caller` (EFB-63): the pubkey the statusChangeCache row above was
+      // written with is `callerPubkey(claims)`, so the 30553's actor_pubkey is
+      // byte-identical to the pre-EFB-63 build — but the source now names the
+      // role instead of defaulting to `audit.system`, and it is constructed
+      // HERE, where the Claims that make the claim provable are in scope.
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "issue.created",
+          board_id: board.id,
+          issue_id: id,
+          // Top level, matching `issue.transitioned` post-EFB-33 — a private
+          // board's payload arrives encrypted, so anything the publish path must
+          // read has to live on the envelope.
+          status_change_id: statusChangeId,
+          at_ms: now,
+          // The status fields ride the payload for the same reason they do on a
+          // transition: nothing in the issue row records who acted, and
+          // `buildKanbanStatusChange` needs the from/to pair. Additive keys — SSE
+          // consumers that only read `issue` are unaffected.
+          //
+          // `actor_pubkey` stays for those SSE consumers. The publisher no
+          // longer reads it — it takes the Provenance below — so this key is
+          // now envelope-only (EFB-63).
+          payload: {
+            issue,
+            actor_pubkey: pubkey,
+            from_status: null,
+            to_status: column.name,
+            from_container: null,
+            to_container: container,
+          },
         },
-      });
+        ProvenanceFromCaller(claims),
+      );
       return { issue };
     });
     return runJson(c, program, 201);
@@ -1060,13 +1074,20 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         updated_at_ms: now,
         completed_at_ms: completed,
       };
-      yield* emitSecureBoardEvent(current.board_id, {
-        kind: "issue.updated",
-        board_id: current.board_id,
-        issue_id: current.id,
-        at_ms: now,
-        payload: { issue },
-      });
+      // `null`: buildKanbanIssue has no actor slot. The issue's only pubkey is
+      // `assignee_pubkey`, which is a REFERENCE — who owns the work, not who
+      // did this edit — and BOUNDARY_DISCIPLINE scopes Provenance to actors.
+      yield* emitSecureBoardEvent(
+        current.board_id,
+        {
+          kind: "issue.updated",
+          board_id: current.board_id,
+          issue_id: current.id,
+          at_ms: now,
+          payload: { issue },
+        },
+        null,
+      );
       return { issue };
     });
     return runJson(c, program);
@@ -1087,13 +1108,21 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         details: { issue: issue.id },
       });
       const now = yield* Clock.currentTimeMillis;
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: "issue.deleted",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue_id: issue.id },
-      });
+      // `null`, though a caller is in scope: the 30551 tombstone attributes
+      // nothing. Same reasoning as the comment tombstone — buildKanbanIssue has
+      // no actor slot to fill, so naming the deleter here would have nowhere
+      // honest to go.
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: "issue.deleted",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue_id: issue.id },
+        },
+        null,
+      );
       return { deleted: true };
     });
     return runJson(c, program);
@@ -1137,23 +1166,27 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         // identity changed but the status NAME did not, so no statusChangeCache
         // row was written. The issue event still carries the new state; there is
         // simply no 30553 to publish. See applyStatusChange.
-        yield* emitSecureBoardEvent(issue.board_id, {
-          kind: "issue.transitioned",
-          board_id: issue.board_id,
-          issue_id: issue.id,
-          at_ms: updated.updated_at_ms,
-          ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
-          // actor_pubkey is WHO MOVED THE CARD, which is not recoverable from
-          // the issue: assignee_pubkey is who owns the work, a different
-          // person most of the time. The 30553 attributes the change, so it
-          // needs the actor the statusChangeCache row was written with.
-          payload: {
-            issue: updated,
-            actor_pubkey: pubkey,
-            from_status: issue.status,
-            to_status: to.name,
+        yield* emitSecureBoardEvent(
+          issue.board_id,
+          {
+            kind: "issue.transitioned",
+            board_id: issue.board_id,
+            issue_id: issue.id,
+            at_ms: updated.updated_at_ms,
+            ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+            // actor_pubkey is WHO MOVED THE CARD, which is not recoverable from
+            // the issue: assignee_pubkey is who owns the work, a different
+            // person most of the time. Kept for SSE consumers; the publisher
+            // reads the Provenance argument instead (EFB-63).
+            payload: {
+              issue: updated,
+              actor_pubkey: pubkey,
+              from_status: issue.status,
+              to_status: to.name,
+            },
           },
-        });
+          ProvenanceFromCaller(claims),
+        );
       }
       return { issue: updated };
     });
@@ -1211,13 +1244,17 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           duplicate_of_issue_id: null,
           updated_at_ms: now,
         };
-        yield* emitSecureBoardEvent(issue.board_id, {
-          kind: "issue.updated",
-          board_id: issue.board_id,
-          issue_id: issue.id,
-          at_ms: now,
-          payload: { issue: updated },
-        });
+        yield* emitSecureBoardEvent(
+          issue.board_id,
+          {
+            kind: "issue.updated",
+            board_id: issue.board_id,
+            issue_id: issue.id,
+            at_ms: now,
+            payload: { issue: updated },
+          },
+          null,
+        );
         return { issue: updated };
       }
 
@@ -1284,21 +1321,28 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       // already in Done and only the pointer changed. Both carry the whole
       // issue, so either way the substrate 30551 picks up fa:duplicate_of.
       const moved = updated.status !== issue.status || updated.column_id !== issue.column_id;
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: moved ? "issue.transitioned" : "issue.updated",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        at_ms: updated.updated_at_ms,
-        ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
-        payload: moved
-          ? {
-              issue: updated,
-              actor_pubkey: pubkey,
-              from_status: issue.status,
-              to_status: updated.status,
-            }
-          : { issue: updated },
-      });
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: moved ? "issue.transitioned" : "issue.updated",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: updated.updated_at_ms,
+          ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+          payload: moved
+            ? {
+                issue: updated,
+                actor_pubkey: pubkey,
+                from_status: issue.status,
+                to_status: updated.status,
+              }
+            : { issue: updated },
+        },
+        // Tracks the branch above: a move publishes a 30553 that needs its
+        // actor, an in-place pointer change publishes only the 30551, which has
+        // no actor slot to fill.
+        moved ? ProvenanceFromCaller(claims) : null,
+      );
       return { issue: updated };
     });
     return runJson(c, program);
@@ -1399,20 +1443,28 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       });
       // Both streams: the source board sees the card leave, the target sees
       // it arrive.
-      yield* emitSecureBoardEvent(source.id, {
-        kind: "issue.updated",
-        board_id: source.id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue_id: issue.id, moved_to_board: target.id },
-      });
-      yield* emitSecureBoardEvent(target.id, {
-        kind: "issue.updated",
-        board_id: target.id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue: moved },
-      });
+      yield* emitSecureBoardEvent(
+        source.id,
+        {
+          kind: "issue.updated",
+          board_id: source.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue_id: issue.id, moved_to_board: target.id },
+        },
+        null,
+      );
+      yield* emitSecureBoardEvent(
+        target.id,
+        {
+          kind: "issue.updated",
+          board_id: target.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: moved },
+        },
+        null,
+      );
       return { issue: moved };
     });
     return runJson(c, program);
@@ -1541,13 +1593,17 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id },
       });
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: "issue.updated",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue: updated },
-      });
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: "issue.updated",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue: updated },
+        },
+        null,
+      );
       return { issue: updated };
     });
     return runJson(c, program);
@@ -1568,19 +1624,23 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           details: { issue: issue.id },
         });
         if (updated.container !== issue.container) {
-          yield* emitSecureBoardEvent(issue.board_id, {
-            kind: "issue.container_changed",
-            board_id: issue.board_id,
-            issue_id: issue.id,
-            at_ms: updated.updated_at_ms,
-            ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
-            payload: {
-              issue: updated,
-              actor_pubkey: pubkey,
-              from_container: issue.container,
-              to_container: to,
+          yield* emitSecureBoardEvent(
+            issue.board_id,
+            {
+              kind: "issue.container_changed",
+              board_id: issue.board_id,
+              issue_id: issue.id,
+              at_ms: updated.updated_at_ms,
+              ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+              payload: {
+                issue: updated,
+                actor_pubkey: pubkey,
+                from_container: issue.container,
+                to_container: to,
+              },
             },
-          });
+            ProvenanceFromCaller(claims),
+          );
         }
         return { issue: updated };
       });

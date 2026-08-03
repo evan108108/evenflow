@@ -20,7 +20,7 @@ import { Db, type DbError } from "../../effects";
 import type { BoardEvent } from "../../durable-objects/BoardDO";
 import type { BoardShape } from "../../shapes";
 import { __signEvent } from "../audience/nip17";
-import { ProvenanceFromStoredActor, ProvenanceFromSystem, type Provenance } from "../route-body";
+import { ProvenanceFromSystem, type Provenance } from "../route-body";
 import {
   buildKanbanBoard,
   buildKanbanComment,
@@ -70,7 +70,11 @@ export const publishesPlaintext = (board: BoardShape | null): boolean =>
  * remains the single-template mapping for the four families that have exactly
  * one, and is kept exported because the tests pin it directly.
  */
-export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate | null => {
+export const templateFor = (
+  board: BoardShape,
+  event: BoardEvent,
+  actor: Provenance | null,
+): EventTemplate | null => {
   const payload = (event.payload ?? {}) as Record<string, unknown>;
 
   // EFB-15 — an import is an AGGREGATE: no single entity changed, so there is
@@ -161,19 +165,35 @@ export const templateFor = (board: BoardShape, event: BoardEvent): EventTemplate
     if (commentId === undefined || issueId === undefined) return null;
     // comment.deleted carries { comment_id, issue_id } only.
     const comment = payload["comment"] as Record<string, unknown> | undefined;
-    // Authorship is read off the stored comment, not off whoever triggered this
-    // publish — a tombstone or a backfill republishes someone else's comment and
-    // must keep attributing it to them (EFB-58). A deleted comment carries no
-    // row, hence no author to attribute.
-    const author = comment?.["author_pubkey"];
+    // Authorship comes from the EMIT CALLSITE (EFB-63), not from the payload.
+    // Only the callsite knows whether a live caller authored this comment or
+    // the server is re-attesting a stored one, and only the callsite holds the
+    // Claims that make `route.caller` constructible at all.
+    //
+    // EFB-58 read `payload.comment.author_pubkey` here and wrapped it in
+    // `ProvenanceFromStoredActor`. That was the honest reading THEN — this
+    // function had no other source — but it is a bag read: `payload` is
+    // `unknown`, so the pubkey arrived as an unchecked cast and `source` could
+    // only ever say `audit.system`, which is why Lane A's source field did no
+    // discriminating work. Lane B deletes the read rather than typing it.
+    //
+    // `null` means the callsite named no actor, and the honest reading of that
+    // is NOBODY — not "whoever the row says". Falling back to the stored author
+    // would re-introduce the bag read for exactly the callsites that forgot to
+    // name one, which is the population most likely to be wrong.
+    //
+    // comment.created passes `route.caller`; comment.deleted passes
+    // `ProvenanceFromSystem()`. A tombstone is administrative — attributing it
+    // to whoever pressed delete would publish a signed claim that they authored
+    // someone else's comment, EFB-33's failure at a new callsite. Both render
+    // the same bytes the EFB-58 build did: created's caller pubkey IS the
+    // stored author_pubkey (routes/comments.ts writes `callerPubkey(claims)`),
+    // and deleted had no row to read, so it emitted the empty pubkey already.
     return buildKanbanComment({
       commentId,
       issueId,
       boardId: board.id,
-      author:
-        typeof author === "string" && author !== ""
-          ? ProvenanceFromStoredActor(author)
-          : ProvenanceFromSystem(),
+      author: actor ?? ProvenanceFromSystem(),
       body: (comment?.["body"] as string) ?? "",
       bodyFormat: (comment?.["body_format"] as string) ?? "markdown",
       inReplyTo: (comment?.["in_reply_to"] as string | null) ?? null,
@@ -251,10 +271,11 @@ export interface PublishItem {
 export const templatesFor = (
   board: BoardShape,
   event: BoardEvent,
+  actor: Provenance | null,
 ): ReadonlyArray<PublishItem> => {
   const items: PublishItem[] = [];
 
-  const primary = templateFor(board, event);
+  const primary = templateFor(board, event, actor);
   if (primary !== null) items.push({ template: primary, stamp: stampTargetOf(event) });
 
   // The 30553 rides alongside the issue event rather than replacing it.
@@ -277,31 +298,38 @@ export const templatesFor = (
     if (statusChangeId !== undefined && issueId !== undefined) {
       const payload = (event.payload ?? {}) as Record<string, unknown>;
       // The actor is who performed the transition — NOT the issue's assignee,
-      // who is usually somebody else. It is carried explicitly on the payload
-      // because nothing in the issue row records it.
+      // who is usually somebody else. Nothing in the issue row records it, so
+      // it has to arrive from outside this function.
       //
-      // NOT `route.caller`, though the route did originally record this pubkey
-      // from its JWT caller. This publisher runs off the board-event queue after
-      // the D1 row is committed; there is no live caller in scope here, and
-      // `source` names what THIS build knows about the pubkey rather than the
-      // pipeline it once travelled. Asserting a caller we cannot see would be a
-      // plausible-but-false attribution — the exact failure EFB-58 exists to
-      // stop, re-committed in the fix for it.
+      // EFB-58 read it from `payload.actor_pubkey` and could only ever produce
+      // `audit.system`, on the reasoning that this publisher has no live caller
+      // in scope and asserting `route.caller` from here would be a
+      // plausible-but-false attribution. That reasoning was right about THIS
+      // function and wrong about the pipeline: `emitSecureBoardEvent` awaits
+      // `publishPlaintextEvent` inline, inside the request being served, so a
+      // live caller does exist — just not lexically here.
       //
-      // An absent actor means none was recorded, which is the empty
-      // `audit.system` case. Both render the pubkey the pre-EFB-58 builder
-      // emitted, so the wire event is unchanged either way.
-      const recordedActor = payload["actor_pubkey"];
-      const actor: Provenance =
-        typeof recordedActor === "string" && recordedActor !== ""
-          ? ProvenanceFromStoredActor(recordedActor)
-          : ProvenanceFromSystem();
+      // EFB-63 resolves it by having the ROUTE construct the Provenance where
+      // the Claims genuinely are in scope, and passing the value down. This
+      // function never asserts `route.caller`; it forwards an assertion made by
+      // the one frame entitled to make it. That distinction is the whole reason
+      // the value travels as a typed parameter and not on `event.payload`: a
+      // struct re-cast out of an `unknown` bag would let any writer claim
+      // `route.caller` with no Claims ever in scope, which is precisely the
+      // hole `ProvenanceFromCaller` (Claims-not-string) exists to close.
+      //
+      // `null` means the callsite named no actor — the empty `audit.system`
+      // case, which renders the same pubkey the pre-EFB-58 builder emitted.
+      //
+      // `payload.actor_pubkey` is deliberately still written by the routes and
+      // deliberately no longer read here: it remains part of the SSE envelope
+      // that browser clients consume. Publishing reads the parameter.
       items.push({
         template: buildKanbanStatusChange({
           statusChangeId,
           issueId,
           boardId: board.id,
-          actor,
+          actor: actor ?? ProvenanceFromSystem(),
           fromStatus: (payload["from_status"] as string | null) ?? null,
           toStatus: (payload["to_status"] as string | null) ?? null,
           fromContainer: (payload["from_container"] as string | null) ?? null,
@@ -333,9 +361,10 @@ export const templatesFor = (
 export const publishPlaintextEvent = (
   board: BoardShape,
   event: BoardEvent,
+  actor: Provenance | null,
 ): Effect.Effect<string | null, DbError, Db | Audience> =>
   Effect.gen(function* () {
-    const items = templatesFor(board, event);
+    const items = templatesFor(board, event, actor);
     if (items.length === 0) return null;
 
     const audience = yield* Audience;

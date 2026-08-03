@@ -393,13 +393,17 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id, attachment: id, size: upload.bytes.byteLength },
       });
-      yield* emitSecureBoardEvent(board.id, {
-        kind: "issue.updated",
-        board_id: board.id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue_id: issue.id, attachment_change: true },
-      });
+      yield* emitSecureBoardEvent(
+        board.id,
+        {
+          kind: "issue.updated",
+          board_id: board.id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue_id: issue.id, attachment_change: true },
+        },
+        null,
+      );
       return { attachment };
     });
     return runJson(c, program, 201);
@@ -450,13 +454,17 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { attachment: attachment.id, is_cover },
       });
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: "issue.updated",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue_id: issue.id, attachment_change: true },
-      });
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: "issue.updated",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue_id: issue.id, attachment_change: true },
+        },
+        null,
+      );
       return { attachment: { ...attachment, is_cover } };
     });
     return runJson(c, program);
@@ -483,13 +491,17 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { attachment: attachment.id },
       });
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: "issue.updated",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        at_ms: now,
-        payload: { issue_id: issue.id, attachment_change: true },
-      });
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: "issue.updated",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          at_ms: now,
+          payload: { issue_id: issue.id, attachment_change: true },
+        },
+        null,
+      );
       return { deleted: true };
     });
     return runJson(c, program);

@@ -40,6 +40,7 @@ import { openScalarFromServer, type ServerAudienceKeys } from "./lib/audience-st
 import { realPubkeyOfMember } from "./nostr";
 import type { BoardEvent } from "./durable-objects/BoardDO";
 import { publishPlaintextEvent, publishesPlaintext } from "./lib/kanban/publish";
+import type { Provenance } from "./lib/route-body";
 
 /**
  * Ceiling on what a board mutation will wait for the substrate mirror.
@@ -617,10 +618,45 @@ export const loadBoardById = (boardId: string) =>
  * the gate's re-read target and the mutation's delete target are the same row.
  * Anywhere else, don't — a stale snapshot would defeat the freshness read and
  * publish a board state the mutation has already superseded.
+ *
+ * ── `actor` (EFB-63) ──────────────────────────────────────────────────────
+ *
+ * WHO acted, for the two signed-event builders that have an actor slot
+ * (`buildKanbanComment.author`, `buildKanbanStatusChange.actor`). Required and
+ * positional, not optional: an emit that stays silent about its actor is the
+ * state this ticket exists to make unspellable, and `undefined` would let a
+ * callsite reach that state by forgetting rather than by deciding.
+ *
+ * `null` is the honest value for the ~25 kinds with no actor slot — board and
+ * sprint events carry no pubkey at all, and issue events carry only the
+ * assignee, which is a REFERENCE and not an actor (BOUNDARY_DISCIPLINE:
+ * "scope it to actor slots only"). Passing `null` says "this kind attributes
+ * nothing", which is a different statement from "I forgot".
+ *
+ * It rides the SIGNATURE rather than `event.payload`, and that is load-bearing
+ * rather than stylistic:
+ *
+ *   1. `BoardEvent` is the SSE wire contract — BoardDO.emit JSON-stringifies it
+ *      to every browser subscriber, and web/src/effects/SseStream.ts asserts a
+ *      mirror of the type at compile time (EFB-34). Provenance is compile-time
+ *      only (BOUNDARY_DISCIPLINE); putting it on the event would put it on a
+ *      wire, just not the substrate one the ticket's non-goal guards.
+ *   2. `payload` is `unknown`, so a reader must reconstruct the struct with an
+ *      unchecked cast — and a `route.caller` that survives a cast is a
+ *      `route.caller` asserted with no Claims in scope. `ProvenanceFromCaller`
+ *      takes Claims and not a string precisely so that cannot be spelled; a
+ *      payload round-trip hands the spelling back.
+ *   3. It is not needed. The publish below is AWAITED inline, so the same
+ *      in-memory value the route constructed reaches the builder untouched.
+ *
+ * The general rule, since this recurs: a compile-time-only invariant belongs in
+ * the function signature. Put it in a payload and the type has to be rebuilt at
+ * every read site, which means every read site can lie.
  */
 export const emitSecureBoardEvent = (
   board_id: string,
   event: BoardEvent,
+  actor: Provenance | null,
   snapshot?: BoardShape,
 ): Effect.Effect<string | null, never, Db | Audience | BoardEmitter> =>
   Effect.gen(function* () {
@@ -656,7 +692,7 @@ export const emitSecureBoardEvent = (
     // A publish that adds latency beats a publish that silently never
     // happens — which is precisely what this ticket exists to fix.
     if (board !== null && publishesPlaintext(board)) {
-      yield* publishPlaintextEvent(board, event).pipe(
+      yield* publishPlaintextEvent(board, event, actor).pipe(
         Effect.timeoutTo({
           duration: PUBLISH_TIMEOUT_MS,
           onTimeout: () => {

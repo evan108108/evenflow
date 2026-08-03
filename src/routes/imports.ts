@@ -635,18 +635,22 @@ export const makeImportsRouter = (layerFor?: LayerFor) => {
         // ONE event for the whole import. No issue_id: N issues landed, so
         // there is no single one to name.
         if (createdCount > 0) {
-          yield* emitSecureBoardEvent(board.id, {
-            kind: "issues.imported",
-            board_id: board.id,
-            at_ms: now,
-            payload: {
-              import_id: importId,
-              count: body.issues.length,
-              created: createdCount,
-              skipped: skippedCount,
-              unassigned: unassignedCount,
+          yield* emitSecureBoardEvent(
+            board.id,
+            {
+              kind: "issues.imported",
+              board_id: board.id,
+              at_ms: now,
+              payload: {
+                import_id: importId,
+                count: body.issues.length,
+                created: createdCount,
+                skipped: skippedCount,
+                unassigned: unassignedCount,
+              },
             },
-          });
+            null,
+          );
         }
 
         return { replayed: false, body: responseBody };
