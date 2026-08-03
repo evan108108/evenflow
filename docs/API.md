@@ -248,6 +248,33 @@ Every mutation gates on `requireCaller` first.
 
 ---
 
+## Testing discipline
+
+**A test you have not seen fail is a test you are trusting on faith.** Before
+you rely on an assertion, break the thing it guards and watch it go red — and
+watch how many OTHER tests stay green, because that number tells you whether
+anything else was covering the behaviour.
+
+Two cases from this migration, both of which passed for the wrong reason first:
+
+- An ordering guard was pinned by moving a body parse above its gate. Exactly
+  one test reddened and 1049 stayed green. The green is the finding: nothing
+  else covered the ordering, which is why the flip was invisible.
+- A slug-transposition guard used fixtures where the org and the board had
+  *different* slugs. A transposition just missed the lookup and 404'd, so the
+  test passed without ever exercising the confusion. Rewritten so the org and
+  one of its boards share a slug with different rosters, a transposition
+  resolves a REAL board and every layer succeeds — only the authorization
+  answer is wrong.
+
+**After any input-shape change, re-verify your guards against the NEW
+implementation.** A mutation check run against the old shape proves nothing
+about the new one. The same slug guard above survived a refactor from
+`params` to a named field still green *and now vacuous*: the seed used the old
+shape, the field came out null, the lookup took its no-org branch, and the
+right answer arrived through the wrong path. A green test after a refactor is
+not the same test.
+
 ## Anti-patterns, with the real cases
 
 Everything below was in this codebase. None of it is hypothetical.
