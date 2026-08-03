@@ -51,6 +51,7 @@ import {
   MAX_ATTACHMENTS_PER_ISSUE,
   formatBytes,
   isAllowedContentType,
+  needsByoStorage,
   type StorageKind,
 } from "../attachments";
 import { deriveServerStorageKeys, decryptS3Creds } from "../lib/nostr-keys";
@@ -102,10 +103,20 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<AttachmentsFai
       case "NotFoundError":
       case "BoardOwnershipError":
         return c.json({ error: "not-found", reason: f.reason }, 404);
+      // `status` is the upstream host's HTTP status, carried through so a
+      // rate-limit (429) is distinguishable from an outage (5xx) or a
+      // rejected blob (4xx) — previously every one of these collapsed to
+      // the literal string "http" and the status was dropped on the floor.
+      // The upstream `detail` is deliberately NOT surfaced: it names the
+      // storage vendor, and routing stays an implementation detail in user
+      // copy. It goes to the audit log instead (attachment_upload_failed).
       case "BlossomError":
-        return c.json({ error: "storage-unavailable", reason: f.reason }, 502);
+        return c.json({ error: "storage-unavailable", reason: f.reason, status: f.status }, 502);
       case "S3Error":
-        return c.json({ error: "storage-unavailable", reason: f.code ?? f.reason }, 502);
+        return c.json(
+          { error: "storage-unavailable", reason: f.code ?? f.reason, status: f.status },
+          502,
+        );
       case "StorageCredsError":
         return c.json({ error: "storage-unavailable", reason: f.reason }, 502);
       case "DbError":
@@ -341,14 +352,20 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
           link,
         });
       }
-      if (!isAllowedContentType(upload.contentType)) {
-        return yield* new RejectedError({
-          code: "type_not_allowed",
-          message: looksExecutable(upload.contentType, upload.filename)
-            ? `Executable files aren't allowed on Evenflow storage (${upload.contentType}).`
-            : `${upload.contentType} isn't an accepted file type — images, PDFs, plain text, zip, and JSON are.`,
-          link,
-        });
+      if (!isAllowedContentType(upload.contentType, byob)) {
+        // Three refusals, most specific first. The middle one is EFB-80's:
+        // a type we'd happily take on a BYO bucket but the default host
+        // rejects. It earns a "set up a bucket" nudge rather than a flat
+        // "not accepted", and it never names the host — routing stays an
+        // implementation detail in user copy.
+        const message = looksExecutable(upload.contentType, upload.filename)
+          ? `Executable files aren't allowed on Evenflow storage (${upload.contentType}).`
+          : needsByoStorage(upload.contentType)
+            ? `${upload.contentType} files need your own storage bucket — Evenflow's default storage takes images only.`
+            : byob
+              ? `${upload.contentType} isn't an accepted file type — images, PDFs, plain text, zip, and JSON are.`
+              : `${upload.contentType} isn't an accepted file type — Evenflow's default storage takes images. With your own bucket you can also attach PDFs, plain text, zip, and JSON.`;
+        return yield* new RejectedError({ code: "type_not_allowed", message, link });
       }
       const existing = yield* listLiveAttachments(issue.id);
       if (existing.length >= MAX_ATTACHMENTS_PER_ISSUE) {
@@ -359,14 +376,38 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         });
       }
 
+      const audit = yield* AuditLog;
+      // Record storage failures, not just successes. AuditLog.record writes a
+      // JSON line to Workers observability, so this is simultaneously the
+      // structured log and the queryable signal — without it a degrading
+      // default host produces no server-side trace at all, and the only
+      // symptom is users reporting a 502 we can't attribute.
       const { url, sha256, storage_kind } = yield* uploadToConfiguredStorage(
         c.env.EVENFLOW_STORAGE_SECRET,
         storageCfg,
         upload,
+      ).pipe(
+        Effect.tapError((e) =>
+          audit.record({
+            event_type: "attachment_upload_failed",
+            actor: claims.login,
+            issue: issue.id,
+            details: {
+              storage_kind: byob ? storageCfg?.kind ?? "default" : "default",
+              error: e._tag,
+              reason: e._tag === "S3Error" ? e.code ?? e.reason : e.reason,
+              // Upstream status + message: the operator-facing half of the
+              // failure, kept out of the HTTP response on purpose.
+              status: e._tag === "StorageCredsError" ? undefined : e.status,
+              detail: e._tag === "StorageCredsError" ? undefined : e.detail,
+              size: upload.bytes.byteLength,
+              content_type: upload.contentType,
+            },
+          }),
+        ),
       );
 
       const db = yield* Db;
-      const audit = yield* AuditLog;
       const now = yield* Clock.currentTimeMillis;
       const id = crypto.randomUUID();
       const attachment: AttachmentShape = {

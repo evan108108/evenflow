@@ -10,6 +10,7 @@ import {
 } from "../src/attachments";
 import {
   bearer,
+  callerOrg,
   createIssue,
   jsonReq,
   makeHarness,
@@ -178,6 +179,76 @@ describe("upload", () => {
     expect(h.db.attachments).toHaveLength(0);
   });
 
+  // ── EFB-80 ────────────────────────────────────────────────────────────
+  // The default host's free tier serves images only; documents and archives
+  // are gated behind a paid plan. We used to accept all eight allowed types
+  // at the edge and let four of them 415 upstream, which reached the user as
+  // an opaque 502 and left no server-side trace at all.
+
+  it("refuses BYO-only types on default storage before touching the host", async () => {
+    const h = makeHarness();
+    const issue = await setup(h);
+    for (const [content_type, filename] of [
+      ["application/pdf", "spec.pdf"],
+      ["text/plain", "notes.txt"],
+      ["application/zip", "bundle.zip"],
+      ["application/json", "data.json"],
+    ] as const) {
+      const res = await uploadJson(h, issue, { content_type, filename });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string; message: string; link: string };
+      expect(body.code).toBe("type_not_allowed");
+      // Actionable: names the type, points at BYO setup, and never names
+      // the upstream host — routing stays an implementation detail.
+      expect(body.message).toContain(content_type);
+      expect(body.message).toContain("your own storage bucket");
+      expect(body.message).not.toContain("blossom");
+      expect(body.link).toContain("#storage");
+    }
+    // The whole point: no wasted round-trip, and no row.
+    expect(h.blossom.calls).toHaveLength(0);
+    expect(h.db.attachments).toHaveLength(0);
+  });
+
+  it("takes those same types once the org brings its own bucket", async () => {
+    const h = makeHarness();
+    const issue = await setup(h);
+    const put = await h.app.request(
+      `/api/v0/orgs/${String(callerOrg(h)["slug"])}/storage`,
+      jsonReq("PUT", { kind: "blossom", blossom_url: "https://blobs.acme.dev" }),
+      {},
+    );
+    expect(put.status).toBe(200);
+    const res = await uploadJson(h, issue, { content_type: "application/pdf", filename: "spec.pdf" });
+    expect(res.status).toBe(201);
+    const { attachment } = (await res.json()) as { attachment: AttachmentShape };
+    expect(attachment.storage_kind).toBe("blossom_byo");
+  });
+
+  it("carries the upstream status out of a storage failure and audits it", async () => {
+    const h = makeHarness();
+    const issue = await setup(h);
+    h.blossom.failUploads = true;
+    const res = await uploadJson(h, issue);
+    expect(res.status).toBe(502);
+    // Previously every storage failure collapsed to reason:"http" with the
+    // status dropped, so a rate-limit was indistinguishable from an outage.
+    expect(await res.json()).toMatchObject({ error: "storage-unavailable", status: 502 });
+
+    const failure = h.audit.events.find((e) => e.event_type === "attachment_upload_failed");
+    expect(failure).toBeDefined();
+    // The operator-facing half: upstream status + message land in the audit
+    // log (a JSON line in Workers observability), not in the HTTP response.
+    expect(failure?.details).toMatchObject({
+      storage_kind: "default",
+      error: "BlossomError",
+      status: 502,
+      detail: "test-outage",
+      content_type: "image/png",
+    });
+    expect(h.db.attachments).toHaveLength(0);
+  });
+
   it("rejects a malformed body with 400", async () => {
     const h = makeHarness();
     const issue = await setup(h);
@@ -321,7 +392,17 @@ describe("kanban cover enrichment + body_format", () => {
     const img = await uploadOk(h, withCover);
     await setCover(h, img.id, true);
 
+    // A PDF only exists as an attachment on BYO storage — the default host
+    // takes images only (EFB-80) — so point the org at its own Blossom
+    // before uploading the non-image cover this assertion needs.
+    const byo = await h.app.request(
+      `/api/v0/orgs/${String(callerOrg(h)["slug"])}/storage`,
+      jsonReq("PUT", { kind: "blossom", blossom_url: "https://blobs.acme.dev" }),
+      {},
+    );
+    expect(byo.status).toBe(200);
     const pdfRes = await uploadJson(h, pdfIssue, { content_type: "application/pdf", filename: "spec.pdf" });
+    expect(pdfRes.status).toBe(201);
     const pdf = ((await pdfRes.json()) as { attachment: AttachmentShape }).attachment;
     await setCover(h, pdf.id, true);
 
