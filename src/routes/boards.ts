@@ -17,7 +17,8 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
+import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
+import { ImmutableField, parseRouteBody, requireAnyOf } from "../lib/route-body";
 import { AuditLog, Audience, Db, DbError, bootstrap } from "../effects";
 import { AudienceKeyError, emitSecureBoardEvent, initializeBoardAudience } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -95,16 +96,6 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<BoardsFailure>
 
 // ── field validators — each returns the parsed value or fails typed ───────
 
-const validateTitle = (v: unknown) =>
-  typeof v === "string" && v.trim() !== ""
-    ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "title" }));
-
-const validateDescription = (v: unknown) =>
-  v === null || typeof v === "string"
-    ? Effect.succeed(v as string | null)
-    : Effect.fail(new ValidationError({ reason: "description" }));
-
 // Status columns are lifecycle only (Todo → In Progress → In Review →
 // Done). "Backlog" is intentionally NOT a status — it lives on the
 // CONTAINER axis (icebox / backlog / active), a separate dimension. See
@@ -123,21 +114,6 @@ const validateColumns = (v: unknown): Effect.Effect<Column[], ValidationError> =
     ? Effect.succeed(v as Column[])
     : Effect.fail(new ValidationError({ reason: `columns-${problem}` }));
 };
-
-const validateLabels = (v: unknown) =>
-  Array.isArray(v)
-    ? Effect.succeed(v as unknown[])
-    : Effect.fail(new ValidationError({ reason: "labels" }));
-
-const validateMemberPolicy = (v: unknown) =>
-  typeof v === "string" && (MEMBER_POLICIES as ReadonlyArray<string>).includes(v)
-    ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "member_policy" }));
-
-const validateVisibility = (v: unknown) =>
-  typeof v === "string" && (VISIBILITIES as ReadonlyArray<string>).includes(v)
-    ? Effect.succeed(v as (typeof VISIBILITIES)[number])
-    : Effect.fail(new ValidationError({ reason: "visibility" }));
 
 const validateSprintDays = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= MIN_SPRINT_DAYS && v <= MAX_SPRINT_DAYS
@@ -164,16 +140,93 @@ const finalizePrefix = (requested: string) =>
     return uniquePrefix(requested, new Set(rows.map((r) => r.issue_prefix)));
   });
 
-const readJsonBody = (c: Context<AppHonoEnv>) =>
-  Effect.tryPromise({
-    try: () => c.req.json() as Promise<Record<string, unknown>>,
-    catch: () => new ValidationError({ reason: "expected-json" }),
-  }).pipe(
-    Effect.filterOrFail(
-      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-      () => new ValidationError({ reason: "expected-json-object" }),
-    ),
-  );
+// ── EFB-61 request shapes ─────────────────────────────────────────────────
+//
+// The four invariants come from parseRouteBody, not from anything here:
+// unknown keys 400, wrong types 400, missing-required 400, canonical output.
+// See docs/BOUNDARY_DISCIPLINE.md.
+//
+// Three fields are deliberately `Unknown` and keep their existing validator in
+// the handler. Same reasoning issues.ts records for `status`: splitting a check
+// that cannot be expressed purely would report two reasons for one broken
+// field and change an error string that tests already pin.
+//
+//   columns  — validateColumns accepts EITHER a coerced string[] or a
+//              structured Column[], mints UUIDs while coercing (impure), and
+//              reports a dynamic `columns-<problem>` built by
+//              columnArrayProblem. None of that is a static schema.
+//   issue_prefix — depends on ANOTHER field (derived from title when absent)
+//              and upper-cases what it accepts, so it is a cross-field
+//              transform, not a shape.
+//   done_window_days — reuses validateSprintDays and therefore answers
+//              `default_sprint_days` on failure, not `done_window_days`. That
+//              looks like a bug and is pre-existing; reproducing it is the
+//              point of this ticket, and fixing it belongs in its own.
+//
+// Every filter below returns a BOOLEAN rather than a message string, matching
+// PatchIssueBody. A bare kebab message would be read as a reason CODE and
+// surface as `<field>-<slug>`; a boolean false falls back to the field name,
+// which is the string these routes already answer.
+
+export const PostBoardBody = Schema.Struct({
+  slug: Schema.String.pipe(Schema.filter((s) => SLUG_RE.test(s))),
+  // `.trim() !== ""` is NOT `minLength(1)` — the latter accepts "   ".
+  title: Schema.String.pipe(Schema.filter((s) => s.trim() !== "")),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  columns: Schema.optional(Schema.Unknown),
+  // validateLabels checks Array.isArray and nothing about the elements.
+  labels: Schema.optional(Schema.Array(Schema.Unknown)),
+  member_policy: Schema.optional(Schema.Literal(...MEMBER_POLICIES)),
+  visibility: Schema.optional(Schema.Literal(...VISIBILITIES)),
+  issue_prefix: Schema.optional(Schema.Unknown),
+});
+
+/** Mutable via PATCH — the list `empty-patch` is computed from. */
+const PATCHABLE_BOARD_FIELDS = [
+  "title",
+  "description",
+  "columns",
+  "labels",
+  "member_policy",
+  "issue_prefix",
+  "visibility",
+  "default_sprint_days",
+  "done_window_days",
+] as const;
+
+export const PatchBoardBody = Schema.Struct({
+  title: Schema.optional(Schema.String.pipe(Schema.filter((s) => s.trim() !== ""))),
+  description: Schema.optional(Schema.NullOr(Schema.String)),
+  columns: Schema.optional(Schema.Unknown),
+  labels: Schema.optional(Schema.Array(Schema.Unknown)),
+  member_policy: Schema.optional(Schema.Literal(...MEMBER_POLICIES)),
+  visibility: Schema.optional(Schema.Literal(...VISIBILITIES)),
+  issue_prefix: Schema.optional(Schema.Unknown),
+  default_sprint_days: Schema.optional(
+    Schema.Int.pipe(Schema.between(MIN_SPRINT_DAYS, MAX_SPRINT_DAYS)),
+  ),
+  done_window_days: Schema.optional(Schema.Unknown),
+  // Only meaningful alongside `columns`, and only VALIDATED when columns are
+  // present — so it stays Unknown and keeps its handler check, which lives
+  // inside that branch. Declaring it purely here would start rejecting a bad
+  // map sent without columns, which today is ignored. Not patchable on its
+  // own: a body carrying only this is still `empty-patch`.
+  column_move_map: Schema.optional(Schema.Unknown),
+  // Pre-0015 clients still send `is_encrypted`; it is accepted and ignored,
+  // `visibility` is authoritative. Declared so strict mode does not start
+  // answering `is_encrypted-unknown` to a client that worked yesterday. It is
+  // NOT patchable — a body carrying only this is still `empty-patch`.
+  is_encrypted: Schema.optional(Schema.Unknown),
+  // Real columns this route may not write. Declared rather than left to the
+  // unknown-key rule so the caller is told `slug-immutable` ("real field,
+  // wrong endpoint") instead of `slug-unknown` ("no such field").
+  slug: ImmutableField,
+  pubkey: ImmutableField,
+  id: ImmutableField,
+  org_id: ImmutableField,
+  audience_epoch: ImmutableField,
+  audience_pubkey: ImmutableField,
+}).pipe(Schema.filter(requireAnyOf(PATCHABLE_BOARD_FIELDS)));
 
 /** The org fields riding along on board responses since phase 16. */
 const orgView = (org: OrgShape | null) =>
@@ -190,45 +243,29 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
+      const body = yield* parseRouteBody(c, PostBoardBody);
 
-      const slug = body["slug"];
-      if (typeof slug !== "string" || !SLUG_RE.test(slug)) {
-        return yield* new ValidationError({ reason: "slug" });
-      }
-      const title = yield* validateTitle(body["title"]);
-      const description =
-        body["description"] === undefined ? null : yield* validateDescription(body["description"]);
+      const slug = body.slug;
+      const title = body.title;
+      const description = body.description === undefined ? null : body.description;
       const columns =
-        body["columns"] === undefined
+        body.columns === undefined
           ? defaultColumns(() => crypto.randomUUID())
-          : yield* validateColumns(body["columns"]);
-      const labels =
-        body["labels"] === undefined ? [] : yield* validateLabels(body["labels"]);
-      const member_policy =
-        body["member_policy"] === undefined
-          ? "invite"
-          : yield* validateMemberPolicy(body["member_policy"]);
-      const derived =
-        body["issue_prefix"] === undefined
-          ? derivePrefix(title)
-          : null;
+          : yield* validateColumns(body.columns);
+      const labels = body.labels === undefined ? [] : [...body.labels];
+      const member_policy = body.member_policy === undefined ? "invite" : body.member_policy;
+      const derived = body.issue_prefix === undefined ? derivePrefix(title) : null;
       if (derived === "") {
         return yield* new ValidationError({ reason: "issue_prefix" });
       }
       const requestedPrefix =
-        derived !== null
-          ? derived
-          : yield* validatePrefix(body["issue_prefix"] as string);
+        derived !== null ? derived : yield* validatePrefix(body.issue_prefix);
       // Create-time visibility: private is the default (safer for a mixed
       // public/internal use), but a fresh board still lands in the "private
       // but not yet encrypted" third state — audience minting only happens
       // on an explicit PATCH visibility=private, so opting in at create
       // time doesn't silently pay the crypto tax.
-      const createVisibility =
-        body["visibility"] === undefined
-          ? "private"
-          : yield* validateVisibility(body["visibility"]);
+      const createVisibility = body.visibility === undefined ? "private" : body.visibility;
       const orgSlugParam = c.req.param("org_slug");
       let org: OrgShape;
       if (orgSlugParam !== undefined) {
@@ -476,24 +513,11 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   boards.patch("/boards/:slug", async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const body = yield* readJsonBody(c);
-      for (const immutable of ["slug", "pubkey", "id", "org_id", "audience_epoch", "audience_pubkey"]) {
-        if (body[immutable] !== undefined) {
-          return yield* new ValidationError({ reason: `${immutable}-immutable` });
-        }
-      }
-      const hasPatch = [
-        "title",
-        "description",
-        "columns",
-        "labels",
-        "member_policy",
-        "issue_prefix",
-        "visibility",
-        "default_sprint_days",
-        "done_window_days",
-      ].some((k) => body[k] !== undefined);
-      if (!hasPatch) return yield* new ValidationError({ reason: "empty-patch" });
+      // Immutable-field and empty-patch rejection are both PatchBoardBody's
+      // job now — ImmutableField answers `<field>-immutable` and
+      // requireAnyOf answers `empty-patch`, the same two strings this route
+      // returned when it checked them by hand.
+      const body = yield* parseRouteBody(c, PatchBoardBody);
 
       const { board: current } = yield* resolveBoardScope(
         { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
@@ -504,46 +528,42 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       // Renaming a prefix would orphan every FLOW-n URL and reference
       // already minted, so it is only editable while no issue exists yet.
       let issue_prefix = current.issue_prefix;
-      if (body["issue_prefix"] !== undefined) {
+      if (body.issue_prefix !== undefined) {
         if (current.next_issue_number !== 1) {
           return yield* new ConflictError({
             reason: "prefix-locked-issues-exist",
           });
         }
-        const requested = yield* validatePrefix(body["issue_prefix"]);
+        const requested = yield* validatePrefix(body.issue_prefix);
         issue_prefix =
           requested === current.issue_prefix ? requested : yield* finalizePrefix(requested);
       }
 
-      const title = body["title"] === undefined ? current.title : yield* validateTitle(body["title"]);
+      const title = body.title === undefined ? current.title : body.title;
       const description =
-        body["description"] === undefined
-          ? current.description
-          : yield* validateDescription(body["description"]);
+        body.description === undefined ? current.description : body.description;
       const columns =
-        body["columns"] === undefined ? current.columns : yield* validateColumns(body["columns"]);
-      const labels =
-        body["labels"] === undefined ? current.labels : yield* validateLabels(body["labels"]);
+        body.columns === undefined ? current.columns : yield* validateColumns(body.columns);
+      const labels = body.labels === undefined ? current.labels : [...body.labels];
       const member_policy =
-        body["member_policy"] === undefined
-          ? current.member_policy
-          : yield* validateMemberPolicy(body["member_policy"]);
+        body.member_policy === undefined ? current.member_policy : body.member_policy;
       // Explicitly requested visibility (null = untouched by this PATCH).
       // The distinction matters: only an EXPLICIT `visibility: 'private'`
       // mints the audience, so an unrelated title edit on a board that is
       // private-but-not-yet-encrypted never trips the crypto path.
-      const requestedVisibility =
-        body["visibility"] === undefined ? null : yield* validateVisibility(body["visibility"]);
+      const requestedVisibility = body.visibility === undefined ? null : body.visibility;
       const visibility = requestedVisibility ?? current.visibility;
       const default_sprint_days =
-        body["default_sprint_days"] === undefined
+        body.default_sprint_days === undefined
           ? current.default_sprint_days
-          : yield* validateSprintDays(body["default_sprint_days"]);
-      // Phase 21c: Done column window. Same 1..90 bounds as sprint days.
+          : body.default_sprint_days;
+      // Phase 21c: Done column window. Same 1..90 bounds as sprint days —
+      // and, because it shares validateSprintDays, the same `reason` on
+      // failure. See the note on PatchBoardBody.
       const done_window_days =
-        body["done_window_days"] === undefined
+        body.done_window_days === undefined
           ? current.done_window_days
-          : yield* validateSprintDays(body["done_window_days"]);
+          : yield* validateSprintDays(body.done_window_days);
 
       // Privacy is ONE setting since migration 0015: `visibility`. Asking for
       // 'private' on a board whose audience hasn't been minted yet IS the
@@ -577,8 +597,8 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       // pointing at a surviving ENABLED column (the alternative — hiding —
       // is just enabled:false, which isn't a removal). Renames re-point the
       // status name mirror; column_id rows never move on a rename.
-      if (body["columns"] !== undefined) {
-        const moveMapRaw = body["column_move_map"];
+      if (body.columns !== undefined) {
+        const moveMapRaw = body.column_move_map;
         if (
           moveMapRaw !== undefined &&
           (typeof moveMapRaw !== "object" ||

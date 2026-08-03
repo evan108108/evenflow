@@ -13,7 +13,8 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
+import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
+import { parseRouteBody } from "../lib/route-body";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -77,16 +78,41 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<CommentsFailur
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const readJsonBody = (c: Context<AppHonoEnv>) =>
-  Effect.tryPromise({
-    try: () => c.req.json() as Promise<Record<string, unknown>>,
-    catch: () => new ValidationError({ reason: "expected-json" }),
-  }).pipe(
-    Effect.filterOrFail(
-      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-      () => new ValidationError({ reason: "expected-json-object" }),
+/**
+ * POST /issues/:id/comments — the accepted shape.
+ *
+ * EFB-61. SHAPE only, per docs/BOUNDARY_DISCIPLINE.md: the two checks this
+ * route makes that need a database — the parent comment exists on THIS issue,
+ * each attachment is live and unclaimed on THIS issue — are authorization and
+ * stay in the handler as named steps below.
+ *
+ * Every failure message here is deliberately PROSE, not a kebab slug. A bare
+ * slug is read as a reason CODE by `reasonFor` and would surface as
+ * `body-<slug>`; prose falls back to the field name, which is the string this
+ * route already answered (`reason: "body"`, `reason: "in_reply_to"`) and which
+ * tests/comments.test.ts pins.
+ */
+export const PostCommentBody = Schema.Struct({
+  // `Schema.minLength(1)` would accept "   ". The pre-migration handler tested
+  // `text.trim() === ""`, so whitespace-only has always been a 400 and stays one.
+  body: Schema.String.pipe(
+    Schema.filter((s) => (s.trim() === "" ? "must be a non-empty string" : undefined)),
+  ),
+  attachment_ids: Schema.optional(
+    Schema.Array(Schema.String).pipe(
+      Schema.filter((ids) =>
+        ids.length > MAX_ATTACHMENT_IDS_PER_COMMENT
+          ? `must hold at most ${MAX_ATTACHMENT_IDS_PER_COMMENT} ids`
+          : new Set(ids).size !== ids.length
+            ? "must not repeat an id"
+            : undefined,
+      ),
     ),
-  );
+  ),
+  // `null` is accepted and means "no parent", exactly as before — the old
+  // handler skipped its check on both `undefined` and `null`.
+  in_reply_to: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 /**
  * Issue lookup (short id or UUID) + minRole proof on its board. For an
@@ -154,51 +180,35 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
       const issue = yield* fetchIssueForRole(c.req.param("id"), pubkey, "contributor");
-      const body = yield* readJsonBody(c);
+      const body = yield* parseRouteBody(c, PostCommentBody);
 
-      const text = body["body"];
-      if (typeof text !== "string" || text.trim() === "") {
-        return yield* new ValidationError({ reason: "body" });
-      }
+      const text = body.body;
       const db = yield* Db;
 
       // attachment_ids claim previously-uploaded issue-level attachments
       // for this comment. Each must be a live, unclaimed attachment on THIS
-      // issue — cross-issue or double-claims fail the whole post.
-      let attachmentIds: string[] = [];
-      if (body["attachment_ids"] !== undefined) {
-        const ids = body["attachment_ids"];
-        if (
-          !Array.isArray(ids) ||
-          ids.some((v) => typeof v !== "string") ||
-          new Set(ids).size !== ids.length ||
-          ids.length > MAX_ATTACHMENT_IDS_PER_COMMENT
-        ) {
-          return yield* new ValidationError({ reason: "attachment_ids" });
-        }
-        attachmentIds = ids as string[];
-        for (const attachmentId of attachmentIds) {
-          const row = yield* db.queryFirst(
-            "SELECT * FROM issueAttachmentCache WHERE id = ? AND issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL",
-            [attachmentId, issue.id],
-          );
-          if (row === null) return yield* new ValidationError({ reason: "attachment_ids" });
-        }
+      // issue — cross-issue or double-claims fail the whole post. Shape
+      // (string[], unique, bounded) is the schema's job; existence is this
+      // route's, because it needs the resolved issue id.
+      const attachmentIds: string[] = [...(body.attachment_ids ?? [])];
+      for (const attachmentId of attachmentIds) {
+        const row = yield* db.queryFirst(
+          "SELECT * FROM issueAttachmentCache WHERE id = ? AND issue_id = ? AND comment_id IS NULL AND deleted_at_ms IS NULL",
+          [attachmentId, issue.id],
+        );
+        if (row === null) return yield* new ValidationError({ reason: "attachment_ids" });
       }
 
       let inReplyTo: string | null = null;
-      if (body["in_reply_to"] !== undefined && body["in_reply_to"] !== null) {
-        if (typeof body["in_reply_to"] !== "string") {
-          return yield* new ValidationError({ reason: "in_reply_to" });
-        }
+      if (body.in_reply_to !== undefined && body.in_reply_to !== null) {
         // Must reference an existing comment on the same issue — no
         // dangling or cross-issue threads.
         const parent = yield* db.queryFirst(
           "SELECT * FROM commentCache WHERE id = ? AND issue_id = ?",
-          [body["in_reply_to"], issue.id],
+          [body.in_reply_to, issue.id],
         );
         if (parent === null) return yield* new ValidationError({ reason: "in_reply_to" });
-        inReplyTo = body["in_reply_to"];
+        inReplyTo = body.in_reply_to;
       }
 
       const audit = yield* AuditLog;

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Effect, Exit } from "effect";
+import { decodeBody } from "../src/lib/route-body";
+import { PatchBoardBody, PostBoardBody } from "../src/routes/boards";
 import {
   CALLER,
   bearer,
@@ -339,5 +342,127 @@ describe("issue_prefix", () => {
     const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "conflict", reason: "prefix-locked-issues-exist" });
+  });
+});
+
+// ── EFB-61: PostBoardBody / PatchBoardBody schemas ────────────────────────
+//
+// Predicate-inventory tests. The migration's risk is not that a schema
+// rejects too little — it is that a schema silently reproduces a DIFFERENT
+// predicate than the hand-rolled check it replaced, and every route test
+// above still passes because none of them exercised that exact input.
+//
+// So each of these pins ONE predicate, and each asserts the WIRE REASON,
+// not merely that something failed. A reason string is API surface.
+describe("board request schemas (EFB-61)", () => {
+  const decode = <A, I>(schema: Parameters<typeof decodeBody<A, I>>[0], input: unknown) =>
+    Effect.runSync(Effect.exit(decodeBody(schema, input)));
+
+  const reasonOf = (exit: Exit.Exit<unknown, unknown>): string => {
+    if (Exit.isSuccess(exit)) return "<succeeded>";
+    const err = (exit.cause as { error?: { reason?: string } }).error;
+    return err?.reason ?? "<no reason>";
+  };
+
+  const post = (input: unknown) => reasonOf(decode(PostBoardBody, input));
+  const patch = (input: unknown) => reasonOf(decode(PatchBoardBody, input));
+  const OK = { slug: "kb", title: "Board" };
+
+  describe("PostBoardBody", () => {
+    it("accepts the minimum body and every optional field", () => {
+      expect(Exit.isSuccess(decode(PostBoardBody, OK))).toBe(true);
+      expect(
+        Exit.isSuccess(
+          decode(PostBoardBody, {
+            ...OK,
+            description: null,
+            columns: ["Todo", "Done"],
+            labels: [],
+            member_policy: "open",
+            visibility: "public",
+            issue_prefix: "kb",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("enforces SLUG_RE, not merely 'is a string'", () => {
+      expect(post({ ...OK, slug: "has space" })).toBe("slug");
+      expect(post({ ...OK, slug: "" })).toBe("slug");
+      expect(post({ ...OK, slug: "a".repeat(65) })).toBe("slug");
+      expect(post({ ...OK, slug: 42 })).toBe("slug");
+      expect(post({ title: "Board" })).toBe("slug");
+    });
+
+    // The trap from comments.ts, re-armed here: minLength(1) accepts "   ".
+    it("rejects a whitespace-only title", () => {
+      expect(post({ ...OK, title: "   " })).toBe("title");
+      expect(post({ ...OK, title: "" })).toBe("title");
+      expect(post({ slug: "kb" })).toBe("title");
+    });
+
+    it("keeps description nullable and labels array-shaped", () => {
+      expect(Exit.isSuccess(decode(PostBoardBody, { ...OK, description: null }))).toBe(true);
+      expect(post({ ...OK, description: 42 })).toBe("description");
+      // validateLabels only ever checked Array.isArray — elements are free.
+      expect(Exit.isSuccess(decode(PostBoardBody, { ...OK, labels: [{ a: 1 }, "x"] }))).toBe(true);
+      expect(post({ ...OK, labels: "nope" })).toBe("labels");
+    });
+
+    it("closes the member_policy and visibility vocabularies", () => {
+      expect(post({ ...OK, member_policy: "public" })).toBe("member_policy");
+      expect(post({ ...OK, visibility: "secret" })).toBe("visibility");
+    });
+
+    it("REJECTS an unknown key that used to be silently ignored", () => {
+      expect(post({ ...OK, bogus: 1 })).toBe("bogus-unknown");
+    });
+  });
+
+  describe("PatchBoardBody", () => {
+    it("answers <field>-immutable, not <field>-unknown, for real-but-unwritable columns", () => {
+      for (const f of ["slug", "pubkey", "id", "org_id", "audience_epoch", "audience_pubkey"]) {
+        expect(patch({ [f]: "x" })).toContain(`${f}-immutable`);
+      }
+    });
+
+    it("answers empty-patch when nothing patchable is present", () => {
+      expect(patch({})).toBe("empty-patch");
+    });
+
+    // Pre-0015 compatibility: the key is accepted so a stale client is not
+    // broken, but it is not patchable, so it alone is still empty-patch.
+    it("accepts is_encrypted without letting it count as a patch", () => {
+      expect(patch({ is_encrypted: true })).toBe("empty-patch");
+      expect(Exit.isSuccess(decode(PatchBoardBody, { is_encrypted: true, title: "T" }))).toBe(true);
+    });
+
+    it("bounds default_sprint_days to 1..90", () => {
+      expect(patch({ default_sprint_days: 0 })).toBe("default_sprint_days");
+      expect(patch({ default_sprint_days: 91 })).toBe("default_sprint_days");
+      expect(patch({ default_sprint_days: 1.5 })).toBe("default_sprint_days");
+      expect(Exit.isSuccess(decode(PatchBoardBody, { default_sprint_days: 90 }))).toBe(true);
+    });
+
+    // done_window_days stays Unknown at the schema so the handler keeps
+    // answering `default_sprint_days` for it — a pre-existing quirk this
+    // ticket reproduces rather than fixes. If a later ticket gives it its own
+    // reason, THIS test is the one that should fail and be updated.
+    it("passes done_window_days through untyped, quirk intact", () => {
+      expect(Exit.isSuccess(decode(PatchBoardBody, { done_window_days: "not-a-number" }))).toBe(
+        true,
+      );
+    });
+
+    it("accepts column_move_map without validating it here", () => {
+      expect(
+        Exit.isSuccess(decode(PatchBoardBody, { columns: ["A"], column_move_map: { x: "y" } })),
+      ).toBe(true);
+      expect(patch({ column_move_map: { x: "y" } })).toBe("empty-patch");
+    });
+
+    it("REJECTS an unknown key", () => {
+      expect(patch({ title: "T", bogus: 1 })).toBe("bogus-unknown");
+    });
   });
 });
