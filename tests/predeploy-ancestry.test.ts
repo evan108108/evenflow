@@ -27,16 +27,88 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const REPO = resolve(__dirname, "..");
 const SCRIPT = resolve(REPO, "scripts/predeploy-ancestry-check.mjs");
 
+/**
+ * EFB-85 — the fixtures build their OWN repository.
+ *
+ * They used to read this one: `commit-tree $(rev-parse HEAD~1^{tree}) -p HEAD~2`
+ * against the checkout the suite happened to be running in. That silently
+ * assumed the last few commits were ordinary single-parent commits carrying
+ * independent diffs — true on a linear branch, false the moment main's tip is a
+ * MERGE commit, because a merge's tree folds in a side branch and the
+ * re-parented synthetic no longer patch-matches anything.
+ *
+ * The result was a test that passed or failed according to the shape of
+ * whatever landed on main most recently, with no relationship to the code under
+ * test. It went red for every worker who branched off main while its tip was a
+ * merge; an EMPTY commit touching zero files reproduced it exactly. The failure
+ * count even tracked the graph shape — two, then one, as main moved.
+ *
+ * A fixture whose verdict depends on unrelated history is not evidence. So the
+ * history is now built here: five linear commits, each adding one distinct
+ * file, with identity and dates pinned so the whole graph is reproducible. The
+ * script is pure `git` + `fetch` and takes its repo from the process CWD, so
+ * pointing `run()` at the scratch tree is the entire redirection.
+ *
+ * This also makes the fixtures say what they mean. `HEAD~2` used to be whatever
+ * a colleague shipped on Tuesday; it is now a commit this file wrote, one line
+ * up, for a stated reason.
+ */
+let SCRATCH: string;
+
+const GIT_IDENT = {
+  GIT_AUTHOR_NAME: "fixture",
+  GIT_AUTHOR_EMAIL: "fixture@localhost",
+  GIT_AUTHOR_DATE: "@1700000000 +0000",
+  GIT_COMMITTER_NAME: "fixture",
+  GIT_COMMITTER_EMAIL: "fixture@localhost",
+  GIT_COMMITTER_DATE: "@1700000000 +0000",
+} as const;
+
 const git = (...args: string[]) =>
-  execFileSync("git", args, { cwd: REPO, encoding: "utf8" }).trim();
+  execFileSync("git", args, {
+    cwd: SCRATCH,
+    encoding: "utf8",
+    env: { ...process.env, ...GIT_IDENT },
+  }).trim();
 
 const gitIn = (input: string, ...args: string[]) =>
-  execFileSync("git", args, { cwd: REPO, encoding: "utf8", input }).trim();
+  execFileSync("git", args, {
+    cwd: SCRATCH,
+    encoding: "utf8",
+    input,
+    env: { ...process.env, ...GIT_IDENT },
+  }).trim();
+
+/**
+ * Five commits, linear, each adding one file nobody else touches.
+ *
+ * Depth is load-bearing: the replay fixture reaches back to `HEAD~3`, and the
+ * one-distinct-file-per-commit shape is what makes each commit's patch
+ * independent — so a re-parented tree reproduces exactly one original patch and
+ * `git cherry`'s patch-id match is unambiguous.
+ */
+const buildScratchRepo = () => {
+  const dir = mkdtempSync(join(tmpdir(), "efb85-predeploy-"));
+  const run = (...args: string[]) =>
+    execFileSync("git", args, { cwd: dir, encoding: "utf8", env: { ...process.env, ...GIT_IDENT } });
+  run("init", "-q", "-b", "main");
+  run("config", "user.name", "fixture");
+  run("config", "user.email", "fixture@localhost");
+  run("config", "commit.gpgsign", "false");
+  for (let i = 1; i <= 5; i++) {
+    writeFileSync(join(dir, `file-${i}.txt`), `content of commit ${i}\n`);
+    run("add", "-A");
+    run("commit", "-q", "-m", `commit ${i}`);
+  }
+  return dir;
+};
 
 /**
  * A tree that is HEAD's plus one file nobody has ever committed — the content
@@ -60,6 +132,7 @@ let bodySequence: unknown[] | null = null;
 let served = 0;
 
 beforeAll(async () => {
+  SCRATCH = buildScratchRepo();
   server = createServer((_req, res) => {
     res.writeHead(status, { "Content-Type": "application/json" });
     const next =
@@ -73,6 +146,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((ok) => server.close(() => ok()));
+  rmSync(SCRATCH, { recursive: true, force: true });
 });
 
 /** Reset the response mode between tests so ordering can't leak. */
@@ -89,7 +163,10 @@ const run = (env: Record<string, string> = {}) =>
       "node",
       [SCRIPT],
       {
-        cwd: REPO,
+        // The scratch repo, not this one. The script reads its repo from the
+        // process CWD, so this single line is what makes every fixture below
+        // independent of whatever main's history currently looks like.
+        cwd: SCRATCH,
         env: { ...process.env, HEALTH_URL: `http://127.0.0.1:${port}/healthz`, ...env },
       },
       (err, stdout, stderr) => {
