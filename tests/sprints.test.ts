@@ -5,7 +5,9 @@ import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import type { SprintShape } from "../src/shapes";
 import { decodeBody } from "../src/lib/route-body";
-import { CompleteSprintBody, PatchSprintBody, PostSprintBody } from "../src/routes/sprints";
+// EFB-98: the request schemas live with the logic that consumes them. The
+// route imports them back for parseRouteBody; a schema test reads them here.
+import { CompleteSprintBody, PatchSprintBody, PostSprintBody } from "../src/actions/sprints";
 import { KANBAN_PLAINTEXT_PATH } from "../src/lib/kanban/publish";
 import {
   bearer,

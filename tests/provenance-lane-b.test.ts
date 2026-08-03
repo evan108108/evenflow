@@ -60,7 +60,9 @@ import ISSUES_SRC from "../src/routes/issues.ts?raw";
 import COMMENTS_SRC from "../src/actions/comments.ts?raw";
 import GITHUB_SRC from "../src/routes/github.ts?raw";
 import BOARDS_SRC from "../src/routes/boards.ts?raw";
-import SPRINTS_SRC from "../src/routes/sprints.ts?raw";
+// EFB-98: same move for sprints — all ten emit callsites are in the action
+// module now, and the two that name a caller are the ones EFB-91 added.
+import SPRINTS_SRC from "../src/actions/sprints.ts?raw";
 import ATTACHMENTS_SRC from "../src/routes/attachments.ts?raw";
 import IMPORTS_SRC from "../src/routes/imports.ts?raw";
 import TIDE_SRC from "../src/lib/tide/publish.ts?raw";
@@ -273,7 +275,7 @@ const SOURCES: ReadonlyArray<readonly [string, string]> = [
   ["actions/comments.ts", COMMENTS_SRC],
   ["routes/github.ts", GITHUB_SRC],
   ["routes/boards.ts", BOARDS_SRC],
-  ["routes/sprints.ts", SPRINTS_SRC],
+  ["actions/sprints.ts", SPRINTS_SRC],
   ["routes/attachments.ts", ATTACHMENTS_SRC],
   ["routes/imports.ts", IMPORTS_SRC],
   ["lib/tide/publish.ts", TIDE_SRC],
@@ -393,13 +395,15 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   it("names route.caller exactly where a live caller was seen", () => {
     const callerSites = CALLSITES.filter((c) => c.actor.includes("ProvenanceFromCaller"));
     expect(callerSites.map((c) => c.file).sort()).toEqual([
+      // EFB-98 moved two families under actions/, which sorts ahead of routes/.
+      // The SET is unchanged — same seven paths, same reasons.
       "actions/comments.ts", // comment.created — caller is the author
+      "actions/sprints.ts", // sprint start — backlog → active bulk promote
+      "actions/sprints.ts", // attach mid-sprint — backlog → active promote
       "routes/issues.ts", // issue.created
       "routes/issues.ts", // issue.transitioned
       "routes/issues.ts", // issue.transitioned (duplicate-of, when it moved)
       "routes/issues.ts", // issue.container_changed
-      "routes/sprints.ts", // sprint start — backlog → active bulk promote
-      "routes/sprints.ts", // add-issue mid-sprint — backlog → active promote
     ]);
   });
 
