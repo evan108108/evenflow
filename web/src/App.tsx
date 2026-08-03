@@ -53,6 +53,7 @@ export const App = () => (
     <Route path="/boards/:slug" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/backlog" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/icebox" component={LegacyBoardRedirect} />
+    <Route path="/boards/:slug/issue/:issueRef" component={LegacyBoardRedirect} />
     <Route path="/boards/:slug/issues/:issueRef" component={LegacyBoardRedirect} />
     <Route path="/o/new" component={NewOrg} />
     <Route path="/orgs" component={Orgs} />
@@ -65,8 +66,17 @@ export const App = () => (
       <Route path="/backlog" />
       <Route path="/icebox" />
       {/* An issue sheet opens over whichever view you were on, so the view
-          stays in the path. Bare /issues/:ref is kept for old bookmarks and
-          resolves to kanban. */}
+          stays in the path. A bare issue ref (no view segment) is kept for
+          old bookmarks and resolves to kanban.
+
+          EFB-89: /issue/:ref is the singular canonical form — it addresses
+          one issue. The plural /issues/:ref is every link minted before it
+          (bookmarks, PR bodies, AFK email subjects), so it stays registered
+          in parallel rather than redirecting: an additive route breaks
+          nothing, where a 301 is a real trip for anything caching URLs. */}
+      <Route path="/issue/:issueRef" />
+      <Route path="/backlog/issue/:issueRef" />
+      <Route path="/icebox/issue/:issueRef" />
       <Route path="/issues/:issueRef" />
       <Route path="/backlog/issues/:issueRef" />
       <Route path="/icebox/issues/:issueRef" />

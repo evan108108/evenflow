@@ -15,14 +15,29 @@
 # So a deployer reading "personal", running `wrangler whoami`, and picking the
 # personal-looking entry lands on 88c3dd — where this Worker does not exist.
 # `wrangler deployments list` answers `10007 This Worker does not exist` on
-# both listed accounts, which is the good failure. The bad one is `wrangler
-# deploy`: against the wrong account it SILENTLY CREATES a second `evenflow`
-# Worker that no traffic reaches, and reports success.
+# both listed accounts, which is the good failure.
+#
+# `account_id` below is the actual guard. EFB-81 wrote the note above and
+# stopped there, and a note does not bind: with no account_id, `wrangler
+# deploy` on a multi-account OAuth session refuses as ambiguous, and the
+# obvious unblock — pick one of the two accounts wrangler just listed — is
+# wrong every time, because the right one is not among them (EFB-88/89 hit
+# exactly this). Pinned, the ambiguity cannot arise. CLOUDFLARE_ACCOUNT_ID
+# still overrides it, so a fork deploying its own instance sets that.
+#
+# What a wrong-account deploy actually does, measured rather than assumed:
+# it uploads the assets, then FAILS at script-create on the D1 binding
+# (`10181 database 67efa394… not found`) because the database lives on the
+# right account. No Worker is created — verified against the wrong account's
+# script list afterward. The earlier claim here that it "silently creates a
+# second evenflow Worker and reports success" sent a deployer hunting for
+# litter that was never made; the D1 binding is load-bearing as a guard.
 #
 # Verify before deploying, don't infer:
 #   wrangler deployments list   → newest version id should match /healthz
 #
 name = "evenflow"
+account_id = "0dfbf8a0b8a8c8dca0ca0a1ca25d0962"
 main = "src/index.ts"
 compatibility_date = "2026-07-28"
 compatibility_flags = ["nodejs_compat"]

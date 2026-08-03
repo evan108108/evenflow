@@ -19,6 +19,7 @@
 import { For, Show, createResource, createSignal, onCleanup } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
+import { issuePath, type BoardView } from "../lib/boardView";
 import type { Issue } from "../lib/types";
 import { IssueTypeIcon } from "./IssueTypeIcon";
 
@@ -68,6 +69,13 @@ export const BoardSearch = (props: {
   apiBase: string;
   /** Route prefix for issue links, e.g. /@handle/board-slug. */
   base: string;
+  /**
+   * The view the searcher is looking at. Passed in rather than read off the
+   * router because a result opens a sheet *over* the current view, and
+   * landing on the kanban form would silently move a backlog reader off
+   * their view — the invariant BoardPage's openPath holds.
+   */
+  view: BoardView;
 }) => {
   const [query, setQuery] = createSignal("");
   const [debounced, setDebounced] = createSignal("");
@@ -118,8 +126,12 @@ export const BoardSearch = (props: {
     },
   );
 
-  const issueHref = (issue: Issue) =>
-    `${props.base}/${issue.short_id ?? issue.id}`;
+  // EFB-88: this used to concatenate base and ref directly, dropping the
+  // issue segment entirely — the result matched no route and every search
+  // hit landed on the 404. issuePath is the one place that shape is known.
+  const refHref = (ref: string) => issuePath(props.base, props.view, ref);
+
+  const issueHref = (issue: Issue) => refHref(issue.short_id ?? issue.id);
 
   const total = () => (results()?.issues.length ?? 0) + (results()?.comments.length ?? 0);
 
@@ -167,7 +179,7 @@ export const BoardSearch = (props: {
                   {(hit) => (
                     <a
                       class="user-nav-item board-search-row board-search-row-comment"
-                      href={`${props.base}/${hit.issue_short_id ?? hit.issue_id}`}
+                      href={refHref(hit.issue_short_id ?? hit.issue_id)}
                       onClick={close}
                     >
                       <span class="board-search-comment-body">{preview(hit.comment.body)}</span>

@@ -167,14 +167,17 @@ app.get("/i/:ref", async (c, next) => {
     Effect.provide(program, bootstrap(c.env)).pipe(Effect.catchAll(() => Effect.succeed(null))),
   );
   if (row === null) return c.redirect("/", 302);
+  // Singular /issue/ (EFB-89): this is the canonical emitter for every
+  // pasted ref, so it mints the canonical form. The plural route still
+  // resolves for links minted before the rename.
   if (row.org_slug === null) {
-    return c.redirect(`/boards/${row.board_slug}/issues/${shortId}`, 302);
+    return c.redirect(`/boards/${row.board_slug}/issue/${shortId}`, 302);
   }
-  return c.redirect(`/@${row.org_slug}/${row.board_slug}/issues/${shortId}`, 302);
+  return c.redirect(`/@${row.org_slug}/${row.board_slug}/issue/${shortId}`, 302);
 });
 
 // Legacy board URLs 302 to the canonical /@{handle}/{board} namespace when
-// the board resolves to an org; sub-paths (backlog, issues/FLOW-1, …) keep
+// the board resolves to an org; sub-paths (backlog, issue/FLOW-1, …) keep
 // their tail. Ambiguous slugs (same board slug in several orgs) pick the
 // oldest — pre-16 slugs were globally unique in practice. Unresolvable
 // slugs fall through to the SPA, which renders its 404.
