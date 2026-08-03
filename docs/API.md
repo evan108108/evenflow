@@ -111,8 +111,29 @@ the security boundary. Do not make a security decision from that field.
 
 ## Actions
 
-An action is a route's business logic with the HTTP removed. Routes are thin
+**An action is business logic with the HTTP taken out.** Routes are thin
 shells; actions never import Hono and never see a `Context`.
+
+That sentence is also the decision procedure. When you are unsure whether
+something belongs in `src/actions/`, ask: **would this exist if we were not
+serving HTTP?** Yes → it moves. No → it stays in the route.
+
+Applying it honestly means some routes get no action at all, and that is the
+right outcome rather than a gap:
+
+| Route | Why it stays whole |
+| --- | --- |
+| `/.well-known/oauth-protected-resource` | returns a static object literal |
+| `GET`/`DELETE /mcp` | one-liners answering `405` |
+| `GET /server-pubkey` | one call to a pure lib function plus a cache header |
+| `GET /board/:slug/stream` | an SSE stream proxied from a Durable Object — it cannot return through `runJson`, which ends in `c.json` |
+| `GET /auth/oauth/start` | PKCE verifier, two `Set-Cookie` headers, a 302 |
+
+Wrapping a constant in an action module is ceremony: it satisfies a shape while
+making the code harder to read. Where a transport-heavy route does contain real
+logic — the token exchange inside the OAuth callback, the session mint after a
+Nostr signature verifies, the tool dispatch inside the MCP envelope — extract
+that and leave the shell.
 
 **Why:** before the split, the only way to test a behaviour was to name a URL —
 so tests asserted the same string the client used, and a client and server
