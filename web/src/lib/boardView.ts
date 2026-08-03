@@ -2,11 +2,26 @@
 // URLs back.
 //
 // The issue sheet opens *over* a view rather than replacing it, so the
-// view lives in the path alongside the issue ref: /backlog/issues/EFB-28
+// view lives in the path alongside the issue ref: /backlog/issue/EFB-28
 // is still the backlog. That means the view can't be read off the tail of
 // the pathname — it's the first segment after the board's base path.
 
 export type BoardView = "kanban" | "backlog" | "icebox";
+
+/**
+ * The segment that carries an issue ref. Singular — it addresses ONE issue,
+ * not a collection (EFB-89).
+ */
+const ISSUE_SEGMENT = "issue";
+
+/**
+ * The plural form every link minted before EFB-89. Still routed and still
+ * parsed, forever: bookmarks, pasted links and PR bodies outlive route
+ * names. Nothing mints it any more, so it falls out of use on its own.
+ */
+const LEGACY_ISSUE_SEGMENT = "issues";
+
+const ISSUE_SEGMENTS: readonly string[] = [ISSUE_SEGMENT, LEGACY_ISSUE_SEGMENT];
 
 const NAMED_VIEWS = ["backlog", "icebox"] as const;
 
@@ -36,14 +51,14 @@ const decode = (path: string): string => {
  *
  * If the pathname doesn't sit under `base` (encoding mismatch on an exotic
  * slug), fall back to reading position from the end, where the only shapes
- * are `…/<view>` and `…/<view>/issues/<ref>`.
+ * are `…/<view>` and `…/<view>/<issue|issues>/<ref>`.
  */
 export const boardViewOf = (pathname: string, base: string): BoardView => {
   for (const candidate of [pathname, decode(pathname)]) {
     if (candidate.startsWith(base)) return asView(segments(candidate.slice(base.length))[0]);
   }
   const tail = segments(pathname);
-  if (tail.length >= 2 && tail[tail.length - 2] === "issues") tail.splice(-2);
+  if (tail.length >= 2 && ISSUE_SEGMENTS.includes(tail[tail.length - 2] as string)) tail.splice(-2);
   return asView(tail[tail.length - 1]);
 };
 
@@ -51,6 +66,9 @@ export const boardViewOf = (pathname: string, base: string): BoardView => {
 export const viewPath = (base: string, view: BoardView): string =>
   view === "kanban" ? base : `${base}/${view}`;
 
-/** Where an issue opened *from* a given view lives. */
+/**
+ * Where an issue opened *from* a given view lives. Always the singular
+ * segment — the plural form is read, never written.
+ */
 export const issuePath = (base: string, view: BoardView, ref: string): string =>
-  `${viewPath(base, view)}/issues/${ref}`;
+  `${viewPath(base, view)}/${ISSUE_SEGMENT}/${ref}`;

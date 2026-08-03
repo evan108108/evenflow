@@ -1,5 +1,5 @@
 // IssueSheet — right-side slide-in detail panel, deep-linked at
-// /boards/:slug/issues/:id. Title edits inline on blur/Enter; body is plain
+// /@handle/:slug/issue/:ref. Title edits inline on blur/Enter; body is plain
 // text with an edit toggle (markdown rendering is a later polish pass);
 // status/priority/estimate/labels PATCH through the store; container badges
 // fire the container-move endpoints; comments + recent activity below.
@@ -12,6 +12,7 @@ import type { Board, Comment, Container, Issue } from "../lib/types";
 import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
 import { formatBytes, isImageContentType, type Attachment } from "../lib/attachments";
+import { issuePath } from "../lib/boardView";
 import { sprintOptions } from "../lib/sprints";
 import type { BoardStore } from "../pages/board/store";
 import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
@@ -46,6 +47,12 @@ const when = (ms: number) =>
 export const IssueSheet = (props: {
   issue: Issue;
   board: Board;
+  /**
+   * The board's canonical route prefix (`/@handle/slug`, or `/boards/slug`
+   * for a board that resolves to no org). BoardPage owns it because only it
+   * knows the org handle — `Board` carries `org_id`, not the slug.
+   */
+  base: string;
   store: BoardStore;
   callerPubkey: string | null;
   /** Bumped by BoardPage when a comment.* SSE event arrives for this issue. */
@@ -53,6 +60,16 @@ export const IssueSheet = (props: {
   onClose: () => void;
 }) => {
   const navigate = useNavigate();
+
+  /**
+   * What "copy URL" hands you. The canonical org-scoped form — it used to
+   * mint the pre-Phase-16 `/boards/{slug}/…` shape, so every copied link
+   * spent a server 302 before it landed. No view segment: a link shared out
+   * of this app should open the issue, not assert which of the sharer's
+   * three views they happened to be reading it from.
+   */
+  const copyPath = (shortId: string) => issuePath(props.base, "kanban", shortId);
+
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [showMove, setShowMove] = createSignal(false);
   const [moveFilter, setMoveFilter] = createSignal("");
@@ -191,9 +208,13 @@ export const IssueSheet = (props: {
       props.onClose();
       const ref = moved.short_id ?? moved.id;
       navigate(
-        target.org_slug !== null
-          ? `/@${target.org_slug}/${target.slug}/issues/${ref}`
-          : `/boards/${target.slug}/issues/${ref}`,
+        issuePath(
+          target.org_slug !== null ? `/@${target.org_slug}/${target.slug}` : `/boards/${target.slug}`,
+          // The issue landed on a board we are not looking at, so there is
+          // no view to preserve — kanban is that board's front door.
+          "kanban",
+          ref,
+        ),
       );
     } catch {
       setMoveError("The move didn't take — check you can contribute to that board.");
@@ -337,7 +358,7 @@ export const IssueSheet = (props: {
                 class="copy-url"
                 onClick={() =>
                   void navigator.clipboard.writeText(
-                    `${window.location.origin}/boards/${props.board.slug}/issues/${shortId()}`,
+                    `${window.location.origin}${copyPath(shortId())}`,
                   )
                 }
               >

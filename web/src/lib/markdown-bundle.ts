@@ -11,7 +11,7 @@
 //
 // After sanitization, the [[SHORT-ID]] cross-reference transform rewrites
 // [[EFB-42]]-shaped tokens into issue short-links: /i/EFB-42 redirects
-// server-side to the canonical /@org/board/issues/EFB-42 URL.
+// server-side to the canonical /@org/board/issue/EFB-42 URL.
 
 import { micromark } from "micromark";
 import { gfm, gfmHtml } from "micromark-extension-gfm";

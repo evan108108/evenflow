@@ -388,6 +388,9 @@ describe("NewIssueModal", () => {
   });
 });
 
+/** The board's route prefix, which BoardPage derives from the org handle. */
+const SHEET_BASE = "/@me/kb";
+
 describe("IssueSheet", () => {
   it("renders the issue and closes via the X and the overlay", async () => {
     const onClose = vi.fn();
@@ -395,6 +398,7 @@ describe("IssueSheet", () => {
       <IssueSheet
         issue={issue}
         board={board}
+        base={SHEET_BASE}
         store={storeStub}
         callerPubkey={"test:0"}
         commentsVersion={() => 0}
@@ -410,6 +414,32 @@ describe("IssueSheet", () => {
     cleanup();
   });
 
+  // What "copy URL" hands you is the link that ends up in PR bodies and
+  // chat. It used to mint the pre-Phase-16 /boards/{slug}/issues/ shape —
+  // a form that resolves only by eating a server 302, on a route nothing
+  // mints any more (EFB-89).
+  it("copies the canonical org-scoped issue URL", async () => {
+    const writeText = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { container, cleanup } = mountRouted(() => (
+      <IssueSheet
+        issue={issue}
+        board={board}
+        base={SHEET_BASE}
+        store={storeStub}
+        callerPubkey={"test:0"}
+        commentsVersion={() => 0}
+        onClose={() => undefined}
+      />
+    ));
+    await flush();
+
+    container.querySelector<HTMLButtonElement>(".copy-url")!.click();
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/@me/kb/issue/KB-7`);
+
+    cleanup();
+  });
+
   it("has a Type row that patches through the store", async () => {
     const patchIssue = vi.fn(async () => null);
     const store = { ...storeStub, patchIssue } as unknown as BoardStore;
@@ -417,6 +447,7 @@ describe("IssueSheet", () => {
       <IssueSheet
         issue={issue}
         board={board}
+        base={SHEET_BASE}
         store={store}
         callerPubkey={"test:0"}
         commentsVersion={() => 0}
@@ -443,6 +474,7 @@ describe("IssueSheet", () => {
       <IssueSheet
         issue={issue}
         board={board}
+        base={SHEET_BASE}
         store={store}
         callerPubkey={"test:0"}
         commentsVersion={() => 0}
@@ -479,6 +511,7 @@ describe("IssueSheet", () => {
         <IssueSheet
           issue={issue}
           board={board}
+          base={SHEET_BASE}
           store={{ ...storeStub, ...store } as unknown as BoardStore}
           callerPubkey={"test:0"}
           commentsVersion={() => 0}
@@ -520,6 +553,7 @@ describe("IssueSheet", () => {
         <IssueSheet
           issue={issue}
           board={board}
+          base={SHEET_BASE}
           store={storeStub as unknown as BoardStore}
           callerPubkey={null}
           commentsVersion={() => 0}
@@ -547,6 +581,7 @@ describe("IssueSheet", () => {
         <IssueSheet
           issue={{ ...issue, ...onIssue }}
           board={board}
+          base={SHEET_BASE}
           store={store}
           callerPubkey={"test:0"}
           commentsVersion={() => 0}
@@ -629,6 +664,7 @@ describe("IssueSheet", () => {
         <IssueSheet
           issue={{ ...issue, sprint_id: "s1" }}
           board={board}
+          base={SHEET_BASE}
           store={store}
           callerPubkey={null}
           commentsVersion={() => 0}

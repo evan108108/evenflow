@@ -13,6 +13,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render } from "solid-js/web";
 import { BoardSearch } from "./BoardSearch";
+import type { BoardView } from "../lib/boardView";
 
 const DEBOUNCE_SETTLE_MS = 260;
 
@@ -71,13 +72,16 @@ const issueHit = (id: string, shortId: string, title: string, rank = -1) => ({
   rank,
 });
 
-// No router: BoardSearch takes its API prefix and link prefix as props and
-// emits plain anchors, so mounting it bare is the whole component under test.
-const mount = () => {
+// No router: BoardSearch takes its API prefix, link prefix and current view
+// as props and emits plain anchors, so mounting it bare is the whole
+// component under test. The view is a prop rather than a router read for
+// exactly this reason — the links stay assertable without a Router around
+// them.
+const mount = (view: BoardView = "kanban") => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const dispose = render(
-    () => <BoardSearch apiBase="/api/v0/orgs/me/boards/kb" base="/@me/kb" />,
+    () => <BoardSearch apiBase="/api/v0/orgs/me/boards/kb" base="/@me/kb" view={view} />,
     container,
   );
   return { container, dispose };
@@ -176,7 +180,44 @@ describe("BoardSearch", () => {
     // re-sort, since it has no better ranking signal than the index does.
     expect(rows[0]?.textContent).toContain("Widget rendering is broken");
     expect(rows[1]?.textContent).toContain("Sprint planning notes");
-    expect(rows[0]?.getAttribute("href")).toBe("/@me/kb/KB-1");
+    // EFB-88: the href carries the /issue/ segment. Without it the link is
+    // /@me/kb/KB-1, which matches no route and lands on the 404 — the whole
+    // bug, and the assertion that previously enshrined it.
+    expect(rows[0]?.getAttribute("href")).toBe("/@me/kb/issue/KB-1");
+
+    dispose();
+  });
+
+  // A result opens a sheet *over* the view you searched from, the same
+  // invariant BoardPage's openPath holds. A kanban-shaped href here would
+  // quietly drop a backlog reader onto the kanban board.
+  it("keeps the searcher on their view", async () => {
+    installFetch({ issues: [issueHit("i1", "KB-1", "Widget rendering is broken")], comments: [] });
+    const { container, dispose } = mount("backlog");
+
+    typeInto(container, "widget");
+    await settle();
+
+    expect(container.querySelector(".board-search-row")?.getAttribute("href")).toBe(
+      "/@me/kb/backlog/issue/KB-1",
+    );
+
+    dispose();
+  });
+
+  // Short ids are the addressable form, but an issue awaiting the 0003
+  // backfill has none — the row still has to link somewhere real.
+  it("falls back to the uuid when an issue has no short id", async () => {
+    const hit = issueHit("i1", "KB-1", "Widget");
+    installFetch({ issues: [{ ...hit, issue: { ...hit.issue, short_id: null } }], comments: [] });
+    const { container, dispose } = mount();
+
+    typeInto(container, "widget");
+    await settle();
+
+    expect(container.querySelector(".board-search-row")?.getAttribute("href")).toBe(
+      "/@me/kb/issue/i1",
+    );
 
     dispose();
   });
@@ -205,7 +246,10 @@ describe("BoardSearch", () => {
     // A comment body alone is unlinkable, so the row names its issue and
     // navigates there — this is why the route hydrates parents.
     expect(row?.textContent).toContain("Discussion thread");
-    expect(row?.getAttribute("href")).toBe("/@me/kb/KB-9");
+    // Second call site of the same EFB-88 bug — the comment rows dropped the
+    // segment too, so fixing only the issue rows would have left half the
+    // panel 404ing.
+    expect(row?.getAttribute("href")).toBe("/@me/kb/issue/KB-9");
 
     dispose();
   });
