@@ -18,6 +18,7 @@ import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
 import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
+import { POSITION_STEP, topOfColumnPosition, topOfContainerPosition } from "../lib/position";
 import {
   IdentityRefFromInput,
   ImmutableField,
@@ -80,7 +81,11 @@ const MAX_LIMIT = 100;
 // (neighbors closer than MIN_GAP, or a neighbor is a positionless legacy
 // row) the whole column rebalances to whole STEPs in display order.
 // Mirrored at web/src/lib/order.ts — keep the two in lockstep.
-export const POSITION_STEP = 1000;
+//
+// EFB-78 moved the constant itself to src/lib/position.ts, which the github
+// execute path also needs and which cannot import from a route. Re-exported
+// here so existing importers (routes/imports.ts) are untouched.
+export { POSITION_STEP };
 const MIN_POSITION_GAP = 1e-6;
 
 // How far the duplicate-of cycle walk follows a chain before giving up and
@@ -449,9 +454,16 @@ const applyStatusChange = (
     const now = yield* Clock.currentTimeMillis;
     const toDone = to.category === "done";
     const completed = nextCompletedAt(issue, inDone(board, issue), toDone, now);
+    // EFB-78: an arriving issue goes to the TOP of its new column. Carrying the
+    // old position over is what put a just-shipped ticket halfway down Done.
+    const position = yield* topOfColumnPosition({
+      boardId: issue.board_id,
+      columnId: to.id,
+      issueId: issue.id,
+    });
     yield* db.execute(
-      "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
-      [to.name, to.id, now, completed, issue.id],
+      "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
+      [to.name, to.id, position, now, completed, issue.id],
     );
     const statusChangeId =
       to.name !== issue.status
@@ -472,6 +484,7 @@ const applyStatusChange = (
         ...issue,
         status: to.name,
         column_id: to.id,
+        position,
         updated_at_ms: now,
         completed_at_ms: completed,
       },
@@ -496,9 +509,16 @@ const applyContainerMove = (
     if (to === issue.container) return { issue, statusChangeId: null };
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
+    // EFB-78: same rule as a column move — arriving in a container puts you at
+    // the top of it, so backlog → active surfaces what was just pulled in.
+    const position = yield* topOfContainerPosition({
+      boardId: issue.board_id,
+      container: to,
+      issueId: issue.id,
+    });
     yield* db.execute(
-      "UPDATE issueCache SET container = ?, updated_at_ms = ? WHERE id = ?",
-      [to, now, issue.id],
+      "UPDATE issueCache SET container = ?, position = ?, updated_at_ms = ? WHERE id = ?",
+      [to, position, now, issue.id],
     );
     const statusChangeId = yield* insertStatusChange({
       issue_id: issue.id,
@@ -511,7 +531,7 @@ const applyContainerMove = (
       container_at_completion: null,
       occurred_at_ms: now,
     });
-    return { issue: { ...issue, container: to, updated_at_ms: now }, statusChangeId };
+    return { issue: { ...issue, container: to, position, updated_at_ms: now }, statusChangeId };
   });
 
 /**

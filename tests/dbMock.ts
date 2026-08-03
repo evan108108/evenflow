@@ -480,6 +480,58 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { revoked_at_ms });
           return;
         }
+        // EFB-78: the same three transition writes, now carrying `position` so
+        // an arriving issue lands at the top of its column. These MUST precede
+        // the three position-less forms below. Their prefixes diverge at
+        // `position = ?` so neither set can shadow the other, but the ordering
+        // is kept explicit because that is this file's whole safety story: a
+        // shadowed UPDATE here does not error, it silently writes nothing.
+        //
+        // Param counts differ across the three and are NOT interchangeable —
+        // the COALESCE and plain forms both take six but mean different things
+        // in the last slot, and the NULL form takes five.
+        if (
+          sql.startsWith(
+            "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = COALESCE(completed_at_ms, ?)",
+          )
+        ) {
+          const [status, column_id, position, updated_at_ms, completedFallback, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, {
+              status,
+              column_id,
+              position,
+              updated_at_ms,
+              completed_at_ms: row["completed_at_ms"] ?? completedFallback,
+            });
+          }
+          return;
+        }
+        if (
+          sql.startsWith(
+            "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = NULL",
+          )
+        ) {
+          const [status, column_id, position, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, { status, column_id, position, updated_at_ms, completed_at_ms: null });
+          }
+          return;
+        }
+        if (
+          sql.startsWith(
+            "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = ?",
+          )
+        ) {
+          const [status, column_id, position, updated_at_ms, completed_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) {
+            Object.assign(row, { status, column_id, position, updated_at_ms, completed_at_ms });
+          }
+          return;
+        }
         // Transition: status name mirror + column_id identity move together.
         // Phase 21 webhook transitions. These MUST precede the generic
         // status+column handler below: its prefix also matches them, and
@@ -604,6 +656,17 @@ export const makeDbMock = (): DbMock => {
         // for that reason: a mutation run deleting the whole promote block
         // left all 759 tests green. Exactly the EFB-35 shape, in the same file
         // the "must precede" comments below warn about.
+        // EFB-78: container move carrying `position`, so a ticket pulled into a
+        // container surfaces at its top. Ahead of the two position-less
+        // container forms below for the same reason as the block above.
+        if (
+          sql.startsWith("UPDATE issueCache SET container = ?, position = ?, updated_at_ms = ? WHERE id = ?")
+        ) {
+          const [container, position, updated_at_ms, id] = params;
+          const row = issues.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { container, position, updated_at_ms });
+          return;
+        }
         if (sql.startsWith("UPDATE issueCache SET container = ? WHERE id = ?")) {
           const [container, id] = params;
           const row = issues.find((r) => r["id"] === id);
@@ -1139,6 +1202,26 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE id = ? AND comment_id = ?")) {
           const r = attachments.find((x) => x["id"] === params[0] && x["comment_id"] === params[1]);
           return (r ? { ...r } : null) as R | null;
+        }
+        // EFB-78: lowest position among the rows already in a destination, so
+        // an arriving issue can be placed strictly above them. Scoped by
+        // column_id or container; the moving issue excludes itself (a container
+        // move scans rows it is already among, and without the exclusion it
+        // would ratchet its own position down against itself). NULL positions
+        // sort last in display order and so are not part of the minimum.
+        if (sql.startsWith("SELECT MIN(position) AS m FROM issueCache WHERE board_id = ?")) {
+          const scope = sql.includes("column_id = ?") ? "column_id" : "container";
+          const [board_id, scopeValue, excludeId] = params;
+          const positions = issues
+            .filter(
+              (x) =>
+                x["board_id"] === board_id &&
+                x[scope] === scopeValue &&
+                x["id"] !== excludeId &&
+                typeof x["position"] === "number",
+            )
+            .map((x) => num(x["position"]));
+          return { m: positions.length === 0 ? null : Math.min(...positions) } as R;
         }
         if (sql.startsWith("SELECT MAX(position) AS m FROM issueCache WHERE board_id = ?")) {
           const positions = issues
