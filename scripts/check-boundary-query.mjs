@@ -121,6 +121,12 @@ function loadAllowlist() {
         `${ALLOWLIST_PATH}: every entry needs "route" and "sunset" (got ${JSON.stringify(e)})`,
       );
     }
+    if ("scanner_blind_reason" in e && String(e.scanner_blind_reason ?? "").trim() === "") {
+      throw new Error(
+        `${ALLOWLIST_PATH}: ${e.route} has an empty "scanner_blind_reason". ` +
+          `Write why detection cannot see this route's debt, or drop the field.`,
+      );
+    }
     byId.set(e.route, e);
   }
   return { byId };
@@ -129,6 +135,16 @@ function loadAllowlist() {
 function main() {
   const handlers = scanRoutes(ROUTES_DIR, { verbs: VERBS, classify, middlewareAware: true });
   const { byId } = loadAllowlist();
+
+  // EFB-87: keep what detection SAW, then let a declaration outrank it — but
+  // only a written one. An allowlisted route whose read is invisible to the
+  // scanner is still debt with a sunset, not a handler that reads no query, and
+  // counting it as the latter would understate the ratchet's own backlog.
+  for (const h of handlers) h.detected = h.state;
+  for (const h of handlers) {
+    if (h.state === "no-query" && byId.get(h.id)?.scanner_blind_reason) h.state = "unmigrated";
+  }
+
   const today = new Date(process.env["BOUNDARY_TODAY"] ?? Date.now());
   const horizon = new Date(today.getTime() + MAX_SUNSET_HORIZON_DAYS * 86400_000);
 
@@ -175,19 +191,64 @@ function main() {
         `${h.file}:${h.line} ${h.id} — allowlist entry expired ${entry.sunset}. Migrate it or justify a new date.`,
       );
     } else {
-      warnings.push(`${h.id} (${h.file}) — unmigrated, sunset ${entry.sunset}`);
+      const declared = entry.scanner_blind_reason
+        ? ` — no marker detected, declared: ${entry.scanner_blind_reason}`
+        : "";
+      warnings.push(`${h.id} (${h.file}) — unmigrated, sunset ${entry.sunset}${declared}`);
     }
   }
 
-  const unmigratedIds = new Set(
-    handlers.filter((h) => h.state === "unmigrated").map((h) => h.id),
-  );
-  for (const [id] of byId) {
-    if (!unmigratedIds.has(id)) {
-      warnings.push(
-        `${id} — allowlisted but already migrated (or gone). Prune it from ${ALLOWLIST_PATH}.`,
-      );
+  // EFB-87 re-audit — same rule as the body check, same reason. An entry must
+  // still be backed by a DETECTED read; when it is not, the route was migrated
+  // or a marker was renamed, and the rename case silently stops checking every
+  // other entry at once. See check-boundary-discipline.mjs for the long form.
+  //
+  // This half has no `noQuery` declaration list by design (see $declarationDebt
+  // in the allowlist), so `scanner_blind_reason` is the only declaration shape
+  // here — and it is scoped to entries that already exist, which is exactly the
+  // narrowness that made the mass-declaration objection apply to noQuery and
+  // not to this.
+  for (const [id, entry] of byId) {
+    const h = handlers.find((x) => x.id === id);
+    const blind = entry.scanner_blind_reason;
+
+    if (!h) {
+      if (blind) {
+        warnings.push(`${id} — invisible to the scan, declared: ${blind}`);
+      } else {
+        errors.push(
+          `${ALLOWLIST_PATH}: ${id} matches no route this scan can see.\n` +
+            `    The route was renamed or deleted (prune the entry), or it is registered with a ` +
+            `non-literal path (declare that with "scanner_blind_reason"). An entry that describes ` +
+            `nothing protects nothing.`,
+        );
+      }
+      continue;
     }
+
+    if (h.detected === "migrated") {
+      errors.push(
+        `${h.file}:${h.line} ${id} — allowlisted as unmigrated debt, but it reads its query through ` +
+          `${MIGRATED_MARKER}.\n` +
+          `    The route is migrated; remove it from ${ALLOWLIST_PATH}. A ratchet that keeps ` +
+          `entries it no longer needs cannot report how much debt is actually left.`,
+      );
+      continue;
+    }
+
+    if (h.detected === "no-query" && !blind) {
+      errors.push(
+        `${h.file}:${h.line} ${id} — allowlisted as unmigrated debt, but none of the ` +
+          `${QUERY_MARKERS.length} query-read markers appear in it.\n` +
+          `    Either the route was fixed without ${MIGRATED_MARKER} (prune the entry), or a marker ` +
+          `was renamed and QUERY_MARKERS is now stale — in which case every entry on this list ` +
+          `stopped being checked, and all of them need re-auditing, not just this one.\n` +
+          `    If the read is real but hidden from detection, say where in "scanner_blind_reason".`,
+      );
+      continue;
+    }
+    // A declared blind spot needs no line of its own: the sunset warning above
+    // already carries the reason, so the route is reported exactly once.
   }
 
   const counts = {

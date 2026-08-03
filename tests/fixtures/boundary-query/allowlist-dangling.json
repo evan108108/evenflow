@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An entry naming a route absent from the scanned directory — deleted or renamed, entry left behind. It excuses nothing and inflates the outstanding-debt count with a route that is gone.",
+  "unmigrated": [
+    {
+      "route": "GET /synthetic/gone",
+      "file": "tests/fixtures/boundary-query/migrated/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

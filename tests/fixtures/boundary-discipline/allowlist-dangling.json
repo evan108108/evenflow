@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An entry naming a route that does not exist in the scanned directory at all — a route deleted or renamed with the entry left behind. It excuses nothing, and it inflates the count of outstanding debt with a route that is gone, so the ratchet stops being able to report how much is actually left.",
+  "unmigrated": [
+    {
+      "route": "POST /synthetic/gone",
+      "file": "tests/fixtures/boundary-discipline/migrated/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}
