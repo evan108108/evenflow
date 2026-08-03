@@ -76,6 +76,11 @@ export const isMobileHeader = (viewportWidth: number): boolean =>
  * Excludes the scrollbar, which is the desired behavior: it is the width
  * content actually gets, and it matches what CSS media queries compare
  * against, so JS and CSS breakpoints agree.
+ *
+ * To reproduce or re-verify the inflation trap this helper closes, run
+ * `npm run probe:innerwidth` (scripts/probes/innerwidth-probe.mjs). No unit
+ * test can show it — the thresholds above are read straight out of this file
+ * by that probe so the two cannot drift apart.
  */
 export const layoutViewportWidth = (): number => document.documentElement.clientWidth;
 
