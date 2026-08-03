@@ -148,11 +148,12 @@ describe("auth gating", () => {
     expect(res.status).toBe(401);
   });
 
-  // Anonymous reads pass optionalAuth and 404 on invisible resources.
-  it("GET /api/v0/issues/x/comments answers 404 to anonymous callers", async () => {
+  // Anonymous reads pass optionalAuth; EFB-76 makes invisible resources 401
+  // rather than 404, uniformly for private and nonexistent alike.
+  it("GET /api/v0/issues/x/comments answers 401 to anonymous callers", async () => {
     const h = makeHarness();
     const res = await h.app.request("/api/v0/issues/x/comments", {}, {});
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
   });
 });
 

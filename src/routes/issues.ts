@@ -35,6 +35,7 @@ import {
   authorizeBoardById,
   callerPubkey,
   callerPubkeyOrNull,
+  notVisible,
   requireCaller,
   resolveBoardScope,
   type BoardOwnershipError,
@@ -363,9 +364,15 @@ const assertRosterMember = (
 /**
  * Fetch an issue plus its board, AND prove the caller holds `minRole` on
  * that board. The ref is either a short id (FLOW-42, case-insensitive) or a
- * UUID — SSE payloads and pre-migration bookmarks still speak UUID. Missing
- * issue and an invisible board are both 404 "issue" — existence must not
- * leak; a visible board with an under-role caller is 403.
+ * UUID — SSE payloads and pre-migration bookmarks still speak UUID.
+ *
+ * For an AUTHENTICATED caller, a missing issue and an invisible board are
+ * both 404 "issue" — existence must not leak; a visible board with an
+ * under-role caller is 403. For an ANONYMOUS one, both are 401 instead
+ * (EFB-76): this route is reachable without a token so public boards can be
+ * read, and answering 404 told tokenless callers "look elsewhere" when the
+ * true answer was "send auth". The 401 covers the nonexistent case too, on
+ * purpose — see the `notVisible` docs in authz.ts.
  */
 const fetchIssue = (ref: string, pubkey: string | null, minRole: string) =>
   Effect.gen(function* () {
@@ -375,7 +382,7 @@ const fetchIssue = (ref: string, pubkey: string | null, minRole: string) =>
       shortId === null
         ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
-    if (row === null) return yield* new NotFoundError({ reason: "issue" });
+    if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
     const { board } = yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
       Effect.mapError((e) =>

@@ -80,6 +80,22 @@ describe("POST /api/v0/orgs", () => {
 });
 
 describe("GET /api/v0/orgs/:slug", () => {
+  // EFB-76 carve-out, and it is load-bearing rather than a rounding error.
+  // Org detail is genuinely public: an existing org answers 200 to anonymous
+  // callers, so there is no existence to protect and no oracle to close. The
+  // SPA's HandlePage reads exactly this 404 to decide whether to render the
+  // "claim this handle" CTA (it branches on status === 404), so blanket-401ing
+  // unknown orgs for anonymous callers would have broken sign-up on every
+  // unclaimed handle. The 401 rule applies where anonymous access is DENIED,
+  // not where it is granted and the thing simply is not there.
+  it("404s (not 401) an unknown handle for anonymous callers — the claim-CTA path", async () => {
+    const h = makeHarness();
+    const res = await h.app.request("/api/v0/orgs/never-claimed", {}, {});
+    expect(res.status).toBe(404);
+    const boards = await h.app.request("/api/v0/orgs/never-claimed/boards", {}, {});
+    expect(boards.status).toBe(404);
+  });
+
   it("serves public info to anyone — anonymous included — and internals to members", async () => {
     const h = makeHarness();
     await createTeam(h);
@@ -360,13 +376,17 @@ describe("board access role matrix", () => {
     expect(patch.status).toBe(200);
   });
 
-  it("non-members and anonymous get 404 on a private board; anonymous mutations 401", async () => {
+  it("non-members get 404 and anonymous 401 on a private board; anonymous mutations 401", async () => {
     const h = makeHarness();
     await setup(h);
+    // The two halves of the EFB-76 matrix, side by side. A signed-in
+    // non-member gets 404 (existence stays hidden from anyone who could
+    // enumerate); an anonymous caller gets 401 (nothing to hide from someone
+    // who has shown no identity at all — every answer is the same 401).
     expect(
       (await h.app.request("/api/v0/boards/kb", { headers: bearerFor(tokenFor("out")) }, {})).status,
     ).toBe(404);
-    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(404);
+    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(401);
     const anonWrite = await h.app.request("/api/v0/boards/kb/issues", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

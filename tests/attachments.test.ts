@@ -291,13 +291,16 @@ describe("delete + list", () => {
     expect(attachments.map((x) => x.filename)).toEqual(["first.png", "second.png"]);
   });
 
-  it("anonymous list: 404 on a private board, 200 once public", async () => {
+  it("anonymous list: 401 on a private board, 200 once public", async () => {
     const h = makeHarness();
     const issue = await setup(h);
     await uploadOk(h, issue);
 
+    // EFB-76: was 404. The board scope resolves before the issue lookup, so
+    // the 401 comes from resolveBoardScope — the anonymous caller never learns
+    // whether the issue behind it exists.
     const before = await h.app.request(uploadPath(issue), {}, {});
-    expect(before.status).toBe(404);
+    expect(before.status).toBe(401);
 
     await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
     const after = await h.app.request(uploadPath(issue), {}, {});

@@ -3,12 +3,14 @@ import type { IssueShape } from "../src/shapes";
 import {
   CALLER,
   bearer,
+  bearerFor,
   createBoard,
   createIssue,
   jsonReq,
   makeHarness,
   seedBoardMember,
   seedForeignBoardAndIssue,
+  tokenFor,
 } from "./harness";
 
 beforeEach(() => {
@@ -412,16 +414,52 @@ describe("auth gating", () => {
   });
 
   // Reads run behind optionalAuth since phase 16: anonymous is allowed
-  // through, and an unknown/private resource answers 404 (invisible), not
-  // 401 — public boards are the only anonymous-readable surface.
+  // through, and public boards are the only anonymous-readable surface.
+  // EFB-76: an unknown/private resource answers 401, not 404 — the 404 was
+  // the bug (it told tokenless callers "look elsewhere" when the real answer
+  // was "send auth"), and the 401 is uniform across private and nonexistent
+  // so it leaks no more than the 404 did.
   it.each([
     ["GET", "/api/v0/boards/kb/issues"],
     ["GET", "/api/v0/issues/x"],
-  ])("%s %s answers 404 to anonymous callers on private/unknown resources", async (method, path) => {
+  ])("%s %s answers 401 to anonymous callers on private/unknown resources", async (method, path) => {
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(path, { method }, {});
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
+  });
+
+  // The oracle guard for GET /issues/:id, the endpoint EFB-76 was filed
+  // against: a real-but-private issue and a fabricated id must be
+  // indistinguishable to an anonymous caller. Short ids are per-board
+  // sequential, so any difference here maps a private board's ticket volume.
+  it("GET /api/v0/issues/:id is indistinguishable private-vs-nonexistent when anonymous", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+
+    const realButPrivate = await h.app.request(`/api/v0/issues/${issue.short_id}`, {}, {});
+    const fabricated = await h.app.request("/api/v0/issues/KAN-99999", {}, {});
+
+    expect(realButPrivate.status).toBe(401);
+    expect(fabricated.status).toBe(401);
+    expect(await realButPrivate.json()).toEqual(await fabricated.json());
+  });
+
+  // The other half of the matrix, unchanged by EFB-76 and load-bearing: an
+  // AUTHENTICATED caller with no access still gets 404, not 403. A 403 here
+  // would rebuild the same oracle one auth level up — anyone can sign up.
+  it("keeps 404 (not 403) for an authenticated caller who cannot see the issue", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+
+    const outsider = await h.app.request(
+      `/api/v0/issues/${issue.short_id}`,
+      { headers: bearerFor(tokenFor("outsider")) },
+      {},
+    );
+    expect(outsider.status).toBe(404);
   });
 
   it("serves board issues to anonymous callers once the board is public", async () => {

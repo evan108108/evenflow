@@ -19,6 +19,7 @@ import {
   UnauthorizedError,
   authorizeBoardById,
   callerPubkeyOrNull,
+  notVisible,
   resolveBoardScope,
   type BoardOwnershipError,
 } from "../authz";
@@ -215,20 +216,18 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const db = yield* Db;
       const ref = c.req.param("id");
+      const pubkey = callerPubkeyOrNull(c.get("claims"));
       const shortId = asShortId(ref);
       const issueRow =
         shortId === null
           ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
           : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
-      if (issueRow === null) return yield* new NotFoundError({ reason: "issue" });
+      if (issueRow === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
       const issue = parseIssueRow(issueRow);
-      // Same non-leaking posture as issues.ts: a missing issue and an
-      // invisible board are indistinguishable (404 "issue").
-      yield* authorizeBoardById(
-        issue.board_id,
-        callerPubkeyOrNull(c.get("claims")),
-        "viewer",
-      ).pipe(
+      // Same non-leaking posture as issues.ts: for an authenticated caller a
+      // missing issue and an invisible board are indistinguishable (404
+      // "issue"); for an anonymous one both are 401 (EFB-76).
+      yield* authorizeBoardById(issue.board_id, pubkey, "viewer").pipe(
         Effect.mapError((e) =>
           e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
         ),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   AUTO_VERTICAL_MAX_PX,
   FORCE_VERTICAL_MAX_PX,
@@ -6,8 +6,63 @@ import {
   effectiveKanbanLayout,
   isMobileHeader,
   isWideVertical,
+  layoutViewportWidth,
   resolveKanbanLayout,
 } from "./layout";
+
+// EFB-77. This suite's own header warns that a pure function tested with clean
+// synthetic widths proves nothing about the number the caller actually holds —
+// that is exactly how EFB-67 v1 shipped green and broke prod. So this block
+// tests the READ rather than the predicates: it pins the two DOM sources to
+// different values, the way a horizontally overflowing page does, and asserts
+// which one we take. Swap layoutViewportWidth back to window.innerWidth and
+// this fails; that is the point of it existing.
+//
+// What jsdom can and cannot show: it will not reproduce Chromium's inflation
+// on its own, so the divergence here is staged. The real behavior was
+// reproduced under CDP mobile emulation at 393px — innerWidth 1572 vs
+// clientWidth 393, flipping the layout branch from vertical to columns. See
+// the PR body.
+describe("layoutViewportWidth", () => {
+  const realInner = window.innerWidth;
+  const setClientWidth = (px: number) =>
+    Object.defineProperty(document.documentElement, "clientWidth", {
+      value: px,
+      configurable: true,
+    });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { value: realInner, configurable: true });
+    setClientWidth(realInner);
+  });
+
+  it("reads the layout viewport, not the inflated innerWidth", () => {
+    // The prod measurement from EFB-67 v1, and the shape the CDP probe
+    // reproduced: a 393px phone whose document overflows.
+    Object.defineProperty(window, "innerWidth", { value: 792, configurable: true });
+    setClientWidth(393);
+    expect(layoutViewportWidth()).toBe(393);
+  });
+
+  it("drives the layout branch off the true width when the two disagree", () => {
+    Object.defineProperty(window, "innerWidth", { value: 1572, configurable: true });
+    setClientWidth(393);
+    // Feeding innerWidth here would force a horizontal kanban into a 393px
+    // viewport — the EFB-67 v1 regression, one layer down.
+    expect(effectiveKanbanLayout("columns", layoutViewportWidth())).toBe("vertical");
+    expect(resolveKanbanLayout(null, layoutViewportWidth())).toBe("vertical");
+    expect(effectiveKanbanLayout("columns", window.innerWidth)).toBe("columns");
+  });
+
+  it("is a no-op when nothing overflows — why EFB-77 was latent, not firing", () => {
+    Object.defineProperty(window, "innerWidth", { value: 1440, configurable: true });
+    setClientWidth(1440);
+    expect(layoutViewportWidth()).toBe(1440);
+    expect(effectiveKanbanLayout("columns", layoutViewportWidth())).toBe(
+      effectiveKanbanLayout("columns", window.innerWidth),
+    );
+  });
+});
 
 describe("resolveKanbanLayout", () => {
   it("an explicit stored preference always wins, at any width", () => {

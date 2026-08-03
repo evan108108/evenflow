@@ -7,10 +7,22 @@
 //     admin→admin, member→contributor),
 //   * viewer, when the board is public (anonymous callers included).
 //
-// Failure posture: a caller with NO access to a private resource gets 404
-// ("not-found") — existence must not leak. A caller WITH access but below
-// the required role gets 403 ("forbidden"). Missing auth on an endpoint
-// that needs identity gets 401 ("unauthorized").
+// Failure posture — a privacy primitive, not an ergonomic choice (EFB-76):
+//
+//   * ANONYMOUS caller, resource not publicly visible → 401
+//     ("unauthorized"), UNIFORMLY, whether or not the resource exists.
+//   * AUTHENTICATED caller with no access to a private resource → 404
+//     ("not-found") — existence must not leak.
+//   * Caller WITH access but below the required role → 403 ("forbidden").
+//   * Missing auth on an endpoint that needs identity → 401.
+//
+// The word UNIFORMLY is the whole design. Splitting the anonymous case into
+// 401-when-it-exists / 404-when-it-doesn't reads more precise and is strictly
+// worse: it hands an oracle to callers holding no credentials at all. Short
+// ids are per-board sequential, so walking FLOW-1..N and watching the status
+// code would map every private board's ticket count and activity. The 401 has
+// to be the same answer for "private" and "nonexistent" or it is not a fix.
+// See `notVisible` below; do not collapse it back into a 404 for consistency.
 
 import { Data, Effect } from "effect";
 import { Db, type DbError, type Claims } from "./effects";
@@ -51,6 +63,32 @@ export class UnauthorizedError extends Data.TaggedError("UnauthorizedError")<{
 export class ForbiddenError extends Data.TaggedError("ForbiddenError")<{
   readonly reason: string;
 }> {}
+
+/**
+ * The reason an anonymous caller sees when a resource is not publicly
+ * visible. One constant because every such 401 must be textually identical:
+ * a distinguishable reason string would rebuild the existence oracle the
+ * status code just closed.
+ */
+export const ANONYMOUS_UNAUTHORIZED_REASON = "authentication-required";
+
+/**
+ * Pick the failure for "this caller cannot see this resource."
+ *
+ * PRIVACY PRIMITIVE — see the module header. Anonymous callers get 401 and
+ * learn nothing about existence; authenticated ones get whatever the caller
+ * passed as `hidden` (a 404-shaped error), which keeps the no-leak posture
+ * the header describes. `hidden` is returned as-is rather than constructed
+ * here so each caller keeps its own `reason` grammar ("issue", "board",
+ * "org") for authenticated callers, who are allowed that much detail.
+ *
+ * Do not "simplify" this to always return `hidden`. The 401 is load-bearing:
+ * it is the entire fix for EFB-76, and the uniformity is what makes it safe.
+ */
+export const notVisible = <E>(pubkey: string | null, hidden: E): UnauthorizedError | E =>
+  pubkey === null
+    ? new UnauthorizedError({ reason: ANONYMOUS_UNAUTHORIZED_REASON })
+    : hidden;
 
 /** Fail 401-typed unless the request is authenticated. */
 export const requireCaller = (
@@ -117,10 +155,19 @@ export const authorizeOrgAccess = (
   minRole: string,
 ): Effect.Effect<
   { org: OrgShape; role: string | null; viaAlias: boolean },
-  BoardOwnershipError | ForbiddenError | DbError,
+  BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
   Db
 > =>
   Effect.gen(function* () {
+    // Above "viewer" an anonymous caller can never qualify, so answer 401
+    // before touching the DB — no lookup, nothing to observe. Deliberately
+    // NOT applied to the viewer path: org detail is a public surface where a
+    // missing org is an honest 404, because existing orgs answer 200 to
+    // anonymous callers anyway. There is no oracle to close there, and
+    // 401-ing a public read would only make it harder to use.
+    if (minRole !== "viewer" && pubkey === null) {
+      return yield* new UnauthorizedError({ reason: ANONYMOUS_UNAUTHORIZED_REASON });
+    }
     const resolved = yield* resolveOrgBySlug(slug);
     if (resolved === null) return yield* new BoardOwnershipError({ reason: "org" });
     const role = yield* orgRoleOf(resolved.org.id, pubkey);
@@ -175,10 +222,17 @@ export const authorizeBoard = (
   board: BoardShape,
   pubkey: string | null,
   minRole: string,
-): Effect.Effect<{ board: BoardShape; role: string }, BoardOwnershipError | ForbiddenError | DbError, Db> =>
+): Effect.Effect<
+  { board: BoardShape; role: string },
+  BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
+  Db
+> =>
   Effect.gen(function* () {
     const role = yield* effectiveBoardRole(board, pubkey);
-    if (role === null) return yield* new BoardOwnershipError({ reason: "board" });
+    // Public boards never reach the null branch — effectiveBoardRole hands
+    // anonymous callers a "viewer" floor first, which is what keeps EFB-24's
+    // anonymous public reads answering 200 through this fix.
+    if (role === null) return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
     if (!roleAtLeast(role, minRole)) {
       return yield* new ForbiddenError({ reason: `requires-${minRole}` });
     }
@@ -190,14 +244,20 @@ export const authorizeBoardById = (
   boardId: string,
   pubkey: string | null,
   minRole: string,
-): Effect.Effect<{ board: BoardShape; role: string }, BoardOwnershipError | ForbiddenError | DbError, Db> =>
+): Effect.Effect<
+  { board: BoardShape; role: string },
+  BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
+  Db
+> =>
   Effect.gen(function* () {
     const db = yield* Db;
     const row = yield* db.queryFirst<Record<string, unknown>>(
       "SELECT * FROM boardCache WHERE id = ?",
       [boardId],
     );
-    if (row === null) return yield* new BoardOwnershipError({ reason: "board" });
+    // Nonexistent board: 401 for anonymous, same as a private one. Splitting
+    // these two is the oracle the module header forbids.
+    if (row === null) return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
     return yield* authorizeBoard(parseBoardRow(row), pubkey, minRole);
   });
 
@@ -217,19 +277,23 @@ export const resolveBoardScope = (
   minRole: string,
 ): Effect.Effect<
   { board: BoardShape; org: OrgShape | null; role: string },
-  BoardOwnershipError | ForbiddenError | DbError,
+  BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
   Db
 > =>
   Effect.gen(function* () {
     const db = yield* Db;
     if (params.org_slug !== undefined) {
       const resolved = yield* resolveOrgBySlug(params.org_slug);
-      if (resolved === null) return yield* new BoardOwnershipError({ reason: "org" });
+      if (resolved === null) {
+        return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "org" }));
+      }
       const row = yield* db.queryFirst<Record<string, unknown>>(
         "SELECT * FROM boardCache WHERE org_id = ? AND slug = ?",
         [resolved.org.id, params.slug],
       );
-      if (row === null) return yield* new BoardOwnershipError({ reason: "board" });
+      if (row === null) {
+        return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
+      }
       const authorized = yield* authorizeBoard(parseBoardRow(row), pubkey, minRole);
       return { ...authorized, org: resolved.org };
     }
@@ -259,7 +323,9 @@ export const resolveBoardScope = (
       return { board, role, org: orgRow === null ? null : parseOrgRow(orgRow) };
     }
     if (sawForbidden) return yield* new ForbiddenError({ reason: `requires-${minRole}` });
-    return yield* new BoardOwnershipError({ reason: "board" });
+    // No visible board carried this slug — including the case where no board
+    // carries it at all. Anonymous gets 401 for both; see module header.
+    return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
   });
 
 /**
@@ -267,8 +333,14 @@ export const resolveBoardScope = (
  * membership-aware: "own" means admin-or-better. Remaining importers are
  * legacy write paths; reads should use resolveBoardScope directly.
  */
+// UnauthorizedError is in the union for the type-checker's benefit only: this
+// shim takes a non-null pubkey, so resolveBoardScope's anonymous 401 branch is
+// unreachable here. Widening beats casting it away.
 export const assertOwnBoard = (
   slug: string,
   pubkey: string,
-): Effect.Effect<BoardShape, BoardOwnershipError | ForbiddenError | DbError, Db> =>
-  Effect.map(resolveBoardScope({ slug }, pubkey, "admin"), (r) => r.board);
+): Effect.Effect<
+  BoardShape,
+  BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
+  Db
+> => Effect.map(resolveBoardScope({ slug }, pubkey, "admin"), (r) => r.board);
