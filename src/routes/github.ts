@@ -33,13 +33,15 @@ import { path } from "../routes-manifest";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { requireCaller } from "../authz";
-import { ValidationError } from "../lib/errors";
+import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { actionInput } from "../actions/types";
 import type { Claims } from "../effects";
 import { DEFAULT_EXTERNAL_STATES } from "../github/external-state";
 import {
-  deleteGithubConfig,
+  GithubConfigBody,
+  GithubRulesBody,
+  GithubTestBody,  deleteGithubConfig,
   getGithubConfig,
   listGithubAudit,
   receiveWebhook,
@@ -81,16 +83,6 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<GithubFailure>
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const readJsonBody = (c: Context<AppHonoEnv>) =>
-  Effect.tryPromise({
-    try: () => c.req.json() as Promise<Record<string, unknown>>,
-    catch: () => new ValidationError({ reason: "expected-json" }),
-  }).pipe(
-    Effect.filterOrFail(
-      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-      () => new ValidationError({ reason: "expected-json-object" }),
-    ),
-  );
 
 export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
   const app = new Hono<AppHonoEnv>();
@@ -168,7 +160,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setGithubConfig(
-        actionInput(claims, c.req.param(), readJsonBody(c), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubConfigBody), { orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -201,7 +193,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setGithubRules(
-        actionInput(claims, c.req.param(), readJsonBody(c), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubRulesBody), { orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -213,7 +205,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* testGithubConnection(
-        actionInput(claims, c.req.param(), readJsonBody(c), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubTestBody), { orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);

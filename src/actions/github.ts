@@ -26,7 +26,7 @@
  * input record instead of off a Context.
  */
 
-import { Clock, Data, Effect } from "effect";
+import { Clock, Data, Effect, Schema } from "effect";
 
 import { url } from "../routes-manifest";
 import { Audience, AuditLog, BoardEmitter, Db, DbError } from "../effects";
@@ -178,6 +178,75 @@ const emitTransitionEvents = (
   });
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
+// ── EFB-83 request shapes ────────────────────────────────────────────────
+//
+// These three routes read their bodies through the raw reader until this
+// ticket, so every predicate below was hand-rolled and every one is
+// reproduced exactly. What the schemas ADD is the thing the raw reader could
+// never do: reject a key nobody recognizes. `{"repo":"a/b","repoo":"c/d"}`
+// was a 200 that configured nothing — EFB-53's bug, at a third callsite.
+//
+// The fields these schemas deliberately DO NOT finish are the ones needing
+// state a schema cannot see, or answering a reason a schema cannot spell.
+// Both stay in the handlers, named, exactly as `validateStatus` does in
+// issues.ts.
+
+/**
+ * PUT /board/:slug/github.
+ *
+ * NULLABILITY HERE IS ASYMMETRIC, and it is not an oversight:
+ *   repo: null            CLEARS the repo         -> allowed
+ *   external_states: null CLEARS the config       -> allowed
+ *   preset: null          means nothing           -> rejected, reason `preset`
+ * Spelling all three `NullOr` — the obvious uniform shape — would silently
+ * start accepting `preset: null`, which today answers 400.
+ */
+export const GithubConfigBody = Schema.Struct({
+  // `Schema.String`, with REPO_RE left in the handler. The pattern failure has
+  // to answer the bare reason `repo`, and a filter here would too — but the
+  // handler already owns the owner/name shape rule and splitting it would put
+  // half the definition of a valid repo in each file.
+  repo: Schema.optional(Schema.NullOr(Schema.String)),
+  preset: Schema.optional(Schema.Literal(...RULE_PRESETS)),
+  // Unknown: `externalStateConfigProblem` answers a COMPOSED reason
+  // (`external_states-<problem>`) that a schema failure cannot produce.
+  external_states: Schema.optional(Schema.Unknown),
+});
+
+/**
+ * PUT /board/:slug/github/rules.
+ *
+ * `rules` stays Unknown, and this schema therefore buys exactly one thing:
+ * rejection of unknown TOP-LEVEL keys. Every predicate inside the array is
+ * either composed with the element index (`rule-3-bucket`) or depends on the
+ * board's own external-state config, which a schema cannot see. Typing the
+ * elements would change all of those reason strings — a wire change with no
+ * offsetting gain — so the per-rule loop keeps them.
+ */
+export const GithubRulesBody = Schema.Struct({
+  rules: Schema.Unknown,
+});
+
+/**
+ * POST /board/:slug/github/test.
+ *
+ * `event` is `Schema.String` filtered on `!== ""`, and NOT `NonEmptyString`.
+ * This route is the INVERSE of the trap EFB-61 and EFB-85 hit: the hand-rolled
+ * guard here is `=== ""`, not `.trim() !== ""`, so "   " is accepted TODAY.
+ * `NonEmptyString` trims, and would silently start rejecting it — tightening
+ * the contract where its siblings were at risk of loosening it. The instinct
+ * carried over from those tickets is exactly wrong here.
+ *
+ * `payload` is Unknown because `typeof payload === "object"` ADMITS AN ARRAY:
+ * `{"payload": []}` is a working request today. `Schema.Object` rejects
+ * arrays, so typing it would 400 a shape that currently succeeds.
+ */
+export const GithubTestBody = Schema.Struct({
+  event: Schema.String.pipe(Schema.filter((s) => s !== "")),
+  payload: Schema.Unknown,
+});
+
 const DEDUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const AUDIT_PAGE_DEFAULT = 50;
 const AUDIT_PAGE_MAX = 200;
@@ -640,7 +709,7 @@ export const getGithubConfig = (input: ActionInput) =>
  * never entitled to send.
  */
 export const setGithubConfig = (
-  input: ActionInput<Effect.Effect<Record<string, unknown>, ValidationError, never>>,
+  input: ActionInput<Effect.Effect<typeof GithubConfigBody.Type, ValidationError, never>>,
 ) =>
   Effect.gen(function* () {
     const { board } = yield* boardScope(input, "admin");
@@ -752,7 +821,7 @@ export const deleteGithubConfig = (input: ActionInput) =>
  * Deferred body for the same reason as `setGithubConfig` — see rule 10 there.
  */
 export const setGithubRules = (
-  input: ActionInput<Effect.Effect<Record<string, unknown>, ValidationError, never>>,
+  input: ActionInput<Effect.Effect<typeof GithubRulesBody.Type, ValidationError, never>>,
 ) =>
   Effect.gen(function* () {
     const { board } = yield* boardScope(input, "admin");
@@ -781,6 +850,26 @@ export const setGithubRules = (
       if (wp !== null) return { problem: `rule-${index}-${wp}` } as const;
       const ap = actionProblem(r["do"], allowed);
       if (ap !== null) return { problem: `rule-${index}-${ap}` } as const;
+      // EFB-83, under Evan's law: these two SILENTLY SWALLOWED garbage.
+      // `priority: "high"` was coerced to `index * 10` and `enabled: "no"` to
+      // `1`, both with a 200 — so a rule could persist in an order the caller
+      // never asked for, and nothing said so until somebody wondered why their
+      // rules fired wrong. That is the silent-wrong-input class this migration
+      // exists to convert into a loud 400.
+      //
+      // Absent still means default: `priority` omitted is `index * 10` and
+      // `enabled` omitted is on, exactly as before. Only a PRESENT value of the
+      // wrong type is now refused.
+      //
+      // Checked here rather than in GithubRulesBody because the reason has to
+      // carry the element index — `rule-3-priority` — which a schema failure
+      // cannot spell. Same reason `bucket`, `when` and `do` are checked here.
+      if (r["priority"] !== undefined && typeof r["priority"] !== "number") {
+        return { problem: `rule-${index}-priority` } as const;
+      }
+      if (r["enabled"] !== undefined && typeof r["enabled"] !== "boolean") {
+        return { problem: `rule-${index}-enabled` } as const;
+      }
       return {
         ok: {
           bucket,
@@ -836,7 +925,7 @@ export const setGithubRules = (
  * Deferred body for the same reason as `setGithubConfig` — see rule 10 there.
  */
 export const testGithubConnection = (
-  input: ActionInput<Effect.Effect<Record<string, unknown>, ValidationError, never>>,
+  input: ActionInput<Effect.Effect<typeof GithubTestBody.Type, ValidationError, never>>,
 ) =>
   Effect.gen(function* () {
     const { board } = yield* boardScope(input, "admin");
