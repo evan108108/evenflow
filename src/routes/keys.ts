@@ -1,37 +1,38 @@
-// /api/v0/keys — developer API key management (phase 19).
+// /api/v0/keys — HTTP shell over src/actions/keys.ts.
 //
-// The plaintext key exists exactly once, in the POST response; the list
-// endpoint returns metadata only (name, display prefix, timestamps).
-// Revocation is a soft flag — the row stays for the audit trail, the
-// middleware filters revoked keys at lookup.
+// JWT-only surface on purpose: a key cannot mint or revoke keys, so a leaked
+// key can never escalate to more keys. requireCaller still runs here (the
+// router mounts behind optionalAuth like everything else); the key-token guard
+// moved to the action, which reads the same bearer off `input.token`.
 //
-// JWT-only surface on purpose: a key cannot mint or revoke keys, so a
-// leaked key can never escalate to more keys. requireCaller still runs
-// (the router mounts behind optionalAuth like everything else); the
-// key-token guard is explicit below.
+// The raw body read stays HERE, and stays raw. GET/POST /keys is on
+// check:boundary's unmigrated allowlist, and the re-audit fails an allowlisted
+// route whose file no longer shows the read — so converting this to a schema
+// would break the ratchet on the way past. That is another ticket's work.
+//
+// POST /keys hands the action an UNRUN body Effect rather than a parsed body.
+// See the rule-10 note on createKey: the 403 for a key-bearing caller has
+// always been answered BEFORE the 400 for a malformed body, and running the
+// parse on the way in would silently swap them.
 
 import { Hono } from "hono";
-import { path } from "../routes-manifest";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap } from "../effects";
+import { Cause, Effect, Option } from "effect";
+
+import { path } from "../routes-manifest";
+import { makeRunJson } from "../lib/run-json";
+import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { requireCaller } from "../authz";
+import { ValidationError } from "../lib/errors";
+import { actionInput } from "../actions/types";
 import {
-  ForbiddenError,
-  UnauthorizedError,
-  callerPubkey,
-  requireCaller,
-} from "../authz";
-import { API_KEY_NAME_MAX, generateApiKey, hashApiKey, isApiKeyToken } from "../apikeys";
-
-class ValidationError extends Data.TaggedError("ValidationError")<{
-  readonly reason: string;
-}> {}
-class NotFoundError extends Data.TaggedError("NotFoundError")<{
-  readonly reason: string;
-}> {}
-
-type KeysFailure = ValidationError | NotFoundError | UnauthorizedError | ForbiddenError | DbError;
+  createKey,
+  deleteKey,
+  listKeys,
+  type KeyServices,
+  type KeysFailure,
+} from "../actions/keys";
 
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<KeysFailure>) => {
   const failure = Cause.failureOption(cause);
@@ -53,73 +54,25 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<KeysFailure>) 
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-/** Metadata shape the list/read paths return — never the hash. */
-interface KeyView {
-  readonly id: string;
-  readonly name: string;
-  readonly prefix: string;
-  readonly created_at_ms: number;
-  readonly last_used_at_ms: number | null;
-  readonly revoked_at_ms: number | null;
-}
-
 export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
   const keys = new Hono<AppHonoEnv>();
-
-  const runJson = async (
-    c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, KeysFailure, Db | AuditLog>,
-    okStatus: 200 | 201 = 200,
-  ) => {
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value, okStatus);
-  };
-
-  /** Keys manage keys? No — JWT sessions only. */
-  const rejectKeyCallers = (c: Context<AppHonoEnv>) =>
-    isApiKeyToken(c.get("token") ?? "")
-      ? Effect.fail(new ForbiddenError({ reason: "jwt-required" }))
-      : Effect.void;
+  const runJson = makeRunJson<KeysFailure, KeyServices>(layerFor, errorResponse);
 
   // ── POST /keys — mint; the plaintext appears here and never again ───────
   keys.post(path("key.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      yield* rejectKeyCallers(c);
-      const body = yield* Effect.tryPromise({
-        try: () => c.req.json() as Promise<Record<string, unknown>>,
-        catch: () => new ValidationError({ reason: "expected-json" }),
-      });
-      const name = body["name"];
-      if (typeof name !== "string" || name.trim() === "" || name.length > API_KEY_NAME_MAX) {
-        return yield* new ValidationError({ reason: "name" });
-      }
-
-      const { plaintext, prefix } = generateApiKey();
-      const key_hash = yield* Effect.promise(() => hashApiKey(plaintext));
-      const db = yield* Db;
-      const audit = yield* AuditLog;
-      const now = yield* Clock.currentTimeMillis;
-      const id = crypto.randomUUID();
-      yield* db.execute(
-        "INSERT INTO apiKeys (id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, callerPubkey(claims), name.trim(), key_hash, prefix, now, null, null],
+      return yield* createKey(
+        actionInput(
+          claims,
+          c.req.param(),
+          Effect.tryPromise({
+            try: () => c.req.json() as Promise<Record<string, unknown>>,
+            catch: () => new ValidationError({ reason: "expected-json" }),
+          }),
+          { token: c.get("token") ?? "" },
+        ),
       );
-      yield* audit.record({
-        event_type: "api_key_created",
-        actor: claims.login,
-        details: { key: id, name: name.trim() },
-      });
-      const key: KeyView = {
-        id,
-        name: name.trim(),
-        prefix,
-        created_at_ms: now,
-        last_used_at_ms: null,
-        revoked_at_ms: null,
-      };
-      return { key, plaintext };
     });
     return runJson(c, program, 201);
   });
@@ -128,13 +81,9 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
   keys.get(path("key.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      yield* rejectKeyCallers(c);
-      const db = yield* Db;
-      const rows = yield* db.queryAll<KeyView>(
-        "SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms FROM apiKeys WHERE pubkey = ? ORDER BY created_at_ms DESC",
-        [callerPubkey(claims)],
+      return yield* listKeys(
+        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
       );
-      return { keys: rows };
     });
     return runJson(c, program);
   });
@@ -143,24 +92,9 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
   keys.delete(path("key.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      yield* rejectKeyCallers(c);
-      const db = yield* Db;
-      const audit = yield* AuditLog;
-      const row = yield* db.queryFirst<{ id: string; revoked_at_ms: number | null }>(
-        "SELECT id, revoked_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?",
-        [c.req.param("id"), callerPubkey(claims)],
+      return yield* deleteKey(
+        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
       );
-      if (row === null) return yield* new NotFoundError({ reason: "key" });
-      const now = yield* Clock.currentTimeMillis;
-      if (row.revoked_at_ms === null) {
-        yield* db.execute("UPDATE apiKeys SET revoked_at_ms = ? WHERE id = ?", [now, row.id]);
-        yield* audit.record({
-          event_type: "api_key_revoked",
-          actor: claims.login,
-          details: { key: row.id },
-        });
-      }
-      return { revoked: true };
     });
     return runJson(c, program);
   });

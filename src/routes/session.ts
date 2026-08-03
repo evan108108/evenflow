@@ -1,110 +1,56 @@
-// /api/v0/session — session bootstrap for the SPA.
+// /api/v0/session — HTTP shell over src/actions/session.ts.
 //
-// POST /session/bootstrap runs after every OAuth callback (and is safe to
-// run on every app load): idempotently ensures the caller's personal org
-// exists (slug = login-prefix, digit-suffixed on collision, reserved words
-// skipped; an optional `claim` body field carries the sign-up CTA's
-// ?claim=<handle> hint), then returns the caller's identity + org list so
-// the client can populate the org switcher without a second round-trip.
+// Both body reads stay here. `bootstrap`'s is deliberately swallowing: a
+// malformed body is not an error on this path, it just means no claim hint,
+// so the route hands the action `null` rather than a failed parse. That is
+// the pre-split behaviour and it is why this one needs no deferral — there is
+// no error for a gate to have won against.
 
 import { Hono } from "hono";
-import { path } from "../routes-manifest";
-import { Clock, Effect, Exit } from "effect";
-import { Db, bootstrap, hashToken } from "../effects";
-import type { AppHonoEnv, LayerFor } from "../http";
-import { callerPubkey, requireCaller } from "../authz";
-import { ensurePersonalOrg } from "../membership";
-import { ValidationError, errorResponse, readJsonBody } from "./errors";
+import { Effect } from "effect";
 
-const SESSION_PUBKEY_RE = /^[0-9a-f]{64}$/i;
+import { path } from "../routes-manifest";
+import { makeRunJson } from "../lib/run-json";
+import { bootstrap } from "../effects";
+import type { AppHonoEnv, LayerFor } from "../http";
+import { requireCaller } from "../authz";
+import { actionInput } from "../actions/types";
+import {
+  bootstrapSession,
+  registerSessionKey,
+  type SessionFailure,
+  type SessionServices,
+} from "../actions/session";
+import { errorResponse, readJsonBody } from "./errors";
 
 export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
   const session = new Hono<AppHonoEnv>();
+  const runJson = makeRunJson<SessionFailure, SessionServices>(layerFor, errorResponse);
 
   session.post(path("session.bootstrap"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const token = c.get("token") ?? "";
-      const pubkey = callerPubkey(claims);
-
-      // The claim hint is best-effort: a malformed or taken handle falls
-      // back to login-prefix derivation rather than failing sign-in.
       const body = yield* Effect.tryPromise({
         try: () => c.req.json() as Promise<Record<string, unknown>>,
         catch: () => null,
       }).pipe(Effect.catchAll(() => Effect.succeed(null)));
-      const claim =
-        body !== null && typeof body["claim"] === "string" ? body["claim"] : undefined;
-
-      const { org: personal, created } = yield* ensurePersonalOrg(claims, token, claim);
-
-      const db = yield* Db;
-      const orgRows = yield* db.queryAll<{
-        slug: string;
-        display_name: string;
-        avatar_url: string | null;
-        kind: string;
-        role: string;
-      }>(
-        "SELECT o.slug, o.display_name, o.avatar_url, o.kind, m.role FROM orgMemberCache m JOIN orgCache o ON o.id = m.org_id WHERE m.pubkey = ? AND o.deleted_at_ms IS NULL ORDER BY (o.kind = 'personal') DESC, o.slug ASC",
-        [pubkey],
+      return yield* bootstrapSession(
+        actionInput(claims, c.req.param(), body, { token: c.get("token") ?? "" }),
       );
-
-      return {
-        me: {
-          handle: personal.slug,
-          pubkey,
-          login: claims.login,
-          orgs: orgRows,
-        },
-        last_active_org: personal.slug,
-        personal_org_created: created,
-      };
     });
-
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value);
+    return runJson(c, program);
   });
 
   // ── POST /session/register-key — per-session client keypair (16.5) ──────
-  // Web users hold no long-lived secp256k1 keys, so each signed-in session
-  // generates one and registers the pub here. Private-board key grants are
-  // issued to these session pubs. Keyed by jwt_hash (one key per session,
-  // re-registering replaces); expiry rides the JWT's own exp.
   session.post(path("session.key.register"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const token = c.get("token") ?? "";
-      const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      const sessionPub = body["session_pubkey"];
-      if (typeof sessionPub !== "string" || !SESSION_PUBKEY_RE.test(sessionPub)) {
-        return yield* new ValidationError({ reason: "session_pubkey" });
-      }
-      const db = yield* Db;
-      const now = yield* Clock.currentTimeMillis;
-      const jwtHash = yield* hashToken(token);
-      // Nostr sessions (16.7) register their REAL key at sign-in with
-      // source='nostr' — an ephemeral registration must never replace it,
-      // or the session's grants silently drop from level-4 to session-key
-      // trust. Registering is idempotent from the client's view either way.
-      const existing = yield* db.queryFirst<{ session_pubkey: string; session_key_source: string }>(
-        "SELECT session_pubkey, session_key_source FROM sessionKeyRegistrations WHERE jwt_hash = ?",
-        [jwtHash],
+      return yield* registerSessionKey(
+        actionInput(claims, c.req.param(), body, { token: c.get("token") ?? "" }),
       );
-      if (existing !== null && existing.session_key_source === "nostr") {
-        return { registered: true, session_pubkey: existing.session_pubkey, source: "nostr" };
-      }
-      yield* db.execute(
-        "INSERT OR REPLACE INTO sessionKeyRegistrations (jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms, session_key_source) VALUES (?, ?, ?, ?, ?, 'ephemeral')",
-        [jwtHash, pubkey, sessionPub.toLowerCase(), now, claims.exp * 1000],
-      );
-      return { registered: true, session_pubkey: sessionPub.toLowerCase(), source: "ephemeral" };
     });
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value, 201);
+    return runJson(c, program, 201);
   });
 
   return session;
