@@ -14,6 +14,7 @@ import { MOVE_TO_CONTAINER } from "../lib/types";
 import { ISSUE_TYPES, enabledColumns, typeLabel } from "../lib/columns";
 import { formatBytes, isImageContentType, type Attachment } from "../lib/attachments";
 import { issuePath } from "../lib/boardView";
+import { prLinkStateLabel, prLinkStateTone, prUrl } from "../lib/externalState";
 import { sprintOptions } from "../lib/sprints";
 import type { BoardStore } from "../pages/board/store";
 import { AttachmentsPanel, type AttachmentActionError } from "./AttachmentsPanel";
@@ -658,21 +659,6 @@ export const IssueSheet = (props: {
           )}
         </Show>
 
-        <Show when={props.issue.github_links.length > 0}>
-          <div class="sheet-row">
-            <span class="key">GitHub</span>
-            <div class="chips">
-              <For each={props.issue.github_links}>
-                {(link) => (
-                  <span class="chip">
-                    {link.repo}#{link.pr} · {link.state}
-                  </span>
-                )}
-              </For>
-            </div>
-          </div>
-        </Show>
-
         <Show
           when={editingBody()}
           fallback={
@@ -716,6 +702,38 @@ export const IssueSheet = (props: {
           onSetCover={setCover}
           onDelete={deleteAttachment}
         />
+
+        {/* EFB-93 — the PRs this ticket is linked to.
+            Replaces the read-only `repo#pr · state` chip row that used to sit
+            up among the metadata rows: same data, now reachable. Reference
+            material, so it sits with attachments rather than in the
+            conversation stream.
+            No empty state on purpose — a ticket with no PR should look like a
+            ticket, not like a ticket missing something. */}
+        <Show when={props.issue.github_links.length > 0}>
+          <section class="sheet-section">
+            <h3>Linked pull requests</h3>
+            <For each={props.issue.github_links}>
+              {(link) => (
+                <a
+                  class="pr-link-row"
+                  href={prUrl(link)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="pr-link-ref">
+                    {link.repo}#{link.pr}
+                  </span>
+                  {/* The PR's own lifecycle, not the ticket's external_state
+                      pill — different vocabulary, same visual language. */}
+                  <span class={`external-state-pill tone-${prLinkStateTone(link.state)}`}>
+                    {prLinkStateLabel(link.state)}
+                  </span>
+                </a>
+              )}
+            </For>
+          </section>
+        </Show>
 
         <section class="sheet-section">
           <h3>Comments</h3>

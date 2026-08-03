@@ -7,6 +7,7 @@ import type { Board, Issue } from "../lib/types";
 import { ISSUE_TYPES, type Column } from "../lib/columns";
 import type { DndHandle } from "../lib/dnd";
 import type { BoardStore } from "../pages/board/store";
+import { prUrl } from "../lib/externalState";
 import { BacklogView } from "../pages/board/BacklogView";
 import { KanbanView } from "../pages/board/KanbanView";
 import { IssueCard } from "./IssueCard";
@@ -436,6 +437,83 @@ describe("IssueSheet", () => {
 
     container.querySelector<HTMLButtonElement>(".copy-url")!.click();
     expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/@me/kb/issue/KB-7`);
+
+    cleanup();
+  });
+
+  // EFB-93 — the sheet used to render github_links as read-only
+  // `repo#pr · state` chips, so the one thing a reader wanted to do with a
+  // linked PR (open it) was the one thing they could not. These two pin the
+  // replacement: real anchors, and nothing at all when there is nothing to say.
+  it("renders a clickable row per linked PR, with the PR's own state pill", async () => {
+    const links = [
+      { repo: "evan108108/evenflow", pr: 61, state: "merged" },
+      { repo: "evan108108/evenflow", pr: 93, state: "open" },
+    ];
+    const { container, cleanup } = mountRouted(() => (
+      <IssueSheet
+        issue={{ ...issue, github_links: links }}
+        board={board}
+        base={SHEET_BASE}
+        store={storeStub}
+        callerPubkey={"test:0"}
+        commentsVersion={() => 0}
+        onClose={() => undefined}
+      />
+    ));
+    await flush();
+
+    const rows = container.querySelectorAll<HTMLAnchorElement>(".pr-link-row");
+    expect(rows).toHaveLength(2);
+    expect(container.textContent).toContain("Linked pull requests");
+
+    // Pinned to prUrl() rather than a hand-written string: if the URL shape
+    // ever shifts, this fails here instead of silently shipping dead links.
+    expect(rows[0]!.getAttribute("href")).toBe(prUrl(links[0]!));
+    expect(rows[1]!.getAttribute("href")).toBe(prUrl(links[1]!));
+    expect(rows[0]!.getAttribute("href")).toBe(
+      "https://github.com/evan108108/evenflow/pull/61",
+    );
+
+    for (const row of rows) {
+      expect(row.getAttribute("target")).toBe("_blank");
+      expect(row.getAttribute("rel")).toBe("noopener noreferrer");
+    }
+
+    expect(rows[0]!.textContent).toContain("evan108108/evenflow#61");
+
+    // The PR's own lifecycle, NOT the ticket's external_state vocabulary.
+    // Routing these through externalStateTone would tone every one of them
+    // "neutral" and label them with the raw lowercase value — a pill that
+    // exists, looks plausible, and says nothing. Assert the distinct tones.
+    const pills = container.querySelectorAll(".pr-link-row .external-state-pill");
+    expect(pills).toHaveLength(2);
+    expect(pills[0]!.textContent).toBe("Merged");
+    expect(pills[0]!.className).toContain("tone-good");
+    expect(pills[1]!.textContent).toBe("Open");
+    expect(pills[1]!.className).toContain("tone-info");
+
+    cleanup();
+  });
+
+  it("renders no linked-PR section at all when there are none", async () => {
+    const { container, cleanup } = mountRouted(() => (
+      <IssueSheet
+        issue={{ ...issue, github_links: [] }}
+        board={board}
+        base={SHEET_BASE}
+        store={storeStub}
+        callerPubkey={"test:0"}
+        commentsVersion={() => 0}
+        onClose={() => undefined}
+      />
+    ));
+    await flush();
+
+    // No header and no empty-state copy — a ticket with no PR should look
+    // like a ticket, not like a ticket missing something.
+    expect(container.querySelectorAll(".pr-link-row")).toHaveLength(0);
+    expect(container.textContent).not.toContain("Linked pull requests");
 
     cleanup();
   });
