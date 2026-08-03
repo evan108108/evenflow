@@ -30,7 +30,12 @@ const when = (ms: number | null) =>
 
 export const DeveloperKeys = () => {
   const [keys, { refetch }] = createResource(() =>
-    api<{ keys: KeyView[] }>((c) => c.get(url("key.create"))).then((r) => r.keys),
+    // `key.list`, not `key.create`. Both live at /keys and differ only by verb,
+    // so naming the wrong id here resolved to the right URL and the mistake
+    // could not surface — exactly the client-server disagreement the manifest
+    // exists to make impossible. Asking for the id that means "list" is the
+    // whole point of asking the manifest at all.
+    api<{ keys: KeyView[] }>((c) => c.get(url("key.list"))).then((r) => r.keys),
   );
 
   const [name, setName] = createSignal("");
@@ -61,6 +66,17 @@ export const DeveloperKeys = () => {
   };
 
   const revoke = (key: KeyView) => {
+    // Destructive and one-way: there is no un-revoke route, and anything
+    // holding this key is locked out the moment the DELETE lands. Same
+    // window.confirm shape the rest of the app uses for deletes, and it names
+    // the key so a mis-aimed click on the wrong row is legible before it fires.
+    if (
+      !window.confirm(
+        `Revoke “${key.name}”? Anything using this key stops working immediately, and this can't be undone.`,
+      )
+    ) {
+      return;
+    }
     setError(null);
     api((c) => c.delete(url("key.delete", { id: key.id })))
       .then(() => void refetch())

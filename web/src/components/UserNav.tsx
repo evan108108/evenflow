@@ -160,6 +160,20 @@ export const UserNav = () => {
           >
             Notifications
           </a>
+          {/*
+            EFB-95. /settings/keys shipped in EFB-19 with a route and no way to
+            reach it: the only links anywhere pointed at it from /docs prose, so
+            the page was reachable only by knowing the URL. Its sibling under
+            /settings was already here, which is what makes the omission an
+            oversight rather than a decision.
+          */}
+          <a
+            class="user-nav-item"
+            href="/settings/keys"
+            onClick={() => setOpen(false)}
+          >
+            API keys
+          </a>
           <button
             type="button"
             class="user-nav-item"
