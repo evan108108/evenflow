@@ -21,6 +21,7 @@ import {
   ImmutableField,
   Provenance,
   ProvenanceFromCaller,
+  ProvenanceFromExternalActor,
   ProvenanceFromStoredActor,
   ProvenanceFromSystem,
   ShortId,
@@ -195,6 +196,21 @@ describe("primitives are pure — no Db, no Context, no harness", () => {
       source: "audit.system",
       pubkey: HEX,
     });
+
+    // EFB-92. The fourth literal, and the distinction it buys: this is NOT
+    // `audit.system`, because Sonata did not act — an integration outside this
+    // system did. Same bare-string shape as ProvenanceFromStoredActor, and the
+    // safety is the same kind: the NAME reads false if you hand it an internal
+    // pubkey. No `platform` argument — that is the pubkey's prefix already.
+    expect(ProvenanceFromExternalActor("github:alice")).toEqual({
+      source: "external.webhook",
+      pubkey: "github:alice",
+    });
+    // The delivery that named no author. `github:webhook` is the integration
+    // acting as itself, and it is still an EXTERNAL origin — routing it to
+    // audit.system would be the same "Sonata acted" claim this literal exists
+    // to stop making.
+    expect(ProvenanceFromExternalActor("github:webhook").source).toBe("external.webhook");
   });
 
   it("Uuid and ShortId reject each other's forms", async () => {
