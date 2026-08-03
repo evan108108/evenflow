@@ -49,12 +49,6 @@ import {
   type IssuesFailure,
 } from "../actions/issues";
 
-// EFB-78 moved POSITION_STEP itself to src/lib/position.ts, which the github
-// execute path also needs and which cannot import from a route. Re-exported
-// here so the existing importer (routes/imports.ts) is untouched — EFB-98's
-// tail migration repoints it at lib/position and this line goes with it.
-export { POSITION_STEP } from "../lib/position";
-
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<IssuesFailure>) => {
   const failure = Cause.failureOption(cause);
   if (Option.isSome(failure)) {

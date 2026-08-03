@@ -67,7 +67,7 @@ import GITHUB_SRC from "../src/actions/github.ts?raw";
 import BOARDS_SRC from "../src/actions/boards.ts?raw";
 import SPRINTS_SRC from "../src/actions/sprints.ts?raw";
 import ATTACHMENTS_SRC from "../src/actions/attachments.ts?raw";
-import IMPORTS_SRC from "../src/routes/imports.ts?raw";
+import IMPORTS_SRC from "../src/actions/imports.ts?raw";
 import TIDE_SRC from "../src/lib/tide/publish.ts?raw";
 import AUDIENCES_SRC from "../src/audiences.ts?raw";
 
@@ -284,7 +284,7 @@ const SOURCES: ReadonlyArray<readonly [string, string]> = [
   ["actions/boards.ts", BOARDS_SRC],
   ["actions/sprints.ts", SPRINTS_SRC],
   ["actions/attachments.ts", ATTACHMENTS_SRC],
-  ["routes/imports.ts", IMPORTS_SRC],
+  ["actions/imports.ts", IMPORTS_SRC],
   ["lib/tide/publish.ts", TIDE_SRC],
 ];
 

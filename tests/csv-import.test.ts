@@ -21,7 +21,7 @@ import {
   MAX_IMPORT_ROWS,
   PostBulkIssuesBody,
 } from "../src/lib/csv-canonical";
-import { resolveStatusColumn } from "../src/routes/imports";
+import { resolveStatusColumn } from "../src/actions/imports";
 import { templatesFor } from "../src/lib/kanban/publish";
 import { ISSUE_TYPES, type Column } from "../src/columns";
 import type { BoardShape } from "../src/shapes";
