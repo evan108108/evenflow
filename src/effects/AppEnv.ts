@@ -33,6 +33,17 @@ export interface WorkerEnv {
   readonly AGENTMAIL_API_KEY?: string;
   /** Default Evenflow-managed Blossom host (phase 18a attachments). */
   readonly EVENFLOW_DEFAULT_BLOSSOM_URL?: string;
+  /**
+   * Git sha of the commit this Worker was built from (EFB-82). Injected at
+   * deploy time by `npm run deploy` (`wrangler deploy --var GIT_SHA:<sha>`),
+   * surfaced on GET /healthz, and read back by the predeploy ancestry check.
+   *
+   * Optional on purpose, and its ABSENCE is load-bearing signal rather than a
+   * gap: a deploy that skipped the wrapper (`npx wrangler deploy` straight)
+   * lands unstamped, so the next predeploy check sees a null sha and refuses.
+   * The bypass cannot hide itself.
+   */
+  readonly GIT_SHA?: string;
   /** 32-byte hex Nostr secret for the service key that signs BUD-01 uploads. */
   readonly EVENFLOW_BLOSSOM_SECRET?: string;
   /**

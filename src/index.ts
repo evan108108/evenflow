@@ -34,11 +34,34 @@ const app = new Hono<AppHonoEnv>();
 // The Effect handler pattern every future route follows: describe the work
 // as an Effect against service Tags, then run it against the per-request
 // Live environment from `bootstrap(c.env)`.
+// EFB-82: healthz also reports the git sha this Worker was built from.
+//
+// This is the source of truth for "what is actually live", deliberately in
+// preference to deploy metadata. Two reasons. Wrangler 3's `deploy` has no
+// `--message` flag at all (only `versions upload` does, which is a different
+// gradual-rollout workflow), so the metadata channel the ticket assumed does
+// not exist here. And metadata describes what someone INTENDED to ship, while
+// a value compiled into the running Worker proves what IS shipped — the
+// distinction that made the EFB-14 FTS5 rollback undiagnosable for 34 hours.
+//
+// Unauthenticated, matching the rest of this endpoint. A commit sha is a hash:
+// it confirms a commit id but grants nothing without repo access, and the
+// predeploy check has to read it from any machine before it has credentials
+// loaded. Nothing else about build state is exposed here.
 app.get("/healthz", async (c) => {
+  const gitSha = c.env.GIT_SHA ?? null;
   const healthz = Effect.gen(function* () {
     const audit = yield* AuditLog;
     yield* audit.record({ event_type: "healthz_check", details: { path: c.req.path } });
-    return { ok: true, service: "evenflow", version: "0.0.1" };
+    return {
+      ok: true,
+      service: "evenflow",
+      version: "0.0.1",
+      // null means "deployed without the wrapper, or before EFB-82" — the
+      // predeploy check treats that as refuse-by-default, not as fine.
+      git_sha: gitSha,
+      git_sha_short: gitSha === null ? null : gitSha.slice(0, 7),
+    };
   });
   return c.json(await Effect.runPromise(Effect.provide(healthz, bootstrap(c.env))));
 });

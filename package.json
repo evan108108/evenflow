@@ -11,7 +11,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "predeploy": "node scripts/predeploy-ancestry-check.mjs",
+    "deploy": "node scripts/deploy.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:src": "tsc --noEmit -p tsconfig.src.json",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
