@@ -205,10 +205,12 @@ describe("PATCH /api/v0/boards/:slug", () => {
 });
 
 describe("visibility", () => {
-  it("boards start private: anonymous GET 404s; toggling public opens reads", async () => {
+  it("boards start private: anonymous GET 401s; toggling public opens reads", async () => {
     const h = makeHarness();
     await createBoard(h);
-    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(404);
+    // EFB-76: was 404. A tokenless caller is told to authenticate, not sent
+    // looking elsewhere for a board that is right there but private.
+    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(401);
 
     const patched = await h.app.request(
       "/api/v0/boards/kb",
@@ -269,11 +271,21 @@ describe("auth gating", () => {
     expect(res.status).toBe(401);
   });
 
-  it("GET /api/v0/boards/kb answers 404 (not 401) to anonymous callers", async () => {
+  // EFB-76 inverted this case. It used to assert 404-not-401 on the theory
+  // that hiding existence mattered more than telling the truth about auth;
+  // the fix is that anonymous callers get 401 UNIFORMLY — for a private board
+  // and for one that does not exist — which tells the truth AND hides
+  // existence, because both answers are identical.
+  it("GET /api/v0/boards/kb answers 401 to anonymous callers, existing or not", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", {}, {});
-    expect(res.status).toBe(404);
+    const existsButPrivate = await h.app.request("/api/v0/boards/kb", {}, {});
+    expect(existsButPrivate.status).toBe(401);
+    const doesNotExist = await h.app.request("/api/v0/boards/no-such-board", {}, {});
+    expect(doesNotExist.status).toBe(401);
+    // The oracle test: the two answers must be byte-identical, or the status
+    // code alone still distinguishes "private" from "nonexistent".
+    expect(await existsButPrivate.json()).toEqual(await doesNotExist.json());
   });
 });
 

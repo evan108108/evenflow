@@ -143,14 +143,18 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     expect(missing.status).toBe(404);
   });
 
-  it("reads at viewer: anonymous works on a public board, 404s on a private one", async () => {
+  it("reads at viewer: anonymous works on a public board, 401s on a private one", async () => {
     const h = makeHarness();
     await createBoard(h); // boards are created private by default
     const sprint = await createSprint(h);
     const path = `/api/v0/boards/kb/sprints/${sprint.id}/tide`;
 
+    // EFB-76 reached this route without it being named in the ticket: the tide
+    // read funnels through resolveBoardScope like every other board-scoped
+    // GET, so the central fix covered it by construction. That property is the
+    // reason the fix went in the primitive rather than in each route.
     const hidden = await h.app.request(path, {}, {});
-    expect(hidden.status).toBe(404);
+    expect(hidden.status).toBe(401);
 
     const opened = await h.app.request(
       "/api/v0/boards/kb",

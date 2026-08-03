@@ -58,6 +58,27 @@ export const WIDE_VERTICAL_MIN_PX = 1024;
 export const isMobileHeader = (viewportWidth: number): boolean =>
   viewportWidth < AUTO_VERTICAL_MAX_PX;
 
+/**
+ * The layout viewport width — the number every predicate in this file wants.
+ *
+ * This exists so the hazard documented above has ONE positive answer instead
+ * of a prohibition each caller re-derives. `document.documentElement.clientWidth`
+ * is the CSS layout viewport and stays correct while the document overflows
+ * horizontally; `window.innerWidth` becomes the scrollable width and reported
+ * 792 on a 393px phone (EFB-67 v1).
+ *
+ * EFB-77 routed the three BoardPage callers here. They were latent rather
+ * than broken — the kanban's own widths did not overflow the page, so the
+ * corrupted read never changed a branch — but "correct because nothing
+ * currently overflows" is a property of today's CSS, not of the code, and
+ * the layout decisions include deciding whether to overflow at all.
+ *
+ * Excludes the scrollbar, which is the desired behavior: it is the width
+ * content actually gets, and it matches what CSS media queries compare
+ * against, so JS and CSS breakpoints agree.
+ */
+export const layoutViewportWidth = (): number => document.documentElement.clientWidth;
+
 /** The user's effective preference: stored value, else viewport default. */
 export const resolveKanbanLayout = (
   stored: string | null,

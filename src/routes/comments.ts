@@ -23,6 +23,7 @@ import {
   authorizeBoardById,
   callerPubkey,
   callerPubkeyOrNull,
+  notVisible,
   requireCaller,
   type BoardOwnershipError,
 } from "../authz";
@@ -88,9 +89,10 @@ const readJsonBody = (c: Context<AppHonoEnv>) =>
   );
 
 /**
- * Issue lookup (short id or UUID) + minRole proof on its board. Missing
- * issue and an invisible board are both 404 "issue" (no existence leak);
- * a visible board with an under-role caller is 403.
+ * Issue lookup (short id or UUID) + minRole proof on its board. For an
+ * authenticated caller, a missing issue and an invisible board are both 404
+ * "issue" (no existence leak); a visible board with an under-role caller is
+ * 403. For an anonymous caller both are 401 (EFB-76) — see authz.ts.
  */
 const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: string) =>
   Effect.gen(function* () {
@@ -100,7 +102,7 @@ const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: string) 
       shortId === null
         ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
-    if (row === null) return yield* new NotFoundError({ reason: "issue" });
+    if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
     yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
       Effect.mapError((e) =>

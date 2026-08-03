@@ -115,13 +115,15 @@ describe("GET /api/v0/boards/:slug/activity", () => {
     expect(body.activity.every((a) => a.issue_title === null)).toBe(true);
   });
 
-  it("404s a board the caller does not own, and anonymous reads on private boards", async () => {
+  it("404s a board the caller does not own, 401s anonymous reads on private boards", async () => {
     const h = makeHarness();
     seedForeignBoardAndIssue(h);
+    // Authenticated non-owner: still 404. EFB-76 deliberately left this alone
+    // — a 403 here would tell any signed-up account the board exists.
     expect((await getActivity(h, "", "theirs")).res.status).toBe(404);
-    // Anonymous passes optionalAuth; a private board stays invisible (404).
+    // Anonymous passes optionalAuth; a private board answers 401 (EFB-76).
     const res = await h.app.request("/api/v0/boards/theirs/activity", {}, {});
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
   });
 });
 
@@ -200,12 +202,13 @@ describe("GET /api/v0/boards/:slug/stream", () => {
     expect(subscribed[0]).toContain(h.db.boards[0]!["id"] as string); // idFromName(board_id)
   });
 
-  it("404s anonymous private reads, 404s an unowned board, 500s without the binding", async () => {
+  it("401s anonymous private reads, 404s an unowned board, 500s without the binding", async () => {
     const h = makeHarness();
     await createBoard(h);
     seedForeignBoardAndIssue(h);
-    // Anonymous on a private board: invisible, 404 (viewer floor is public-only).
-    expect((await h.app.request("/api/v0/boards/kb/stream", {}, {})).status).toBe(404);
+    // Anonymous on a private board: 401 (EFB-76). The viewer floor is
+    // public-only, so nothing here opens a private stream to anonymous.
+    expect((await h.app.request("/api/v0/boards/kb/stream", {}, {})).status).toBe(401);
     const foreign = await h.app.request(
       "/api/v0/boards/theirs/stream",
       { headers: bearer },

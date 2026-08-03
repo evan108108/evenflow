@@ -18,6 +18,7 @@ import {
   LAYOUT_STORAGE_KEY,
   effectiveKanbanLayout,
   isWideVertical,
+  layoutViewportWidth,
   resolveKanbanLayout,
   type KanbanLayout,
 } from "../../lib/layout";
@@ -185,17 +186,22 @@ export const BoardPage = () => {
     }
   };
   const [layoutPref, setLayoutPref] = createSignal<KanbanLayout>(
-    resolveKanbanLayout(storedLayout(), window.innerWidth),
+    resolveKanbanLayout(storedLayout(), layoutViewportWidth()),
   );
-  const [viewportWidth, setViewportWidth] = createSignal(window.innerWidth);
+  const [viewportWidth, setViewportWidth] = createSignal(layoutViewportWidth());
   const kanbanLayout = () => effectiveKanbanLayout(layoutPref(), viewportWidth());
   // EFB-67 v2: the header no longer reads this signal. `window.innerWidth` is
   // not the layout viewport once the document overflows horizontally — it was
   // 792 on a 393px phone — so the header is chosen by a CSS media query
-  // instead. The kanban-layout uses above are unchanged and left alone
-  // deliberately: their live behaviour is correct today (the overflow appears
-  // after mount, and effectiveKanbanLayout's thresholds happen to absorb it),
-  // and swapping them is its own ticket rather than a rider on this one.
+  // instead.
+  //
+  // EFB-77 is the follow-up ticket v2 called for: the three kanban-layout
+  // reads here now go through layoutViewportWidth() rather than
+  // window.innerWidth. v2 left them because their live behaviour was correct;
+  // that was true and is not a reason to keep them. They decide whether the
+  // board renders columns — i.e. whether the page overflows — off a number
+  // that only lies once it does, so the first layout change that widens the
+  // kanban makes them pick the wrong branch. Fixed while it is a no-op.
   // Wide + vertical → the Backlog/Icebox rail sits beside the stack. The
   // rail's markup renders either way; this only decides beside vs below.
   const wideRail = () => isWideVertical(kanbanLayout(), viewportWidth());
@@ -359,7 +365,7 @@ export const BoardPage = () => {
       });
   });
 
-  const onResize = () => setViewportWidth(window.innerWidth);
+  const onResize = () => setViewportWidth(layoutViewportWidth());
   onMount(() => window.addEventListener("resize", onResize));
 
   onCleanup(() => {
