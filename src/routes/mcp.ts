@@ -520,6 +520,16 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
     }
   });
 
+  // EFB-98 left this file whole, and the reason is `callTool` above. It looks
+  // like the dispatch half of this handler is business logic, and it is not:
+  // it forwards the caller's Authorization header into `api.request(...)` and
+  // re-enters this same app over HTTP. It is an HTTP CLIENT. Moving it into
+  // src/actions/ would put an HTTP client inside the module defined by having
+  // no HTTP in it. Everything around it is JSON-RPC envelope handling —
+  // `{jsonrpc, id, error:{code}}`, 202 for notifications, protocol version
+  // negotiation — which is transport for a second protocol, not this app's
+  // domain. The 17 tool definitions are a client too, and already migrated.
+  //
   // The transport is POST-only here: no server-initiated stream is offered.
   mcp.get(path("mcp.get"), (c) => c.json({ error: "method-not-allowed" }, 405));
   mcp.delete(path("mcp.delete"), (c) => c.json({ error: "method-not-allowed" }, 405));

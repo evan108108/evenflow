@@ -1,4 +1,4 @@
-// /api/v0/signin/nostr — key-based sign-in (phase 16.7).
+// /api/v0/signin/nostr — HTTP shell over src/actions/signin.ts (phase 16.7).
 //
 // Two proof shapes, one outcome:
 //   * NIP-98 (agents, NIP-07 extensions): `Authorization: Nostr <b64>`
@@ -16,38 +16,43 @@
 //   (explicitly NOT a provider:oauth_id composite), login =
 //   display_name | "nostr-<hex8>".
 //
-// The mint ALSO writes the sessionCache row (pubkey column = the real
-// curve point — no KMS derivation, the caller brought their own key) and
-// registers the real pubkey in sessionKeyRegistrations with
-// session_key_source='nostr'. That single registration is what makes
-// private-board grants level-4 for these callers: the grant recipient is
-// their own key, and only their own key decrypts.
+// WHY THE PROOF CHECK STAYS HERE. NIP-98 signs the HTTP request — its method,
+// its URL, and the raw body bytes. That verification cannot be expressed
+// without the request, so it fails the doctrine test ("would this exist if we
+// weren't serving HTTP?") and stays in the route. What sign-in MEANS — the
+// session row, the level-4 key registration, the audit record — is in the
+// action.
+//
+// RULE 10: the JWT_SIGNING_KEY gate stays ABOVE the body read. An
+// unconfigured server answering a malformed request has always said 500
+// no-signing-key, and parse-first would report that config fault as the
+// caller's 400. Preserved directly rather than by deferral, because the raw
+// bytes are consumed here for the signature check — there is nothing to defer.
 
 import { Hono } from "hono";
-import { path } from "../routes-manifest";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, bootstrap, hashToken } from "../effects";
+import { Cause, Effect, Exit, Option } from "effect";
+
+import { path } from "../routes-manifest";
+import { makeRunJson } from "../lib/run-json";
+import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import {
-  CHALLENGE_TTL_SECONDS,
-  HEX64_RE,
-  NOSTR_JWT_TTL_SECONDS,
-  NOSTR_PROVIDER,
-  defaultNostrLogin,
-  nostrMemberPubkey,
-} from "../nostr";
+import { defaultNostrLogin } from "../nostr";
 import { verifyChallengeEvent, verifyNip98 } from "../lib/audience/nip98-verify";
+import { actionInput } from "../actions/types";
+import {
+  displayNameOf,
+  mintNostrChallenge,
+  mintNostrJwt,
+  mintNostrSession,
+  verifyChallenge,
+  type SigninFailure,
+  type SigninServices,
+} from "../actions/signin";
 
-class ValidationError extends Data.TaggedError("ValidationError")<{
-  readonly reason: string;
-}> {}
-class UnauthorizedError extends Data.TaggedError("UnauthorizedError")<{
-  readonly reason: string;
-}> {}
-
-type SigninFailure = ValidationError | UnauthorizedError | DbError;
-
+// Mapping preserved byte-for-byte from the pre-split file, with one addition:
+// ConfigError carries the 500 `no-signing-key` this router used to answer with
+// a bare c.json before the check moved into the challenge action.
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<SigninFailure>) => {
   const failure = Cause.failureOption(cause);
   if (Option.isSome(failure)) {
@@ -55,8 +60,8 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<SigninFailure>
     switch (f._tag) {
       case "ValidationError":
         return c.json({ error: "invalid-body", reason: f.reason }, 400);
-      case "UnauthorizedError":
-        return c.json({ error: "unauthorized", reason: f.reason }, 401);
+      case "ConfigError":
+        return c.json({ error: "internal", reason: f.reason }, 500);
       case "DbError":
         return c.json({ error: "internal", reason: `db-${f.reason}` }, 500);
     }
@@ -64,106 +69,20 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<SigninFailure>
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const b64url = (bytes: Uint8Array): string =>
-  btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-const hmacHex = async (key: string, message: string): Promise<string> => {
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(key),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(message));
-  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
-};
-
-/** Mint the HS256 JWT (same scheme + key as the 4a AS, so Jwt.verify accepts it). */
-const mintNostrJwt = async (
-  signingKey: string,
-  pubkey: string,
-  login: string,
-  nowSeconds: number,
-): Promise<{ jwt: string; claims: Record<string, unknown> }> => {
-  const claims = {
-    provider: NOSTR_PROVIDER,
-    oauth_id: pubkey,
-    sub: pubkey, // the real curve point — deliberately not a composite
-    login,
-    iat: nowSeconds,
-    exp: nowSeconds + NOSTR_JWT_TTL_SECONDS,
-  };
-  const header = b64url(new TextEncoder().encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
-  const payload = b64url(new TextEncoder().encode(JSON.stringify(claims)));
-  const cryptoKey = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(signingKey),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign(
-    "HMAC",
-    cryptoKey,
-    new TextEncoder().encode(`${header}.${payload}`),
-  );
-  return { jwt: `${header}.${payload}.${b64url(new Uint8Array(sig))}`, claims };
-};
-
-/** ts.pubkey.hmac16 — stateless, verifiable, TTL-bounded. */
-const buildChallenge = async (signingKey: string, pubkey: string, nowSeconds: number): Promise<string> => {
-  const mac = await hmacHex(signingKey, `nostr-challenge:${nowSeconds}:${pubkey}`);
-  return `${nowSeconds}.${pubkey}.${mac.slice(0, 32)}`;
-};
-
-const verifyChallenge = async (
-  signingKey: string,
-  challenge: string,
-  nowSeconds: number,
-): Promise<string | null> => {
-  const [tsRaw, pubkey, mac] = challenge.split(".");
-  if (tsRaw === undefined || pubkey === undefined || mac === undefined) return null;
-  const ts = Number(tsRaw);
-  if (!Number.isInteger(ts) || nowSeconds - ts > CHALLENGE_TTL_SECONDS || ts > nowSeconds + 60) {
-    return null;
-  }
-  if (!HEX64_RE.test(pubkey)) return null;
-  const expected = (await hmacHex(signingKey, `nostr-challenge:${ts}:${pubkey}`)).slice(0, 32);
-  return mac === expected ? pubkey : null;
-};
-
-const displayNameOf = (body: Record<string, unknown> | null): string | null => {
-  const value = body?.["display_name"];
-  return typeof value === "string" && value.trim() !== "" && value.length <= 60
-    ? value.trim()
-    : null;
-};
-
 export const makeSigninRouter = (layerFor: LayerFor = bootstrap) => {
   const signin = new Hono<AppHonoEnv>();
+  const runJson = makeRunJson<SigninFailure, SigninServices>(layerFor, errorResponse);
 
   // ── GET /signin/nostr/challenge?pubkey=<hex64> ──────────────────────────
-  signin.get(path("signin.nostr.challenge"), async (c) => {
-    const signingKey = c.env.JWT_SIGNING_KEY;
-    if (signingKey === undefined || signingKey === "") {
-      return c.json({ error: "internal", reason: "no-signing-key" }, 500);
-    }
-    const pubkey = (c.req.query("pubkey") ?? "").toLowerCase();
-    if (!HEX64_RE.test(pubkey)) {
-      return c.json({ error: "invalid-body", reason: "pubkey" }, 400);
-    }
-    const now = Math.floor(Date.now() / 1000);
-    const challenge = await buildChallenge(signingKey, pubkey, now);
-    return c.json({
-      challenge,
-      expires_in: CHALLENGE_TTL_SECONDS,
-      sign_hint: `nak event -k 22242 -t challenge='${challenge}' --sec <your-nsec>`,
-    });
-  });
+  signin.get(path("signin.nostr.challenge"), async (c) =>
+    runJson(
+      c,
+      mintNostrChallenge(
+        actionInput(null, c.req.param(), undefined, { query: c.req.query() }),
+        c.env.JWT_SIGNING_KEY,
+      ),
+    ),
+  );
 
   // ── POST /signin/nostr — NIP-98 header OR {signed_event, challenge} ─────
   signin.post(path("signin.nostr.verify"), async (c) => {
@@ -212,33 +131,9 @@ export const makeSigninRouter = (layerFor: LayerFor = bootstrap) => {
     const login = displayNameOf(body) ?? defaultNostrLogin(pubkey);
     const { jwt, claims } = await mintNostrJwt(signingKey, pubkey, login, nowSeconds);
 
-    const program = Effect.gen(function* () {
-      const db = yield* Db;
-      const audit = yield* AuditLog;
-      const now = yield* Clock.currentTimeMillis;
-      const hash = yield* hashToken(jwt);
-      const expiresAtMs = (nowSeconds + NOSTR_JWT_TTL_SECONDS) * 1000;
-      // sessionCache.pubkey = the real curve point: the caller brought
-      // their own key, no gateway derivation involved.
-      yield* db.execute(
-        "INSERT OR REPLACE INTO sessionCache (jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)",
-        [hash, pubkey, NOSTR_PROVIDER, pubkey, expiresAtMs, now],
-      );
-      // The level-4 registration: this session's key IS the member's real
-      // key, marked 'nostr' so /session/register-key can't downgrade it.
-      yield* db.execute(
-        "INSERT OR REPLACE INTO sessionKeyRegistrations (jwt_hash, member_pubkey, session_pubkey, created_at_ms, expires_at_ms, session_key_source) VALUES (?, ?, ?, ?, ?, 'nostr')",
-        [hash, nostrMemberPubkey(pubkey), pubkey, now, expiresAtMs],
-      );
-      yield* audit.record({
-        event_type: "nostr_signin",
-        actor: login,
-        details: { pubkey },
-      });
-      return { jwt, claims };
-    });
-
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
+    const exit = await Effect.runPromiseExit(
+      Effect.provide(mintNostrSession({ pubkey, login, jwt, claims, nowSeconds }), layerFor(c.env)),
+    );
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
     return c.json(exit.value, 201);
   });
