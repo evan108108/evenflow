@@ -5,8 +5,13 @@
 
 import { Hono } from "hono";
 
+import type { AppHonoEnv } from "../http";
+
+// Typed with AppHonoEnv like every other router. It binds neither env nor
+// claims, but leaving it as a bare `new Hono()` made it the one router that
+// could not go through the shared mount table in src/router.ts.
 export const makeWellKnownRouter = () => {
-  const wellKnown = new Hono();
+  const wellKnown = new Hono<AppHonoEnv>();
   wellKnown.get("/.well-known/oauth-protected-resource", (c) =>
     c.json({
       resource: "https://evenflow.work",

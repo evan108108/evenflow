@@ -27,26 +27,8 @@ import {
   type Claims,
 } from "../src/effects";
 import type { AppHonoEnv } from "../src/http";
+import { mountAll } from "../src/router";
 import { optionalAuth } from "../src/middleware/requireAuth";
-import { makeAttachmentsRouter } from "../src/routes/attachments";
-import { makeAudiencesRouter } from "../src/routes/audiences";
-import { makeWebhooksRouter } from "../src/routes/webhooks";
-import { makeBoardsRouter } from "../src/routes/boards";
-import { makeCommentsRouter } from "../src/routes/comments";
-import { makeFeedRouter } from "../src/routes/feed";
-import { makeInvitesRouter } from "../src/routes/invites";
-import { makeKeysRouter } from "../src/routes/keys";
-import { makeIssuesRouter } from "../src/routes/issues";
-import { makeImportsRouter } from "../src/routes/imports";
-import { makeMcpRouter } from "../src/routes/mcp";
-import { makeOrgsRouter } from "../src/routes/orgs";
-import { makeSessionRouter } from "../src/routes/session";
-import { makeSigninRouter } from "../src/routes/signin";
-import { makeSprintsRouter } from "../src/routes/sprints";
-import { makeNotificationsRouter } from "../src/routes/notifications";
-import { makeStorageRouter } from "../src/routes/storage";
-import { makeGithubRouter } from "../src/routes/github";
-import { makeWellKnownRouter } from "../src/routes/wellknown";
 import type { IssueShape } from "../src/shapes";
 import { makeDbMock } from "./dbMock";
 
@@ -99,36 +81,12 @@ export const makeHarness = () => {
   );
   const app = new Hono<AppHonoEnv>();
   app.use("/api/v0/*", optionalAuth(() => layer));
-  app.route("/api/v0", makeSigninRouter(() => layer));
-  app.route("/api/v0", makeSessionRouter(() => layer));
-  app.route("/api/v0", makeOrgsRouter(() => layer));
-  app.route("/api/v0", makeInvitesRouter(() => layer));
-  app.route("/api/v0", makeKeysRouter(() => layer));
-  app.route("/api/v0", makeStorageRouter(() => layer));
-  app.route("/api/v0", makeNotificationsRouter(() => layer));
-  app.route("/api/v0", makeGithubRouter(() => layer));
-  app.route("/api/v0", makeBoardsRouter(() => layer));
-  // Before the issues router, mirroring index.ts — see the note there.
-  app.route("/api/v0", makeImportsRouter(() => layer));
-  app.route("/api/v0", makeIssuesRouter(() => layer));
-  app.route("/api/v0", makeSprintsRouter(() => layer));
-  app.route("/api/v0", makeCommentsRouter(() => layer));
-  app.route("/api/v0", makeFeedRouter(() => layer));
-  app.route("/api/v0", makeAttachmentsRouter(() => layer));
-  app.route("/api/v0", makeAudiencesRouter(() => layer));
-  // EFB-62 mounted this. EFB-13 shipped the router without it because its
-  // tests were all pure-surface, so the CRUD surface — including the
-  // private-board refusal this ticket lifted — was never exercised end to end.
-  app.route("/api/v0", makeWebhooksRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeBoardsRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeIssuesRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeSprintsRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeCommentsRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeFeedRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter(() => layer));
-  app.route("/api/v0/orgs/:org_slug", makeAudiencesRouter(() => layer));
-  app.route("/", makeWellKnownRouter());
-  app.route("/", makeMcpRouter(() => layer));
+  // EFB-98: mounted from the same table src/index.ts uses, so the app under
+  // test IS the app that ships. The hand-copied list this replaced had drifted
+  // — it was missing the profile, search and /auth mounts entirely, and all
+  // three org-scoped github/imports/search mounts, so 11 effective paths were
+  // served in production and exercised by nothing.
+  mountAll(app, () => layer);
   return { app, db, audit, emitter, fourA, email, blossom, s3, audience };
 };
 
