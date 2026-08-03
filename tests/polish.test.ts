@@ -57,7 +57,7 @@ describe("board archive", () => {
     expect(((await orgList.json()) as { boards: BoardShape[] }).boards.map((b) => b.slug)).toEqual(["kb2"]);
 
     // Unarchive restores.
-    const un = await h.app.request("/api/v0/boards/kb/unarchive", jsonReq("POST", {}), {});
+    const un = await h.app.request(url("board.archive.clear", { slug: "kb" }), jsonReq("DELETE"), {});
     expect(un.status).toBe(200);
     expect((await listBoards(h)).boards.map((b) => b.slug).sort()).toEqual(["kb", "kb2"]);
   });

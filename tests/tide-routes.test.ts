@@ -88,7 +88,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     await patchIssue(h, a.id, { status: "Done" });
 
     vi.setSystemTime(at(2));
-    const body = await getTide(h, url("sprint.list", { slug: "kb" }) + sprint.id + "/tide?days=3");
+    const body = await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }) + "?days=3");
 
     expect(body.days).toHaveLength(3);
     expect(body.days.map((d) => d.remaining_pts)).toEqual([8, 3, 3]);

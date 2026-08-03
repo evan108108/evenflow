@@ -336,7 +336,10 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // could quietly match nothing and every assertion below would vacuously
   // pass. Pin the scale so that failure is loud.
   it("finds every emitSecureBoardEvent callsite", () => {
-    expect(CALLSITES.length).toBe(32);
+    // 32 before EFB-98. Folding POST /issues/:id/duplicate-of into
+    // PATCH /issue/:id deleted that route's two emits — the set/clear pair —
+    // because PATCH already published for the same edit.
+    expect(CALLSITES.length).toBe(30);
     expect(CALLSITES.filter((c) => c.actor === "<unparsed>")).toEqual([]);
   });
 

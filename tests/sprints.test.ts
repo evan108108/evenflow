@@ -136,8 +136,8 @@ describe("sprint membership", () => {
     const { issue: added } = await addIssue(h, sprint.id, issue.id);
     expect(added.sprint_id).toBe(sprint.id);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: issue.id }),
+      jsonReq("DELETE"),
       {},
     );
     expect(res.status).toBe(200);
@@ -344,8 +344,8 @@ describe("phase 21a — sprint membership audit + delete", () => {
 
     vi.setSystemTime(3_000);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: issue.id }),
+      jsonReq("DELETE"),
       {},
     );
     expect(res.status).toBe(200);
@@ -465,8 +465,8 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await startSprint(h, sprint.id);
     const issue = await createIssue(h, { title: "not now" });
     const iced = await h.app.request(
-      `/api/v0/issues/${issue.id}/send_to_icebox`,
-      jsonReq("POST", {}),
+      url("issue.container.set", { id: issue.id }),
+      jsonReq("POST", { container: "icebox" }),
       {},
     );
     expect(iced.status).toBe(200);
@@ -533,7 +533,14 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(empty.status).toBe(404);
   });
 
-  it("remove-issue is migrated too — same factory, same guarantees", async () => {
+  // EFB-98: detach used to be a POST carrying `{issue_id}`, so it shared the
+  // unknown-key guarantee asserted for attach above. It is a DELETE on an
+  // addressable member now and reads no body at all, which means there is no
+  // body to reject a key from — the guarantee did not weaken, it stopped
+  // applying. What replaces it is that the target genuinely comes from the
+  // PATH: an id that names nothing has to 404 rather than silently detach
+  // whatever the sprint happened to hold.
+  it("remove-issue takes its target from the path, and 404s an id that names nothing", async () => {
     const h = makeHarness();
     await createBoard(h);
     const sprint = await createSprint(h);
@@ -541,13 +548,15 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, issue.id);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id, nope: 1 }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: "no-such-issue" }),
+      jsonReq("DELETE"),
       {},
     );
 
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { reason: string }).reason).toBe("nope-unknown");
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { reason: string }).reason).toBe("issue");
+    // The real member is untouched by the failed detach.
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["sprint_id"]).toBe(sprint.id);
   });
 
   it("add-issue to a PLANNING sprint leaves the container at backlog", async () => {

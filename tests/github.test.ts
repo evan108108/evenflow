@@ -659,8 +659,8 @@ describe("EFB-66 — github transitions emit board events", () => {
 
   it("leaves an iceboxed ticket parked — icebox is sticky under webhooks", async () => {
     const promote = await h.app.request(
-      `/api/v0/issues/${issueRow()["id"]}/send_to_icebox`,
-      jsonReq("POST", {}),
+      url("issue.container.set", { id: String(issueRow()["id"]) }),
+      jsonReq("POST", { container: "icebox" }),
       ENV,
     );
     expect(promote.status).toBe(200);

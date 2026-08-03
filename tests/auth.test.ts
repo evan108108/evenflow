@@ -273,8 +273,8 @@ describe("GET /auth/callback", () => {
     expect(res.headers.get("Location")).toBe("/signin#jwt=jwt.from.4a");
 
     expect(fetchSpy).toHaveBeenCalledOnce();
-    const [url, init] = fetchSpy.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(url).toBe("https://api.4a4.ai/auth/token");
+    const [tokenUrl, init] = fetchSpy.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(tokenUrl).toBe("https://api.4a4.ai/auth/token");
     const body = new URLSearchParams(init.body as string);
     expect(body.get("grant_type")).toBe("authorization_code");
     expect(body.get("code")).toBe("abc");

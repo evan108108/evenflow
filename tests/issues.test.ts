@@ -404,9 +404,9 @@ describe("auth gating", () => {
     ["PATCH", url("issue.get", { id: "x" })],
     ["DELETE", url("issue.get", { id: "x" })],
     ["POST", url("issue.transition", { id: "x" })],
-    ["POST", "/api/v0/issues/x/promote_to_backlog"],
-    ["POST", "/api/v0/issues/x/promote_to_active"],
-    ["POST", "/api/v0/issues/x/send_to_icebox"],
+    // EFB-98: the three promote_to_*/send_to_icebox routes are one route now,
+    // with the destination in the body.
+    ["POST", url("issue.container.set", { id: "x" })],
   ])("%s %s rejects unauthenticated mutations with 401", async (method, path) => {
     const h = makeHarness();
     const res = await h.app.request(path, { method }, {});
@@ -638,8 +638,8 @@ describe("PATCH /api/v0/issues/:id/reorder", () => {
   it("requires auth", async () => {
     const h = makeHarness();
     const res = await h.app.request(
-      "/api/v0/issues/x/reorder",
-      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: "{}" },
+      url("issue.position.set", { id: "x" }),
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" },
       {},
     );
     expect(res.status).toBe(401);

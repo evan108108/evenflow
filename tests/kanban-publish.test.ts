@@ -463,7 +463,7 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     const issue = await createIssue(h);
     await settle();
 
-    await h.app.request(`/api/v0/issues/${issue.id}/send_to_icebox`, jsonReq("POST", {}), {});
+    await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "icebox" }), {});
     await settle();
 
     // By row, not by position — creation now publishes a 30553 of its own
