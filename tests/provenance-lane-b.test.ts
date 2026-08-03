@@ -53,7 +53,7 @@ import type { BoardEvent } from "../src/durable-objects/BoardDO";
 import type { BoardShape } from "../src/shapes";
 
 // `?raw` — read the route sources at build time. See tests/raw.d.ts.
-import ISSUES_SRC from "../src/routes/issues.ts?raw";
+import ISSUES_SRC from "../src/actions/issues.ts?raw";
 // EFB-98: comments' emit callsites live in the ACTION module now — the route
 // file is a transport shell. A source-scanning guard has to follow the code it
 // guards, or it silently starts proving nothing.
@@ -269,7 +269,11 @@ interface Callsite {
 }
 
 const SOURCES: ReadonlyArray<readonly [string, string]> = [
-  ["routes/issues.ts", ISSUES_SRC],
+  // EFB-98 fan-out A: the issue emits moved to the action module. This path
+  // has to follow them — left pointing at src/routes/issues.ts the guard would
+  // have kept passing while scanning a file with no emits left in it, which is
+  // the worst failure mode a source-scanning check has.
+  ["actions/issues.ts", ISSUES_SRC],
   ["actions/comments.ts", COMMENTS_SRC],
   ["routes/github.ts", GITHUB_SRC],
   ["routes/boards.ts", BOARDS_SRC],
@@ -394,10 +398,10 @@ describe("EFB-63 — every emit callsite names its actor", () => {
     const callerSites = CALLSITES.filter((c) => c.actor.includes("ProvenanceFromCaller"));
     expect(callerSites.map((c) => c.file).sort()).toEqual([
       "actions/comments.ts", // comment.created — caller is the author
-      "routes/issues.ts", // issue.created
-      "routes/issues.ts", // issue.transitioned
-      "routes/issues.ts", // issue.transitioned (duplicate-of, when it moved)
-      "routes/issues.ts", // issue.container_changed
+      "actions/issues.ts", // issue.created
+      "actions/issues.ts", // issue.transitioned
+      "actions/issues.ts", // issue.transitioned (duplicate-of, when it moved)
+      "actions/issues.ts", // issue.container_changed
       "routes/sprints.ts", // sprint start — backlog → active bulk promote
       "routes/sprints.ts", // add-issue mid-sprint — backlog → active promote
     ]);
