@@ -652,3 +652,147 @@ describe("evaluateDelivery", () => {
     expect(closed.outcomes[0]?.effects[0]).toMatchObject({ state: "closed" });
   });
 });
+
+// ── EFB-101: mentions vs the tickets a PR is ABOUT ────────────────────────
+//
+// Everything above pins `shortIds`, which answers "which tickets does this PR
+// mention". The automation used to consume that set, so a body citing prior
+// work for a reviewer transitioned every ticket it named — one batch of four
+// PRs dragged eight finished tickets back onto the board.
+//
+// These pin `closingIds`, the subset the PR is ABOUT.
+describe("extractTicketRefs — closingIds", () => {
+  // The exact body shape that caused the incident.
+  it("separates a Closes ref from the prior work cited around it", () => {
+    const r = extractTicketRefs({
+      body: "Related work: KB-33, KB-98. Closes KB-83.",
+    });
+    expect(r.closingIds).toEqual(["KB-83"]);
+    expect([...r.shortIds].sort()).toEqual(["KB-33", "KB-83", "KB-98"]);
+  });
+
+  // The primary workflow, and the case a keyword-only rule would have broken:
+  // most PRs name their ticket in the branch and nowhere else.
+  it("treats a branch name as ABOUT, with no keyword anywhere", () => {
+    const r = extractTicketRefs({ branch: "feature/KB-7-external-state" });
+    expect(r.closingIds).toEqual(["KB-7"]);
+  });
+
+  it("treats a title as ABOUT", () => {
+    const r = extractTicketRefs({ title: "KB-7: wire the pill" });
+    expect(r.closingIds).toEqual(["KB-7"]);
+  });
+
+  // The asymmetry the whole fix rests on: prose cites, branches declare.
+  it("does NOT treat a bare body ref as ABOUT, but still mentions it", () => {
+    const r = extractTicketRefs({ body: "Follow-up to KB-61 and the KB-98 refactor." });
+    expect(r.closingIds).toEqual([]);
+    expect([...r.shortIds].sort()).toEqual(["KB-61", "KB-98"]);
+  });
+
+  it("accepts the spellings people actually write", () => {
+    expect(extractTicketRefs({ body: "closes kb-1" }).closingIds).toEqual(["KB-1"]);
+    expect(extractTicketRefs({ body: "Closes: KB-2" }).closingIds).toEqual(["KB-2"]);
+    expect(extractTicketRefs({ body: "Fixes #KB-3" }).closingIds).toEqual(["KB-3"]);
+    expect(extractTicketRefs({ body: "Resolved KB-4" }).closingIds).toEqual(["KB-4"]);
+  });
+
+  it("an explicit evenflow: line settles both questions", () => {
+    const r = extractTicketRefs({ body: "evenflow: KB-9", title: "KB-7 thing" });
+    expect(r.shortIds).toEqual(["KB-9"]);
+    expect(r.closingIds).toEqual(["KB-9"]);
+  });
+
+  it("closingIds is always a subset of shortIds", () => {
+    const r = extractTicketRefs({
+      title: "KB-1 thing",
+      body: "Refs KB-2. Closes KB-3.",
+      branch: "feature/KB-4-x",
+    });
+    for (const id of r.closingIds) expect(r.shortIds).toContain(id);
+  });
+
+  // A hyperlink points at the ticket's PAGE. Reading it as "this PR touches
+  // that ticket" invents an association the author did not make — and this is
+  // one of the two workarounds normally suggested for citing a ticket safely,
+  // which did NOT work before this.
+  it("ignores a ref inside a URL, in both sets", () => {
+    const r = extractTicketRefs({
+      body: "Context: https://evenflow.work/@evan/board/issue/KB-72 explains it.",
+    });
+    expect(r.shortIds).toEqual([]);
+    expect(r.closingIds).toEqual([]);
+  });
+
+  // The other suggested workaround, equally broken before this.
+  it("ignores a ref inside code, in both sets", () => {
+    const span = extractTicketRefs({ body: "the `KB-83` helper" });
+    expect(span.shortIds).toEqual([]);
+    const fenced = extractTicketRefs({ body: "```\nKB-84\n```" });
+    expect(fenced.shortIds).toEqual([]);
+  });
+
+  it("a Closes inside a code sample does not close anything", () => {
+    const r = extractTicketRefs({ body: "Write it like:\n\n```\nCloses KB-5\n```" });
+    expect(r.closingIds).toEqual([]);
+    expect(r.shortIds).toEqual([]);
+  });
+});
+
+// ── EFB-101 at the engine seam ────────────────────────────────────────────
+//
+// The unit tests above prove the two SETS are computed correctly. These prove
+// the engine spends them correctly: a mention earns its link and stops there,
+// while the ticket the PR is about still transitions. Both halves matter — the
+// fix is worthless if it also silences the automation.
+describe("evaluateDelivery — mentions get the link, not the automation", () => {
+  const rules = asRules(DEFAULT_PRESET_RULES);
+
+  /** The opened-PR fixture with an extra ticket CITED in the body. */
+  const withMention = () => {
+    const raw = JSON.parse(JSON.stringify(fixture("pull_request.opened"))) as Record<
+      string,
+      unknown
+    >;
+    const pr = raw["pull_request"] as Record<string, unknown>;
+    pr["body"] = `${String(pr["body"])}\n\nFollow-up to KB-9.`;
+    return parseDelivery("pull_request", raw);
+  };
+
+  const plan = (targets: TargetIssue[]) =>
+    evaluateDelivery({
+      delivery: withMention(),
+      rules,
+      columns: COLUMNS,
+      targets,
+      unresolvedShortIds: [],
+      authorPubkey: null,
+    });
+
+  const kinds = (o: { effects: ReadonlyArray<{ kind: string }> } | undefined) =>
+    (o?.effects ?? []).map((e) => e.kind);
+
+  it("plans NO rule effects for a ticket the body merely cites", () => {
+    const out = plan([target({ id: "i9", short_id: "KB-9" })]).outcomes[0];
+    expect(kinds(out)).toEqual(["record_pr_link"]);
+  });
+
+  it("still plans the transition for the ticket the PR is about", () => {
+    const out = plan([target()]).outcomes[0];
+    expect(kinds(out)).toContain("record_pr_link");
+    // KB-7 is named by the branch and the title, so it is ABOUT.
+    expect(kinds(out).length).toBeGreaterThan(1);
+  });
+
+  it("splits them correctly in ONE delivery naming both", () => {
+    const outcomes = plan([target(), target({ id: "i9", short_id: "KB-9" })]).outcomes;
+    const about = outcomes.find((o) => o.short_id === "KB-7");
+    const cited = outcomes.find((o) => o.short_id === "KB-9");
+    // Both are linked — the citing ticket still shows the PR on its card.
+    expect(kinds(about)).toContain("record_pr_link");
+    expect(kinds(cited)).toContain("record_pr_link");
+    // Only one is transitioned. This is the incident, in miniature.
+    expect(kinds(about).length).toBeGreaterThan(1);
+    expect(kinds(cited)).toEqual(["record_pr_link"]);
+  });
+});
