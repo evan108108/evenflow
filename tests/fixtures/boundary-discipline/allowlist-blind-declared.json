@@ -1,0 +1,11 @@
+{
+  "$comment": "EFB-87 fixture. The same entry as allowlist-stale-renamed.json, plus a written reason why detection cannot see the read. The escape hatch has to be proven to WORK, not just to exist: a hatch nobody can demonstrate opening is one the next person routes around by deleting the check. Declared debt still carries a sunset and is still reported — it is acknowledged, not exempt.",
+  "unmigrated": [
+    {
+      "route": "POST /synthetic/renamed",
+      "file": "tests/fixtures/boundary-discipline/renamed-marker/synthetic-routes.ts",
+      "sunset": "2026-10-31",
+      "scanner_blind_reason": "Reads its body through readRequestBody, a cross-file helper the one-level-deep resolver cannot follow. Verified by inspection."
+    }
+  ]
+}

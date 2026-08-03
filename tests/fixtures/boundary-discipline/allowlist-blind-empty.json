@@ -1,0 +1,11 @@
+{
+  "$comment": "EFB-87 fixture. A blind declaration with nothing written in it — the form of a declaration with none of the cost. It would silence the re-audit while recording nothing a reviewer could dispute, so it is rejected rather than honoured.",
+  "unmigrated": [
+    {
+      "route": "POST /synthetic/renamed",
+      "file": "tests/fixtures/boundary-discipline/renamed-marker/synthetic-routes.ts",
+      "sunset": "2026-10-31",
+      "scanner_blind_reason": "   "
+    }
+  ]
+}

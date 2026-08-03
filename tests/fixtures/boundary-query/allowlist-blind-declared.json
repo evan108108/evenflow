@@ -1,0 +1,11 @@
+{
+  "$comment": "EFB-87 fixture. The same entry as allowlist-stale-renamed.json plus a written reason detection cannot see the read. Proves the escape hatch opens — a hatch nobody can demonstrate opening is one the next person routes around by deleting the check.",
+  "unmigrated": [
+    {
+      "route": "GET /synthetic/renamed",
+      "file": "tests/fixtures/boundary-query/renamed-marker/synthetic-routes.ts",
+      "sunset": "2026-10-31",
+      "scanner_blind_reason": "Reads its params through readParams, a cross-file helper the one-level-deep resolver cannot follow. Verified by inspection."
+    }
+  ]
+}

@@ -183,8 +183,45 @@ Modelled on adaptengine-worker's `contracts/check-breaking-changes.mjs`: plain `
 
 - Every entry carries a **sunset date**, and the check **fails** once that date passes — it does not warn. A date that only warns is documentation. Failing forces anyone who needs more time to extend the date in a PR, where the decision is visible in review instead of buried in CI output nobody reads.
 - Sunsets more than 180 days out are **rejected outright**. `"sunset": "2099-01-01"` is an amnesty wearing a ratchet's clothes.
-- Entries for routes that have since been migrated are reported as prunable.
+- Every entry is **re-audited against detection on every run**, and a mismatch fails. See below.
 - **New routes may not be added.** Write them against `parseRouteBody`.
+
+### An entry must still describe real debt (EFB-87)
+
+The allowlist was read in one direction only: detection found debt, the allowlist excused it. Nothing ever asked whether an entry still described anything.
+
+That made the check quieter about exactly the routes it knew least about. Rename the local `readJsonBody` helper to `readRequestBody` and forget `UNMIGRATED_MARKERS`, and:
+
+| | un-allowlisted route | allowlisted route |
+|---|---|---|
+| before EFB-87 | **fails loudly** — "no body read detected, but that is not proof there is none" | **passes, silently** |
+
+The allowlist bought silence. Worse, the rename stops *every* entry on the list from being checked at the same moment, so the check keeps printing `OK` for a scan that has stopped looking. Detection drifting from safety to placebo is the same silent-success disease this document is about, wearing the tool's own clothes.
+
+So an entry must now be backed by **detected** debt. When it is not, the check fails and names it:
+
+- **The route reads its body through `parseRouteBody`.** It is migrated — prune the entry. This is step 4 of *Migrating a route* getting skipped, and a ratchet that keeps entries it no longer needs cannot report how much debt is actually left.
+- **No marker matches at all.** Either the route was fixed without `parseRouteBody`, or a marker was renamed and `UNMIGRATED_MARKERS` is stale — in which case *every* entry needs re-auditing, not just this one. The check cannot tell which, so it says both.
+- **The entry names no route the scan can see.** Renamed, deleted, or registered with a non-literal path. An entry that describes nothing protects nothing.
+
+**The escape hatch is `scanner_blind_reason`**, and it is deliberately narrow: a written reason why *detection* cannot see debt that is really there — a read behind a helper the one-level-deep resolver won't follow, or a route the registration regex cannot match. It downgrades the failure to an acknowledged warning, printed on the route's own debt line so the claim stays visible and disputable in review. An empty one is rejected: the form of a declaration with none of the cost.
+
+```json
+{
+  "route": "POST /example",
+  "file": "src/routes/example.ts",
+  "sunset": "2026-12-31",
+  "scanner_blind_reason": "Reads multipart inside readUpload's Effect.gen, which the resolver cannot follow. Verified by inspection."
+}
+```
+
+No entry uses it today — verified by probing the raw classification of all 31 — and that is the intended state. It exists because without it a genuinely invisible read has no honest home: it cannot stay in `unmigrated` (the re-audit would fail it) and putting it under `noBody` would be a false declaration.
+
+### The body check proves it can fail, too
+
+`tests/boundary-discipline.test.ts` runs `check-boundary-discipline.mjs` against synthetic fixtures in `tests/fixtures/boundary-discipline/` — asserting non-zero on an un-migrated handler, on each re-audit failure above, and zero on a migrated one and on a declared blind spot.
+
+This check shipped in EFB-54 with **no test that ran it at all**; only the query half (EFB-71) had fixtures. The older and more security-relevant of the two was the one trusted purely because it had been observed passing, which is indistinguishable from a check that cannot fail. `--routes-dir` and `--allowlist` exist for the same reason they do on the query check: so the proof re-runs on every CI instead of being a transcript pasted into a PR once.
 
 ### Bodiless routes are declared, not detected
 
@@ -201,7 +238,7 @@ A declaration outranks detection in both directions: a route declared as unmigra
 1. Write the `Schema.Struct` for its body. Start from what the handler currently validates by hand.
 2. Replace `readJsonBody` with `parseRouteBody`.
 3. Delete the hand-rolled shape checks the schema now covers. Keep the authorization checks.
-4. Remove the route from `boundary-allowlist.json`.
+4. Remove the route from `boundary-allowlist.json`. Since EFB-87 the check **fails** if you don't — a stale entry used to be a warning, and warnings are how a ratchet quietly stops measuring anything.
 5. Run `npm run check:boundary` and `npm test`.
 
 Existing behavior must not change except that previously-silent failures now return `400`. If a migration changes a status code or an error `reason` string, that is a separate decision needing its own ticket — say so rather than folding it in.
@@ -263,7 +300,7 @@ Repeated keys (`?status=a&status=b`) still collapse to the last value, unchanged
 npm run check:boundary-query
 ```
 
-`scripts/check-boundary-query.mjs`, with `scripts/boundary-query-allowlist.json` as its ratchet. Same contract as the body check: sunsets fail rather than warn, 180-day horizon, new routes may not be added. It scans **every verb**, since a query string rides any request.
+`scripts/check-boundary-query.mjs`, with `scripts/boundary-query-allowlist.json` as its ratchet. Same contract as the body check: sunsets fail rather than warn, 180-day horizon, new routes may not be added, and every entry is re-audited against detection (EFB-87) with the same `scanner_blind_reason` hatch. It scans **every verb**, since a query string rides any request.
 
 It shares `scripts/lib/route-scan.mjs` with the body check — handler location is identical work, and two copies would diverge on the first fix.
 
@@ -288,6 +325,7 @@ A check that has only ever been observed passing is indistinguishable from a che
 
 ## Related tickets
 
+- **EFB-87** *(shipped)* — the allowlists are re-audited against detection, so an entry cannot go inert while the check keeps reporting `OK`. Adds `scanner_blind_reason`, the body check's first fixtures, and `--routes-dir`/`--allowlist` overrides. See *An entry must still describe real debt* above.
 - **EFB-71** *(shipped)* — the same strict-unknown rule for query params. `parseRouteQuery`, the `check:boundary-query` ratchet, and `GET /boards/:slug/issues` as the reference migration. See the query-string section above.
 - **EFB-53** — `PATCH /issues/:id` accepted unknown keys silently. Closed by construction when the reference route migrated; the strict-unknown tests in `tests/boundary-discipline.test.ts` are its regression guard.
 - **EFB-58** *(shipped)* — typed provenance for identity references in signed-event contexts. Applied the `Provenance` struct to both signed-event builders that have an actor slot, and added the constructors. See the Provenance section above.

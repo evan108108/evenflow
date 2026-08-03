@@ -16,7 +16,7 @@
 // This is the sharper form of "a check must prove it fails": not a transcript
 // pasted into a PR once, but a proof that re-runs on every CI.
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { Effect, Schema } from "effect";
 import { QueryString, decodeQuery } from "../src/lib/route-body";
@@ -33,17 +33,23 @@ const runChecker = (
   routesDir: string,
   allowlist = "tests/fixtures/boundary-query/no-allowlist.json",
 ) => {
-  try {
-    const stdout = execFileSync(
-      process.execPath,
-      ["scripts/check-boundary-query.mjs", "--routes-dir", routesDir, "--allowlist", allowlist],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    return { code: 0, output: stdout };
-  } catch (err) {
-    const e = err as { status: number; stdout: string; stderr: string };
-    return { code: e.status, output: `${e.stdout}${e.stderr}` };
-  }
+  // EFB-87: `spawnSync` rather than `execFileSync`. The acknowledged-debt lines
+  // go to stderr while the OK line goes to stdout, and execFileSync returns
+  // stdout ALONE on a zero exit — so a success-path assertion about a warning
+  // was checking a stream it could not see.
+  const r = spawnSync(
+    process.execPath,
+    ["scripts/check-boundary-query.mjs", "--routes-dir", routesDir, "--allowlist", allowlist],
+    {
+      encoding: "utf8",
+      // Fixture entries carry sunsets, so "today" has to be pinned. Left to the
+      // real clock these turn red on a calendar boundary rather than on a
+      // regression, and a test that fails for a reason nobody changed is one
+      // people learn to re-run rather than read.
+      env: { ...process.env, BOUNDARY_TODAY: "2026-09-01" },
+    },
+  );
+  return { code: r.status ?? 1, output: `${r.stdout}${r.stderr}` };
 };
 
 describe("the ratchet can fail — proven, not assumed", () => {
@@ -72,6 +78,56 @@ describe("the ratchet can fail — proven, not assumed", () => {
     const { code, output } = runChecker("src/routes", "scripts/boundary-query-allowlist.json");
     expect(code).toBe(0);
     expect(output).toContain("[boundary-query] OK");
+  });
+});
+
+// ── EFB-87: the allowlist is re-audited, so it cannot go inert ────────────
+//
+// The query half of the same drift the body check documents at length: an entry
+// was only ever read as an EXCUSE, never checked to see whether it still
+// described anything. Losing a marker therefore made the check quieter about
+// exactly the routes it knew least about.
+
+describe("EFB-87 — an allowlist entry must still describe detected debt", () => {
+  const F = "tests/fixtures/boundary-query";
+
+  it("FAILS on an entry for a route that already reads through parseRouteQuery", () => {
+    const { code, output } = runChecker(`${F}/migrated`, `${F}/allowlist-stale-migrated.json`);
+    expect(code).toBe(1);
+    expect(output).toContain("GET /synthetic/migrated");
+    expect(output).toContain("reads its query through parseRouteQuery");
+  });
+
+  // The drift class itself: rename the helper, and every entry on the list
+  // stops being checked at the same moment. That the check now names the marker
+  // list as a suspect is the point — the single stale entry is the symptom.
+  it("FAILS when no marker matches, and says the marker list may be stale", () => {
+    const { code, output } = runChecker(`${F}/renamed-marker`, `${F}/allowlist-stale-renamed.json`);
+    expect(code).toBe(1);
+    expect(output).toContain("GET /synthetic/renamed");
+    expect(output).toContain("QUERY_MARKERS is now stale");
+  });
+
+  it("FAILS on an entry naming a route the scan cannot see", () => {
+    const { code, output } = runChecker(`${F}/migrated`, `${F}/allowlist-dangling.json`);
+    expect(code).toBe(1);
+    expect(output).toContain("GET /synthetic/gone");
+    expect(output).toContain("matches no route this scan can see");
+  });
+
+  // The hatch has to be provable, not just present. An escape hatch nobody can
+  // demonstrate opening is one the next person routes around by deleting the
+  // check — and the declaration is still reported, so it stays arguable.
+  it("PASSES on the same entry once the blind spot is declared in writing", () => {
+    const { code, output } = runChecker(`${F}/renamed-marker`, `${F}/allowlist-blind-declared.json`);
+    expect(code).toBe(0);
+    expect(output).toContain("declared: Reads its params through readParams");
+  });
+
+  it("still counts a declared-blind route as debt, not as reading no query", () => {
+    const { output } = runChecker(`${F}/renamed-marker`, `${F}/allowlist-blind-declared.json`);
+    expect(output).toContain("1 allowlisted");
+    expect(output).toContain("0 handler(s) had no detected query read");
   });
 });
 

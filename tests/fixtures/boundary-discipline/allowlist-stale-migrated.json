@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An allowlist entry for a route that reads its body through parseRouteBody — the state a migration leaves behind when step 4 (remove the route from the allowlist) is skipped. The checker must FAIL and name this entry. Sunset is in the past-proof range only because the test pins BOUNDARY_TODAY; a fixture whose outcome depends on the real date is a test that turns red on a calendar boundary rather than on a regression.",
+  "unmigrated": [
+    {
+      "route": "POST /synthetic/migrated",
+      "file": "tests/fixtures/boundary-discipline/migrated/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

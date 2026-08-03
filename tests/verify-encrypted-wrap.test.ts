@@ -10,6 +10,7 @@
 // CI job both read that and nothing else.
 
 import { execFile, spawn } from "node:child_process";
+import * as nodeModule from "node:module";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,26 @@ const verifyStdin = (args: string[], input: string): Promise<Run> =>
     child.stdin.end(input);
   });
 
+/**
+ * The verifier needs `module.registerHooks` to load the writer's own TS module:
+ * Node >= 22.15, or >= 23.5 on the 23 line. On anything older the tool exits
+ * USAGE before doing any work, and this suite must SKIP rather than run.
+ *
+ * EFB-90 repaired the script's capability gate, which had been unreachable
+ * behind a named import of the very export it checks for. That was the right
+ * fix and it exposed a second problem, which EFB-87 hit on Node 23.3: with the
+ * gate reporting USAGE cleanly instead of dying on an import, the usage-path
+ * tests started PASSING. `exits USAGE on malformed JSON` went green on a run
+ * where the JSON was never parsed at all.
+ *
+ * A test that passes because the tool refused to start is the exact thing this
+ * suite's own header warns about — a verifier that proves nothing while looking
+ * like it proved something. Red was noisy; falsely green is worse.
+ *
+ * So: skipped, visibly, rather than either.
+ */
+const HAS_REGISTER_HOOKS = "registerHooks" in nodeModule;
+
 let dir: string;
 
 // The board's audience identity — the SENDER of every wrap.
@@ -96,7 +117,7 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("the instrument can fail (falsification first)", () => {
+describe.skipIf(!HAS_REGISTER_HOOKS)("the instrument can fail (falsification first)", () => {
   it("REJECTS the board's audience key — the exact confusion the flag name guards", async () => {
     // This is the regression guard for EFB-55's central finding: the audience
     // key is the SENDER, and the outer layer is ECDH between a discarded
@@ -170,7 +191,7 @@ describe("the instrument can fail (falsification first)", () => {
   });
 });
 
-describe("the instrument succeeds when it should", () => {
+describe.skipIf(!HAS_REGISTER_HOOKS)("the instrument succeeds when it should", () => {
   it("unwraps with the recipient's key and prints the inner event", async () => {
     const r = await verify(["--wrap", wrapPath], {
       EVENFLOW_RECIPIENT_SECRET: bytesToHex(memberPriv),
@@ -229,7 +250,7 @@ describe("the instrument succeeds when it should", () => {
   });
 });
 
-describe("--expect-publisher turns 'I decrypted something' into 'my board published this'", () => {
+describe.skipIf(!HAS_REGISTER_HOOKS)("--expect-publisher turns 'I decrypted something' into 'my board published this'", () => {
   it("passes when the publisher matches, and SHOWS the identity either way", async () => {
     const r = await verify(["--wrap", wrapPath, "--expect-publisher", audPub], {
       EVENFLOW_RECIPIENT_SECRET: bytesToHex(memberPriv),
@@ -259,7 +280,7 @@ describe("--expect-publisher turns 'I decrypted something' into 'my board publis
   });
 });
 
-describe("no secrets in output", () => {
+describe.skipIf(!HAS_REGISTER_HOOKS)("no secrets in output", () => {
   it("never echoes the key, on success or on failure", async () => {
     const hex = bytesToHex(memberPriv);
     const ok = await verify(["--wrap", wrapPath, "--json"], { EVENFLOW_RECIPIENT_SECRET: hex });

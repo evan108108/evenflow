@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An entry for a route that already reads its query through parseRouteQuery — what a migration leaves behind when the allowlist entry is not pruned. The checker must FAIL and name it.",
+  "unmigrated": [
+    {
+      "route": "GET /synthetic/migrated",
+      "file": "tests/fixtures/boundary-query/migrated/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

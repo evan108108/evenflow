@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An allowlist entry for a route whose body read is invisible to detection because the helper was renamed out from under UNMIGRATED_MARKERS. THIS IS THE BUG: before the re-audit, this exact input produced a clean OK, while the identical route without an entry failed loudly. The checker must now FAIL and say the marker list may be stale.",
+  "unmigrated": [
+    {
+      "route": "POST /synthetic/renamed",
+      "file": "tests/fixtures/boundary-discipline/renamed-marker/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

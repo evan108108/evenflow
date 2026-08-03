@@ -1,0 +1,10 @@
+{
+  "$comment": "EFB-87 fixture. An entry for a route whose query read is invisible because the helper was renamed out from under QUERY_MARKERS. Before the re-audit this produced a clean OK while the identical un-allowlisted route was simply counted as reading no query — the allowlist bought silence about the route it knew least about.",
+  "unmigrated": [
+    {
+      "route": "GET /synthetic/renamed",
+      "file": "tests/fixtures/boundary-query/renamed-marker/synthetic-routes.ts",
+      "sunset": "2026-10-31"
+    }
+  ]
+}

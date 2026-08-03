@@ -18,6 +18,33 @@
 // MAX_SUNSET_HORIZON_DAYS out are rejected outright, because "sunset: 2099"
 // is an amnesty wearing a ratchet's clothes.
 //
+// EFB-87: every entry is RE-AUDITED against detection on every run, and a
+// mismatch fails rather than warns.
+//
+// The hole that closed. Detection and the allowlist were checked in only one
+// direction — detection found debt, the allowlist excused it. Nothing checked
+// that an entry still described anything real. So for an UNallowlisted route,
+// losing the marker (rename `readJsonBody` → `readRequestBody` and forget this
+// list) errored loudly; for an allowlisted one it passed in silence. The
+// allowlist quietly downgraded those routes from detected debt to declared
+// debt, and the check went on printing OK for a scan that had stopped looking.
+// Detection drifting from safety to placebo is the same silent-success disease
+// the whole ticket family is about, wearing the tool's own clothes.
+//
+// So an entry must now be backed by DETECTED debt. When it is not, the two
+// live explanations are opposite and both matter: the route got migrated (prune
+// the entry) or the marker got renamed (fix UNMIGRATED_MARKERS, then re-audit
+// every entry it was silently covering). The check cannot tell which, so it
+// names the entry and says both.
+//
+// The escape hatch is `scanner_blind_reason`, and it is deliberately narrow: an
+// entry may carry a written reason why DETECTION cannot see debt that is really
+// there — a body read behind a helper the resolver won't follow, or a route
+// registered with a non-literal path the regex can't match. That downgrades the
+// failure to an acknowledged warning. It is a declaration, so it costs a
+// sentence a human has to write and a reviewer can dispute, which is the only
+// thing separating it from the silence it replaces.
+//
 // This script deliberately FAILS on route shapes it cannot parse rather than
 // skipping them. A checker that silently ignores what it does not understand
 // is the very bug class it exists to catch.
@@ -31,9 +58,9 @@ import { scanRoutes, withHelpers } from "./lib/route-scan.mjs";
 
 const LOG = "[boundary]";
 
-const ROUTES_DIR = "src/routes";
+const DEFAULT_ROUTES_DIR = "src/routes";
 
-const ALLOWLIST_PATH = "scripts/boundary-allowlist.json";
+const DEFAULT_ALLOWLIST_PATH = "scripts/boundary-allowlist.json";
 
 const MIGRATED_MARKER = "parseRouteBody";
 
@@ -62,9 +89,22 @@ const VERBS = ["post", "patch", "put"];
 
 const MAX_SUNSET_HORIZON_DAYS = 180;
 
-const args = new Set(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const flag = (name) => {
+  const i = argv.indexOf(name);
+  return i === -1 ? null : (argv[i + 1] ?? null);
+};
 
-const jsonOut = args.has("--json");
+const jsonOut = argv.includes("--json");
+
+// EFB-87: the same overrides the query check has carried since EFB-71, and for
+// the same reason — the check's "it can fail" claim has to be testable against
+// synthetic fixtures. Without them the only way to prove the re-audit fires is
+// to break the real allowlist, which is a transcript pasted into a PR once
+// rather than a proof that re-runs on every CI.
+const ROUTES_DIR = flag("--routes-dir") ?? process.env["BOUNDARY_ROUTES_DIR"] ?? DEFAULT_ROUTES_DIR;
+const ALLOWLIST_PATH =
+  flag("--allowlist") ?? process.env["BOUNDARY_ALLOWLIST"] ?? DEFAULT_ALLOWLIST_PATH;
 
 function classify(handlerSrc, fileSrc) {
   const src = withHelpers(handlerSrc, fileSrc);
@@ -89,6 +129,14 @@ function loadAllowlist() {
     if (!e.route || !e.sunset) {
       throw new Error(
         `${ALLOWLIST_PATH}: every entry needs "route" and "sunset" (got ${JSON.stringify(e)})`,
+      );
+    }
+    // An empty blind reason is worse than none: it silences the re-audit while
+    // recording nothing a reviewer could argue with.
+    if ("scanner_blind_reason" in e && String(e.scanner_blind_reason ?? "").trim() === "") {
+      throw new Error(
+        `${ALLOWLIST_PATH}: ${e.route} has an empty "scanner_blind_reason". ` +
+          `Write why detection cannot see this route's debt, or drop the field.`,
       );
     }
     byId.set(e.route, e);
@@ -124,6 +172,12 @@ function main() {
   // Effect.gen. Only positive evidence of migration (the parseRouteBody marker)
   // overrides the declaration, because that evidence is the thing we can
   // actually see.
+  //
+  // EFB-87: what detection actually SAW is kept as `detected` before the flip
+  // overwrites it. The flip is the declaration winning, and the re-audit below
+  // is the check asking what it won against — a question that cannot be asked
+  // once the two values are the same field.
+  for (const h of handlers) h.detected = h.state;
   for (const h of handlers) {
     if (h.state === "no-body" && byId.has(h.id)) h.state = "unmigrated";
   }
@@ -166,7 +220,13 @@ function main() {
         `${h.file}:${h.line} ${h.id} — allowlist entry expired ${entry.sunset}. Migrate it or justify a new date.`,
       );
     } else {
-      warnings.push(`${h.id} (${h.file}) — unmigrated, sunset ${entry.sunset}`);
+      // One line per route. A blind declaration is reported ON the debt line
+      // rather than beside it: two warnings for one route reads as two items of
+      // debt, and the count at the bottom is the number people actually track.
+      const declared = entry.scanner_blind_reason
+        ? ` — no marker detected, declared: ${entry.scanner_blind_reason}`
+        : "";
+      warnings.push(`${h.id} (${h.file}) — unmigrated, sunset ${entry.sunset}${declared}`);
     }
   }
 
@@ -198,15 +258,61 @@ function main() {
     }
   }
 
-  // Stale entries: allowlisted but no longer unmigrated. Mirrors AdaptEngine's
-  // "entries go inert; prune them" note, except we say so out loud.
-  const unmigratedIds = new Set(
-    handlers.filter((h) => h.state === "unmigrated").map((h) => h.id),
-  );
-  for (const [id] of byId) {
-    if (!unmigratedIds.has(id)) {
-      warnings.push(`${id} — allowlisted but already migrated (or gone). Prune it from ${ALLOWLIST_PATH}.`);
+  // ── EFB-87: re-audit. Every entry must still describe real, DETECTED debt ──
+  //
+  // This used to be a warning that an entry looked prunable. A warning was the
+  // wrong tier, because the interesting case is not the tidy one. An entry
+  // whose marker has vanished is either a route someone already fixed or a
+  // marker someone renamed — and in the rename case every OTHER entry on this
+  // list stopped being checked at the same moment, silently. That is a failure
+  // of the tool, reported by the tool, and it belongs where failures go.
+  for (const [id, entry] of byId) {
+    const h = handlers.find((x) => x.id === id);
+    const blind = entry.scanner_blind_reason;
+
+    // Not a route this scan can see at all: renamed, deleted, or registered
+    // with a non-literal path the registration regex cannot match.
+    if (!h) {
+      if (blind) {
+        warnings.push(`${id} — invisible to the scan, declared: ${blind}`);
+      } else {
+        errors.push(
+          `${ALLOWLIST_PATH}: ${id} matches no route this scan can see.\n` +
+            `    The route was renamed or deleted (prune the entry), or it is registered with a ` +
+            `non-literal path (declare that with "scanner_blind_reason"). An entry that describes ` +
+            `nothing protects nothing.`,
+        );
+      }
+      continue;
     }
+
+    // Positive evidence of migration. The ticket's falsification case, and the
+    // one an ordinary migration produces when step 4 gets skipped.
+    if (h.detected === "migrated") {
+      errors.push(
+        `${h.file}:${h.line} ${id} — allowlisted as unmigrated debt, but it reads its body through ` +
+          `${MIGRATED_MARKER}.\n` +
+          `    The route is migrated; remove it from ${ALLOWLIST_PATH}. A ratchet that keeps ` +
+          `entries it no longer needs cannot report how much debt is actually left.`,
+      );
+      continue;
+    }
+
+    // The drift class EFB-61 named: no marker found, so the entry is excusing
+    // debt nobody can currently see.
+    if (h.detected === "no-body" && !blind) {
+      errors.push(
+        `${h.file}:${h.line} ${id} — allowlisted as unmigrated debt, but none of the ` +
+          `${UNMIGRATED_MARKERS.length} body-read markers appear in it.\n` +
+          `    Either the route was fixed without ${MIGRATED_MARKER} (prune the entry), or a marker ` +
+          `was renamed and UNMIGRATED_MARKERS is now stale — in which case every entry on this list ` +
+          `stopped being checked, and all of them need re-auditing, not just this one.\n` +
+          `    If the read is real but hidden from detection, say where in "scanner_blind_reason".`,
+      );
+      continue;
+    }
+    // A declared blind spot needs no line of its own: the sunset warning above
+    // already carries the reason, so the route is reported exactly once.
   }
 
   const counts = {
