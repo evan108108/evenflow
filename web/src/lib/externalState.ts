@@ -59,3 +59,40 @@ export const primaryPrLink = (
 
 export const prUrl = (link: { repo: string; pr: number }): string =>
   `https://github.com/${link.repo}/pull/${link.pr}`;
+
+/**
+ * EFB-93 — the OTHER vocabulary, and the reason it needs its own map.
+ *
+ * `github_links[].state` is the PR's own lifecycle — open / draft / merged /
+ * closed, written by `prLinkState()` in src/github/engine.ts, which says so
+ * outright: "the PR's own lifecycle, not the pill". `external_state` above is
+ * a different alphabet (pr_review, ci_failed, …) describing the TICKET.
+ *
+ * The two share a look and nothing else. Routing a link state through
+ * `externalStateTone` would not fail — `TONES` falls back to "neutral" and
+ * `LABELS` falls back to the raw value — it would quietly render every PR as
+ * an identical grey pill reading "open" / "merged", and still satisfy any test
+ * that merely asserts a pill exists. A silent wrong answer, so: separate map,
+ * same `external-state-pill tone-*` classes, no new component.
+ *
+ * Tones follow GitHub's own convention, which is what a reader already expects.
+ */
+const PR_LINK_STATE_LABELS: Record<string, string> = {
+  open: "Open",
+  draft: "Draft",
+  merged: "Merged",
+  closed: "Closed",
+};
+
+const PR_LINK_STATE_TONES: Record<string, ExternalStateTone> = {
+  open: "info",
+  draft: "neutral",
+  merged: "good",
+  closed: "neutral",
+};
+
+/** A state the engine has not taught us yet renders as-is rather than blank. */
+export const prLinkStateLabel = (state: string): string => PR_LINK_STATE_LABELS[state] ?? state;
+
+export const prLinkStateTone = (state: string): ExternalStateTone =>
+  PR_LINK_STATE_TONES[state] ?? "neutral";

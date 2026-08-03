@@ -469,6 +469,33 @@ select:disabled {
   color: #8b3d33;
 }
 
+/* EFB-93 — a linked PR row in the issue sheet. Deliberately borrows the
+   .comment rhythm from the section directly below it (same vertical padding,
+   same hairline rule, same type scale) so the two sections read as siblings
+   rather than as two people's ideas of a list.
+
+   No focus ring, per the standing rule — the row is a plain anchor and keeps
+   the browser's own default affordance. */
+.pr-link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--color-ink-faint);
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: inherit;
+}
+
+.pr-link-row:hover .pr-link-ref {
+  text-decoration: underline;
+}
+
+.pr-link-ref {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
