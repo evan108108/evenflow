@@ -65,7 +65,22 @@ export type ActionInput<Body = undefined> = {
    * same trust domain.
    */
   readonly token: string;
-  /** The org this request is scoped to, or null on the bare mount. */
+  /**
+   * Which org this request is scoped to, or null when it is not scoped to one.
+   *
+   * Always read from `c.req.param("org_slug")`, REGARDLESS of where that
+   * parameter came from. For a board-family route it arrives from the
+   * `/org/:org_slug` mount prefix; for the orgs router it is part of the
+   * route's own declared path. Those are different plumbing and the same fact,
+   * so an action asks one field and never has to know which family it is in.
+   *
+   * Null is a real answer, not an absence: `POST /orgs` creates an org and is
+   * scoped to none.
+   *
+   * It is also present in `params`, because `params` is the raw bag off the
+   * request. They cannot disagree — `actionInput` fills both from the same
+   * call — and this one is the named accessor with the meaning attached.
+   */
   readonly orgSlug: string | null;
   /** Path parameters, already extracted. */
   readonly params: Readonly<Record<string, string>>;
