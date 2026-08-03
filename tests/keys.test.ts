@@ -191,7 +191,9 @@ describe("GET /issues/:id?include=", () => {
     await h.app.request(`/api/v0/issues/${issue.id}/comments`, jsonReq("POST", { body: "hi" }), {});
     await h.app.request(
       `/api/v0/boards/kb/issues/${issue.id}/attachments`,
-      jsonReq("POST", { file_b64: "aGk=", filename: "hi.txt", content_type: "text/plain" }),
+      // image/* because this board is on default storage, which takes images
+      // only (EFB-80); the type is incidental — the test just wants a row.
+      jsonReq("POST", { file_b64: "aGk=", filename: "hi.png", content_type: "image/png" }),
       {},
     );
     const res = await h.app.request(
@@ -202,7 +204,7 @@ describe("GET /issues/:id?include=", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { issue: object; comments: Array<{ body: string }>; attachments: Array<{ filename: string }> };
     expect(body.comments.map((c) => c.body)).toEqual(["hi"]);
-    expect(body.attachments.map((a) => a.filename)).toEqual(["hi.txt"]);
+    expect(body.attachments.map((a) => a.filename)).toEqual(["hi.png"]);
 
     const plain = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: jsonReq("GET").headers }, {});
     const plainBody = (await plain.json()) as Record<string, unknown>;

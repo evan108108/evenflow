@@ -13,6 +13,7 @@ export const BYO_S3_MAX_BYTES = 100 * 1024 * 1024;
 export const STORAGE_KINDS = ["blossom_default", "blossom_byo", "s3_byo"] as const;
 export type StorageKind = (typeof STORAGE_KINDS)[number];
 
+/** The ceiling, for BYO buckets. The default path takes a subset. */
 export const ALLOWED_CONTENT_TYPES = [
   "image/jpeg",
   "image/png",
@@ -22,6 +23,20 @@ export const ALLOWED_CONTENT_TYPES = [
   "text/plain",
   "application/zip",
   "application/json",
+] as const;
+
+/**
+ * What the Evenflow-managed default host accepts (EFB-80) — its free tier
+ * gates documents and archives behind a paid plan, so accepting them at the
+ * edge only bought an opaque 502 later. See src/attachments.ts for the
+ * verification detail; the server is the enforcing gate, this mirror exists
+ * to keep the two vocabularies in lockstep.
+ */
+export const BLOSSOM_DEFAULT_CONTENT_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
 ] as const;
 
 export const isImageContentType = (contentType: string): boolean =>
