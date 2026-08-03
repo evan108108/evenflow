@@ -343,14 +343,41 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // typechecks and is precisely the fabrication the Claims-not-string signature
   // exists to prevent, so the literal spelling is what gets banned.
   it("uses only the named constructors or an explicit null", () => {
-    const ADMISSIBLE = /^(null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)|moved \? ProvenanceFromCaller\(claims\) : null)$/;
+    // A callsite may GUARD a constructor behind a boolean it already computed
+    // — `moved ? … : null`, `statusChangeId === null ? null : …` — because one
+    // handler can emit on two paths and only one of them attributes anything.
+    // Both arms still have to be a constructor or `null`, which is the rule
+    // that matters: what is banned is an inline object literal, and a ternary
+    // between two admissible values cannot smuggle one in.
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const ADMISSIBLE = new RegExp(
+      `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
+    );
     const offenders = CALLSITES.filter((c) => !ADMISSIBLE.test(c.actor));
     expect(offenders).toEqual([]);
   });
 
-  // The five provenance-consuming paths, pinned individually. These are the
+  // The guard above is only safe because it is narrow. An inline literal in
+  // either arm must still be caught.
+  it("rejects a fabricated literal even inside a guard", () => {
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const ADMISSIBLE = new RegExp(
+      `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
+    );
+    expect(ADMISSIBLE.test('{ source: "route.caller", pubkey: x }')).toBe(false);
+    expect(ADMISSIBLE.test('moved ? { source: "route.caller", pubkey: x } : null')).toBe(false);
+    expect(ADMISSIBLE.test("moved ? ProvenanceFromCaller(claims) : null")).toBe(true);
+  });
+
+  // The seven provenance-consuming paths, pinned individually. These are the
   // only callsites whose actor argument reaches a builder; everything else
   // passes `null` because its kind has no actor slot.
+  //
+  // EFB-91 added the two sprint ones. They were passing `null` while ALSO
+  // writing statusChangeCache rows whose ids never reached the event, so they
+  // published no 30553 at all — and had the id been threaded without this
+  // change, every sprint-driven move would have gone out attributed to
+  // `audit.system` rather than the person who started the sprint.
   it("names route.caller exactly where a live caller was seen", () => {
     const callerSites = CALLSITES.filter((c) => c.actor.includes("ProvenanceFromCaller"));
     expect(callerSites.map((c) => c.file).sort()).toEqual([
@@ -359,6 +386,8 @@ describe("EFB-63 — every emit callsite names its actor", () => {
       "routes/issues.ts", // issue.transitioned
       "routes/issues.ts", // issue.transitioned (duplicate-of, when it moved)
       "routes/issues.ts", // issue.container_changed
+      "routes/sprints.ts", // sprint start — backlog → active bulk promote
+      "routes/sprints.ts", // add-issue mid-sprint — backlog → active promote
     ]);
   });
 
