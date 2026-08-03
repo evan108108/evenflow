@@ -27,11 +27,6 @@
       "sunset": "2026-11-30"
     },
     {
-      "route": "POST /issues/:id/comments",
-      "file": "src/routes/comments.ts",
-      "sunset": "2026-10-31"
-    },
-    {
       "route": "POST /webhooks/github/:board_id",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31"

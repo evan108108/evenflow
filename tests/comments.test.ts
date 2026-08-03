@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Effect, Exit } from "effect";
+import { decodeBody } from "../src/lib/route-body";
+import { PostCommentBody } from "../src/routes/comments";
 import type { CommentShape } from "../src/shapes";
 import {
   CALLER,
@@ -249,5 +252,67 @@ describe("comment attachments (phase 18c)", () => {
     expect(del.status).toBe(200);
     const row = h.db.attachments.find((r) => r["id"] === a.id);
     expect(row?.["deleted_at_ms"]).not.toBeNull();
+  });
+});
+
+// ── EFB-61: PostCommentBody schema ────────────────────────────────────────
+//
+// The route-level tests above pin the WIRE contract (status + reason). These
+// pin the schema itself, which is why they run without a harness — the point
+// of `decodeBody` being split out of `parseRouteBody` in route-body.ts.
+//
+// The reason strings here are load-bearing: the pre-EFB-61 handler answered
+// `body` / `attachment_ids` / `in_reply_to`, and a migration that changed them
+// would be an API break wearing a refactor's clothes.
+describe("PostCommentBody (EFB-61)", () => {
+  const decode = (input: unknown) =>
+    Effect.runSync(Effect.exit(decodeBody(PostCommentBody, input)));
+
+  // Same shape as tests/csv-import.test.ts — read the reason off the cause
+  // rather than matching on it, so a failure that is not a ValidationError
+  // shows up as a wrong string instead of passing silently.
+  const reasonOf = (exit: Exit.Exit<unknown, unknown>): string => {
+    if (Exit.isSuccess(exit)) return "<succeeded>";
+    const err = (exit.cause as { error?: { reason?: string } }).error;
+    return err?.reason ?? "<no reason>";
+  };
+
+  it("the instrument can fail — rejects what the old handler rejected", () => {
+    for (const input of [{}, { body: "" }, { body: 42 }]) {
+      expect(reasonOf(decode(input))).toBe("body");
+    }
+  });
+
+  it("rejects whitespace-only body — minLength(1) alone would have accepted it", () => {
+    expect(reasonOf(decode({ body: "   " }))).toBe("body");
+    expect(reasonOf(decode({ body: "\n\t" }))).toBe("body");
+  });
+
+  it("accepts the shapes the route has always accepted", () => {
+    expect(Exit.isSuccess(decode({ body: "hi" }))).toBe(true);
+    // null in_reply_to means "no parent" and always has.
+    expect(Exit.isSuccess(decode({ body: "hi", in_reply_to: null }))).toBe(true);
+    expect(Exit.isSuccess(decode({ body: "hi", in_reply_to: "abc" }))).toBe(true);
+    expect(Exit.isSuccess(decode({ body: "hi", attachment_ids: [] }))).toBe(true);
+    expect(Exit.isSuccess(decode({ body: "hi", attachment_ids: ["a", "b"] }))).toBe(true);
+  });
+
+  it("keeps the attachment_ids rules the handler used to enforce by hand", () => {
+    expect(reasonOf(decode({ body: "hi", attachment_ids: ["a", "a"] }))).toBe("attachment_ids");
+    expect(reasonOf(decode({ body: "hi", attachment_ids: [1] }))).toBe("attachment_ids");
+    expect(reasonOf(decode({ body: "hi", attachment_ids: "a" }))).toBe("attachment_ids");
+    const tooMany = Array.from({ length: 21 }, (_, i) => `id-${i}`);
+    expect(reasonOf(decode({ body: "hi", attachment_ids: tooMany }))).toBe("attachment_ids");
+  });
+
+  it("rejects a non-string in_reply_to", () => {
+    expect(reasonOf(decode({ body: "hi", in_reply_to: 42 }))).toBe("in_reply_to");
+  });
+
+  // THE BEHAVIOR CHANGE. Before EFB-61 this returned 201 and silently ignored
+  // `bogus`; that silent-ignore is the whole bug class EFB-53/54 exist to
+  // delete. Pinned here so it is a decision on the record, not a side effect.
+  it("now REJECTS an unknown key that used to be silently ignored", () => {
+    expect(reasonOf(decode({ body: "hi", bogus: 1 }))).toBe("bogus-unknown");
   });
 });
