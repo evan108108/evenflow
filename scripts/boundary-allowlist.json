@@ -44,26 +44,6 @@
       "sunset": "2026-12-31"
     },
     {
-      "route": "POST /boards/:slug/issues",
-      "file": "src/routes/issues.ts",
-      "sunset": "2026-10-31"
-    },
-    {
-      "route": "POST /issues/:id/transition",
-      "file": "src/routes/issues.ts",
-      "sunset": "2026-10-31"
-    },
-    {
-      "route": "POST /issues/:id/move-to-board",
-      "file": "src/routes/issues.ts",
-      "sunset": "2026-10-31"
-    },
-    {
-      "route": "PATCH /issues/:id/reorder",
-      "file": "src/routes/issues.ts",
-      "sunset": "2026-10-31"
-    },
-    {
       "route": "POST /keys",
       "file": "src/routes/keys.ts",
       "sunset": "2026-09-30"

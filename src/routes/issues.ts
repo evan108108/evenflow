@@ -17,7 +17,10 @@ import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
 import { emitSecureBoardEvent } from "../audiences";
-import { canonicalizeIdentityRef, isRosterMember } from "../lib/identity";
+// canonicalizeIdentityRef is gone from this file with EFB-85: every assignee
+// now arrives canonical from IdentityRefFromInput, and re-normalizing a value
+// the schema already normalized is the invariant-4 anti-pattern.
+import { isRosterMember } from "../lib/identity";
 import { POSITION_STEP, topOfColumnPosition, topOfContainerPosition } from "../lib/position";
 import {
   IdentityRefFromInput,
@@ -59,9 +62,8 @@ import {
   columnByName,
   enabledColumns,
   type Column,
-  type IssueType,
 } from "../columns";
-import { BODY_FORMATS, isImageContentType, type BodyFormat } from "../attachments";
+import { BODY_FORMATS, isImageContentType } from "../attachments";
 import {
   cursorOf,
   cursorPredicate,
@@ -158,28 +160,12 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<IssuesFailure>
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const readJsonBody = (c: Context<AppHonoEnv>) =>
-  Effect.tryPromise({
-    try: () => c.req.json() as Promise<Record<string, unknown>>,
-    catch: () => new ValidationError({ reason: "expected-json" }),
-  }).pipe(
-    Effect.filterOrFail(
-      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-      () => new ValidationError({ reason: "expected-json-object" }),
-    ),
-  );
-
 // ── field validators ──────────────────────────────────────────────────────
-
-const validateTitle = (v: unknown) =>
-  typeof v === "string" && v.trim() !== ""
-    ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "title" }));
-
-const validateBody = (v: unknown) =>
-  v === null || typeof v === "string"
-    ? Effect.succeed(v as string | null)
-    : Effect.fail(new ValidationError({ reason: "body" }));
+//
+// EFB-85 emptied most of this section. What survives is the two checks a
+// schema structurally cannot make: both need the board's columns, which is
+// state `parseRouteBody` has no access to by design. The local `readJsonBody`
+// went with them — every body in this file now comes through the one door.
 
 const validateContainer = (v: unknown) =>
   typeof v === "string" && (CONTAINERS as ReadonlyArray<string>).includes(v)
@@ -194,16 +180,6 @@ const validateStatus = (columns: ReadonlyArray<Column>, v: unknown) => {
     : Effect.fail(new ValidationError({ reason: "status-not-a-column" }));
 };
 
-const validateType = (v: unknown) =>
-  typeof v === "string" && (ISSUE_TYPES as ReadonlyArray<string>).includes(v)
-    ? Effect.succeed(v as IssueType)
-    : Effect.fail(new ValidationError({ reason: "type" }));
-
-const validateBodyFormat = (v: unknown) =>
-  typeof v === "string" && (BODY_FORMATS as ReadonlyArray<string>).includes(v)
-    ? Effect.succeed(v as BodyFormat)
-    : Effect.fail(new ValidationError({ reason: "body_format" }));
-
 /** Where new issues land when no status is given: first enabled column. */
 const defaultColumn = (board: BoardShape): Column | undefined =>
   enabledColumns(board.columns)[0] ?? board.columns[0];
@@ -216,52 +192,6 @@ const issueColumn = (board: BoardShape, issue: IssueShape): Column | undefined =
 /** Done-ness is the column's CATEGORY, never the literal name "Done". */
 const inDone = (board: BoardShape, issue: IssueShape): boolean =>
   issueColumn(board, issue)?.category === "done";
-
-/**
- * An assignee is a reference to a person, not a string (EFB-38).
- *
- * Two failures used to hide here: `049b628c…` and `nostr:049b628c…` were
- * stored as different assignees for one key, and any authenticated caller
- * could assign work to somebody who was not on the board at all.
- *
- * The roster is boardMemberCache — deliberately the same source the members
- * endpoint and the UI picker read, so the API cannot accept an assignee the
- * picker can't show. NOT effectiveBoardRole, which floors every pubkey at
- * "viewer" on a public board and would make this check a no-op there.
- */
-const validateAssignee = (
-  v: unknown,
-  board: BoardShape,
-): Effect.Effect<string | null, ValidationError, Db> =>
-  Effect.gen(function* () {
-    if (v === null) return null;
-    // EFB-41 removed the `isNpub` early-reject: bech32 decodes in
-    // canonicalizeIdentityRef now, so an npub for somebody on the roster is a
-    // valid assign. A bad-checksum npub falls through to `assignee_pubkey`,
-    // and a well-formed npub for a non-member still hits `not-a-member` —
-    // the roster check below is what makes that safe, not the shape gate.
-    const ref = canonicalizeIdentityRef(v);
-    if (ref === null) return yield* new ValidationError({ reason: "assignee_pubkey" });
-    if (!(yield* isRosterMember("boardMemberCache", board.id, ref))) {
-      return yield* new ValidationError({ reason: "not-a-member" });
-    }
-    return ref;
-  }).pipe(
-    // The roster read is the only failure the caller can't act on; surfacing
-    // it as a 400 would blame them for our outage, so let DbError stay in the
-    // channel and land as a 500 like every other read.
-    Effect.catchTag("DbError", (e) => Effect.die(e)),
-  );
-
-const validateIntOrNull = (field: string) => (v: unknown) =>
-  v === null || (typeof v === "number" && Number.isInteger(v))
-    ? Effect.succeed(v as number | null)
-    : Effect.fail(new ValidationError({ reason: field }));
-
-const validateLabels = (v: unknown) =>
-  Array.isArray(v) && v.every((l) => typeof l === "string")
-    ? Effect.succeed(v as string[])
-    : Effect.fail(new ValidationError({ reason: "labels" }));
 
 // ── EFB-54: PATCH /issues/:id body schema (the reference migration) ───────
 //
@@ -320,6 +250,122 @@ const PatchIssueBody = Schema.Struct({
 }).pipe(Schema.filter(requireAnyOf(PATCHABLE)));
 
 /**
+ * EFB-85 — POST /boards/:slug/issues, the create body.
+ *
+ * The PATCH schema's sibling, and deliberately close to it: same field
+ * vocabulary, same two deferrals (`status` and the roster half of
+ * `assignee_pubkey`), same reason strings. Where the two differ, the
+ * difference is create-specific and noted.
+ *
+ * `title` is REQUIRED here and optional on PATCH, and it carries the trim
+ * filter rather than `NonEmptyString`. That is not cosmetic: `Schema.minLength(1)`
+ * ACCEPTS `"   "`, while the hand-rolled `validateTitle` this replaces rejected
+ * it via `v.trim() !== ""`. Reaching for the obvious primitive would have
+ * silently loosened the contract — the same trap EFB-61 hit on comments.
+ *
+ * Defaults stay in the HANDLER, not in the schema. `Schema.optional` with a
+ * default would make the schema answer "what is a new issue" — but two of the
+ * six defaults (`status` → the board's first enabled column, `container` →
+ * backlog only because the column isn't done) need board state, so a schema
+ * that defaulted the other four would split one decision across two files.
+ */
+const PostIssueBody = Schema.Struct({
+  title: Schema.String.pipe(Schema.filter((s) => s.trim() !== "")),
+  body: Schema.optional(Schema.NullOr(Schema.String)),
+  body_format: Schema.optional(Schema.Literal(...BODY_FORMATS)),
+  type: Schema.optional(Schema.Literal(...ISSUE_TYPES)),
+  // `Unknown` for the same reason PatchIssueBody uses it: a status is a NAME
+  // resolved against THIS board's columns, which the schema cannot see. The
+  // whole check stays in validateStatus and keeps answering
+  // `status-not-a-column` for a non-string as well as an unknown name.
+  status: Schema.optional(Schema.Unknown),
+  container: Schema.optional(Schema.Literal(...CONTAINERS)),
+  assignee_pubkey: Schema.optional(Schema.NullOr(IdentityRefFromInput)),
+  priority: Schema.optional(Schema.NullOr(Schema.Int)),
+  estimate: Schema.optional(Schema.NullOr(Schema.Int)),
+  labels: Schema.optional(Schema.Array(Schema.String)),
+  // Two real fields a client plausibly sends to the WRONG endpoint, declared
+  // so they answer `-immutable` ("real field, wrong endpoint") instead of
+  // `-unknown` ("no such field"), exactly as PATCH does. A sprint is joined
+  // through the sprint's own add-issue endpoint; a column is chosen by
+  // `status` on create and moved by /transition afterwards.
+  //
+  // The purely server-assigned fields — id, short_id, board_id, position,
+  // github_links, completed_at_ms, duplicate_of_issue_id — are deliberately
+  // NOT listed. They fall to the unknown-key rule, which is the true answer
+  // for them: they are not inputs to a create at any endpoint, so there is no
+  // "right endpoint" for `-immutable` to point at.
+  sprint_id: ImmutableField,
+  column_id: ImmutableField,
+});
+
+/**
+ * POST /issues/:id/transition.
+ *
+ * Three spellings of one destination, and the precedence between them is
+ * behavior this schema must not quietly change:
+ *
+ *   `column_id` — stable across renames, and the branch the handler takes
+ *     whenever the key is PRESENT, including `column_id: null`. It is a
+ *     `!== undefined` test, not a truthiness one, so a null there answers
+ *     `column_id` rather than falling back to a name. `Schema.String`
+ *     reproduces that: null and 3 both fail the field, both report `column_id`.
+ *   `to` / `to_status` — the legacy name-match and its pre-phase-17 spelling,
+ *     combined in the handler with `??`. Nullish coalescing means `to: null`
+ *     falls THROUGH to `to_status`, which is why both stay `Unknown` and the
+ *     handler keeps the `??`: pushing either into the schema would decide the
+ *     precedence at a different layer than the one that has always decided it.
+ *
+ * Sending none of the three still reaches `validateStatus(columns, undefined)`
+ * and still answers `status-not-a-column` — a required-field rule here would
+ * have changed that string, and this is a migration, not a redesign.
+ */
+const PostTransitionBody = Schema.Struct({
+  column_id: Schema.optional(Schema.String),
+  to: Schema.optional(Schema.Unknown),
+  to_status: Schema.optional(Schema.Unknown),
+});
+
+/**
+ * POST /issues/:id/move-to-board.
+ *
+ * Shape is one required non-empty string. Everything that makes the move
+ * interesting — is the target the source board, does it exist, is the caller a
+ * contributor on it, does it have an enabled column — needs the database and
+ * the resolved issue, so it stays in the handler answering `target-is-source`,
+ * `target-board`, and `target-columns`.
+ *
+ * `NonEmptyString` rather than the trim filter, on purpose and unlike `title`:
+ * the old guard was `=== ""`, so `"   "` was ACCEPTED and fell through to a
+ * board lookup that 404s. Tightening it to a 400 would be a different answer
+ * to the same request, which the migration rule says needs its own ticket.
+ */
+const PostMoveToBoardBody = Schema.Struct({
+  target_board_id: NonEmptyString,
+});
+
+/**
+ * PATCH /issues/:id/reorder.
+ *
+ * The two visible neighbours around the drop slot. Both optional, both
+ * nullable — omitting one is how a drop at a column edge is spelled, and the
+ * old handler treated an explicit `null` as the same statement.
+ *
+ * `Schema.String`, NOT `NonEmptyString`: `""` is currently a well-formed
+ * neighbour id that fails the LOOKUP, answering `neighbors`. Under
+ * `NonEmptyString` it would answer `before_issue_id` instead — a changed error
+ * string, which is the one thing a migration may not do quietly.
+ *
+ * No `requireAnyOf`: it tests PRESENCE, and `{"before_issue_id": null}` is
+ * present-but-empty. The both-null check stays in the handler, where it also
+ * covers the explicit-null spelling and keeps answering `neighbors`.
+ */
+const PatchReorderBody = Schema.Struct({
+  before_issue_id: Schema.optional(Schema.NullOr(Schema.String)),
+  after_issue_id: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
  * POST /issues/:id/duplicate-of.
  *
  * Shape only, and there is deliberately very little of it: `null` clears the
@@ -348,6 +394,18 @@ const PostDuplicateOfBody = Schema.Struct({
  * database and a board id the route resolves after parsing: is this person on
  * THIS board's roster? That is authorization, not shape — EFB-38's second half,
  * kept as a named step rather than smuggled into the schema.
+ *
+ * EFB-85 made this the ONLY assignee path: the create route used to run its own
+ * `validateAssignee`, which did canonicalization and roster in one function.
+ * Both routes now split it the same way, which is what makes the roster rule
+ * impossible to apply on one endpoint and forget on the other.
+ *
+ * The EFB-41 note that lived on the deleted helper still holds, and its two
+ * halves now live in two places: `npub1…` decodes in `canonicalizeIdentityRef`,
+ * so a bech32 assignee is legitimate and a bad-checksum one falls out of
+ * `IdentityRefFromInput` as `assignee_pubkey`. A WELL-FORMED npub for somebody
+ * who isn't on the board still has to reach `not-a-member` — here — because the
+ * shape gate never was what made that safe.
  */
 const assertRosterMember = (
   ref: string | null,
@@ -600,32 +658,32 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         pubkey,
         "contributor",
       );
-      const body = yield* readJsonBody(c);
+      // EFB-85. Ten hand-rolled field checks became PostIssueBody; what they
+      // never did — reject a key we don't recognize — comes free. A create
+      // carrying `assignee` or `sprint_id` used to return 201 with the field
+      // dropped on the floor, which is EFB-53's bug wearing a different verb.
+      const body = yield* parseRouteBody(c, PostIssueBody);
 
-      const title = yield* validateTitle(body["title"]);
-      const issueBody = body["body"] === undefined ? null : yield* validateBody(body["body"]);
-      const body_format =
-        body["body_format"] === undefined
-          ? ("markdown" as BodyFormat)
-          : yield* validateBodyFormat(body["body_format"]);
-      const type =
-        body["type"] === undefined ? DEFAULT_ISSUE_TYPE : yield* validateType(body["type"]);
+      const title = body.title;
+      const issueBody = body.body ?? null;
+      const body_format = body.body_format ?? "markdown";
+      const type = body.type ?? DEFAULT_ISSUE_TYPE;
+      // status and assignee are the two the schema deliberately does not
+      // finish — which columns this board has, and who is on its roster, are
+      // both board state. Same split as PATCH.
       const column =
-        body["status"] === undefined
+        body.status === undefined
           ? defaultColumn(board)
-          : yield* validateStatus(board.columns, body["status"]);
+          : yield* validateStatus(board.columns, body.status);
       if (column === undefined) return yield* new ValidationError({ reason: "status-not-a-column" });
-      const container =
-        body["container"] === undefined
-          ? ("backlog" as Container)
-          : yield* validateContainer(body["container"]);
+      const container = body.container ?? "backlog";
       const assignee =
-        body["assignee_pubkey"] === undefined ? null : yield* validateAssignee(body["assignee_pubkey"], board);
-      const priority =
-        body["priority"] === undefined ? null : yield* validateIntOrNull("priority")(body["priority"]);
-      const estimate =
-        body["estimate"] === undefined ? null : yield* validateIntOrNull("estimate")(body["estimate"]);
-      const labels = body["labels"] === undefined ? [] : yield* validateLabels(body["labels"]);
+        body.assignee_pubkey === undefined
+          ? null
+          : yield* assertRosterMember(body.assignee_pubkey, board);
+      const priority = body.priority ?? null;
+      const estimate = body.estimate ?? null;
+      const labels = body.labels === undefined ? [] : [...body.labels];
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -1136,18 +1194,21 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
+      const body = yield* parseRouteBody(c, PostTransitionBody);
       const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
       let to: Column;
-      if (body["column_id"] !== undefined) {
-        const target =
-          typeof body["column_id"] === "string"
-            ? columnById(board.columns, body["column_id"])
-            : undefined;
+      if (body.column_id !== undefined) {
+        // Still `!== undefined` and not a truthiness test: the schema now
+        // rejects a null before this runs, but the branch has to keep meaning
+        // "the caller addressed a column", so that an id which is well-formed
+        // and simply not on THIS board answers `column_id` rather than
+        // silently falling back to the legacy name-match.
+        const target = columnById(board.columns, body.column_id);
         if (target === undefined) return yield* new ValidationError({ reason: "column_id" });
         to = target;
       } else {
-        to = yield* validateStatus(board.columns, body["to"] ?? body["to_status"]);
+        // `??`, preserved exactly: `to: null` falls through to `to_status`.
+        to = yield* validateStatus(board.columns, body.to ?? body.to_status);
       }
       const { issue: updated, statusChangeId } = yield* applyStatusChange(
         issue,
@@ -1359,16 +1420,16 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
-      if (typeof body["target_board_id"] !== "string" || body["target_board_id"] === "") {
-        return yield* new ValidationError({ reason: "target_board_id" });
-      }
+      // Parsed BEFORE the issue is fetched, holding the old order: a malformed
+      // body on an issue that doesn't exist is a 400 about the body, not a 404
+      // about the issue.
+      const { target_board_id } = yield* parseRouteBody(c, PostMoveToBoardBody);
       const { issue, board: source } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
-      if (body["target_board_id"] === source.id) {
+      if (target_board_id === source.id) {
         return yield* new ValidationError({ reason: "target-is-source" });
       }
       const { board: target } = yield* authorizeBoardById(
-        body["target_board_id"],
+        target_board_id,
         pubkey,
         "contributor",
       ).pipe(
@@ -1481,16 +1542,15 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const body = yield* readJsonBody(c);
+      const body = yield* parseRouteBody(c, PatchReorderBody);
 
-      const neighborId = (key: string) =>
-        body[key] === undefined || body[key] === null
-          ? Effect.succeed(null)
-          : typeof body[key] === "string"
-            ? Effect.succeed(body[key] as string)
-            : Effect.fail(new ValidationError({ reason: key }));
-      const beforeId = yield* neighborId("before_issue_id");
-      const afterId = yield* neighborId("after_issue_id");
+      // Absent and explicitly-null collapse to the same thing — "no neighbour
+      // on this side" — which is how a drop at a column edge is spelled.
+      const beforeId = body.before_issue_id ?? null;
+      const afterId = body.after_issue_id ?? null;
+      // Not `requireAnyOf`: that tests presence, and `{"before_issue_id": null}`
+      // is present. A drop needs at least one REAL neighbour to compute a
+      // midpoint from, so the check is on the values, here, as it always was.
       if (beforeId === null && afterId === null) {
         return yield* new ValidationError({ reason: "neighbors" });
       }
