@@ -246,6 +246,16 @@ export const ProvenanceSource = Schema.Literal(
   "route.caller",
   "user.explicit",
   "audit.system",
+  // EFB-92. The union is CLOSED and this is the fourth member; the bar for a
+  // fifth is written down in docs/BOUNDARY_DISCIPLINE.md, and it is the bar
+  // this one met — an existing literal would have had to say something false.
+  //
+  // Reads `<context>.<agent>` like the three above it: a webhook, arriving
+  // from outside. It marks the ORIGIN of an action as external to this system
+  // and says nothing about whether a human is behind it — `pubkey` carries
+  // who, which is why no `platform` sub-field is needed (it is already the
+  // pubkey's prefix).
+  "external.webhook",
 );
 export type ProvenanceSource = Schema.Schema.Type<typeof ProvenanceSource>;
 
@@ -313,6 +323,35 @@ export const ProvenanceFromSystem = (): Provenance => ({
  */
 export const ProvenanceFromStoredActor = (pubkey: string): Provenance => ({
   source: "audit.system",
+  pubkey,
+});
+
+/**
+ * Something OUTSIDE this system acted — an integration, not Sonata.
+ *
+ * EFB-92. The github webhook path shipped in EFB-63 as `audit.system`, with a
+ * comment at the callsite conceding the fit was honest but lossy: no live
+ * caller was acting and the pubkey was one the server had looked up, so
+ * `audit.system` was not a lie — but Sonata had not acted either. GitHub had,
+ * usually on behalf of a person named in the delivery.
+ *
+ * `pubkey` carries WHO, and it carries two different kinds of answer:
+ * `github:alice` when the delivery named its author, and `github:webhook` when
+ * it named none and the integration is acting as itself. Both are external
+ * origins, which is why both take this constructor. Routing the second to
+ * `ProvenanceFromSystem`/`ProvenanceFromStoredActor` instead would keep
+ * claiming Sonata performed a change GitHub performed — the same conflation
+ * this constructor exists to delete, just relocated to the quieter branch.
+ *
+ * A bare string, like `ProvenanceFromStoredActor` and for the same stated
+ * reason: the string is not the safety here, the NAME is.
+ * `ProvenanceFromExternalActor(issue.assignee_pubkey)` reads false on the page.
+ * There is deliberately no `platform` parameter — the platform is the pubkey's
+ * prefix, and a second field that has to agree with the first is the drift
+ * EFB-33 was made of.
+ */
+export const ProvenanceFromExternalActor = (pubkey: string): Provenance => ({
+  source: "external.webhook",
   pubkey,
 });
 

@@ -64,7 +64,7 @@ import {
 import { evaluateDelivery, parseDelivery, type TargetIssue } from "../github/engine";
 import { WEBHOOK_ACTOR_FALLBACK, executePlan, type AppliedAction } from "../github/execute";
 import { emitSecureBoardEvent } from "../audiences";
-import { ProvenanceFromStoredActor } from "../lib/route-body";
+import { ProvenanceFromExternalActor } from "../lib/route-body";
 import type { ActionInput, PublicActionInput } from "./types";
 
 /**
@@ -159,18 +159,20 @@ const emitTransitionEvents = (
           },
         },
         // NOT `route.caller`: this request's authenticated caller is GitHub's
-        // webhook delivery, not the person who moved the card. `actor` is
-        // `github:<login>` resolved from the PR author, or the fallback when
-        // the delivery named none — a stored/derived identity the server is
-        // re-attesting, which is exactly `ProvenanceFromStoredActor`.
+        // webhook delivery, not the person who moved the card.
         //
-        // There IS a real external human here, and none of the three sources
-        // says so; `webhook.external` would. Deliberately not minted in EFB-63 —
-        // ProvenanceSource is a closed union (BOUNDARY_DISCIPLINE) and widening
-        // it is a documented architectural claim, not a side effect of a
-        // plumbing ticket. Filed as a follow-up. `audit.system` is honest in the
-        // meantime: no live caller acted, and the pubkey is one we looked up.
-        ProvenanceFromStoredActor(actor),
+        // EFB-92 minted `external.webhook` and this is the callsite it was
+        // minted for. EFB-63 shipped `ProvenanceFromStoredActor` here and said
+        // in this comment that the fit was honest but lossy — `audit.system`
+        // claimed Sonata acted, when GitHub did. That follow-up is this one.
+        //
+        // `actor` is `github:<login>` when the delivery named a PR author, and
+        // `github:webhook` when it named none. BOTH take this constructor: the
+        // literal marks the action's ORIGIN as outside this system, not the
+        // presence of a human, and the fallback is if anything the branch that
+        // needed it most — it is where "the integration acted as itself" was
+        // being recorded as "Sonata acted".
+        ProvenanceFromExternalActor(actor),
       );
     }
   });

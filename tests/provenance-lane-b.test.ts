@@ -46,6 +46,7 @@ import {
 import { KANBAN_PLAINTEXT_PATH, templatesFor } from "../src/lib/kanban/publish";
 import {
   ProvenanceFromCaller,
+  ProvenanceFromExternalActor,
   ProvenanceFromStoredActor,
   ProvenanceFromSystem,
 } from "../src/lib/route-body";
@@ -117,20 +118,30 @@ describe("EFB-63 — Provenance as a publish argument", () => {
     expect(contentOf(t).actor_pubkey).toBe("049b628c");
   });
 
-  // The whole point of Lane B: two DIFFERENT sources, one identical wire.
+  // The whole point of Lane B: DIFFERENT sources, one identical wire.
   // If this ever fails, `source` has leaked out of the type system and every
   // golden event the gateway pins cross-repo has drifted.
-  it("emits byte-identical events for route.caller and audit.system", () => {
+  //
+  // EFB-92 added `external.webhook` to this test rather than writing a new one.
+  // This is the assertion that already owns the claim "adding a literal cannot
+  // move a byte", so a fourth source belongs inside it — a separate test would
+  // have proved the new literal in isolation while leaving THIS one able to
+  // pass without ever having seen it.
+  it("emits byte-identical events for every source that names a pubkey", () => {
     const claims = { provider: "nostr", oauth_id: "049b628c", login: "x" } as Parameters<
       typeof ProvenanceFromCaller
     >[0];
+    const pubkey = ProvenanceFromCaller(claims).pubkey;
     const viaCaller = statusChangeOf(ProvenanceFromCaller(claims));
-    const viaStored = statusChangeOf(ProvenanceFromStoredActor(ProvenanceFromCaller(claims).pubkey));
+    const viaStored = statusChangeOf(ProvenanceFromStoredActor(pubkey));
+    const viaExternal = statusChangeOf(ProvenanceFromExternalActor(pubkey));
 
     expect(ProvenanceFromCaller(claims).source).toBe("route.caller");
     expect(ProvenanceFromStoredActor("x").source).toBe("audit.system");
-    // Same pubkey, different source → the SAME bytes.
+    expect(ProvenanceFromExternalActor("x").source).toBe("external.webhook");
+    // Same pubkey, three different sources → the SAME bytes.
     expect(viaCaller).toEqual(viaStored);
+    expect(viaCaller).toEqual(viaExternal);
     expect(viaCaller.tags.some((t) => t[0]?.startsWith("fa:provenance"))).toBe(false);
     expect(Object.keys(contentOf(viaCaller))).not.toContain("source");
   });
@@ -370,7 +381,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
     // off a Context, and the constructor is the same one — widening the
     // spelling keeps the rule (a NAMED constructor, never an inline literal)
     // exactly as strict.
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)|ProvenanceFromExternalActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -381,7 +392,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // The guard above is only safe because it is narrow. An inline literal in
   // either arm must still be caught.
   it("rejects a fabricated literal even inside a guard", () => {
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)|ProvenanceFromExternalActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -414,12 +425,18 @@ describe("EFB-63 — every emit callsite names its actor", () => {
     ]);
   });
 
-  it("never names route.caller on the github webhook path", () => {
+  it("names external.webhook, not route.caller or audit.system, on the github path", () => {
     const github = CALLSITES.filter((c) => c.file === "actions/github.ts");
     expect(github).toHaveLength(1);
     // The webhook's authenticated caller is GitHub, not the person who moved
-    // the card. `actor` is a resolved `github:<login>` the server re-attests.
-    expect(github[0]!.actor).toBe("ProvenanceFromStoredActor(actor)");
+    // the card — so never `route.caller`.
+    //
+    // EFB-92 moved it off `ProvenanceFromStoredActor` too. That said
+    // `audit.system`, which claims SONATA acted; GitHub acted. `actor` is
+    // `github:<login>` when the delivery named a PR author and `github:webhook`
+    // when it named none, and both are external origins, which is why the
+    // single callsite covers both branches.
+    expect(github[0]!.actor).toBe("ProvenanceFromExternalActor(actor)");
   });
 
   it("attributes nobody on the comment tombstone", () => {

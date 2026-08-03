@@ -76,20 +76,21 @@ This is the same family as EFB-53 and the checker in the meta-lesson below: **a 
 
 ```ts
 export const Provenance = Schema.Struct({
-  source: ProvenanceSource,   // "route.caller" | "user.explicit" | "audit.system"
+  source: ProvenanceSource,   // "route.caller" | "user.explicit" | "audit.system" | "external.webhook"
   pubkey: IdentityRefFromInput,
 });
 ```
 
 **`source` names the SEMANTIC ROLE of the pubkey, not the pipeline it travelled through.** A person can hold two roles in one request — the caller who posts a comment is also its author — and `source` picks which one is being asserted. Read `route.caller` as "this pubkey is the authenticated caller of the request being served," not "this value once passed through a route."
 
-The three values are a **closed union**. Do not add a fourth without a real use case:
+The values are a **closed union**. Do not add another without a real use case:
 
 | `source` | The claim being made |
 |---|---|
 | `route.caller` | The JWT-authenticated caller of *this* request acted. |
 | `user.explicit` | An admin is acting on behalf of another user's issue (bulk operations). |
 | `audit.system` | No live human actor — server-generated tombstones, backfills, republishes. |
+| `external.webhook` | Something outside this system acted — an integration delivery, not Sonata. |
 
 Construct one through a named helper rather than a literal:
 
@@ -97,7 +98,18 @@ Construct one through a named helper rather than a literal:
 ProvenanceFromCaller(claims)        // takes Claims, NEVER a pubkey string
 ProvenanceFromSystem()              // takes nothing — nobody to name
 ProvenanceFromStoredActor(pubkey)   // audit.system, re-attesting a stored identity
+ProvenanceFromExternalActor(pubkey) // external.webhook, an integration acted
 ```
+
+### Opening the union: what the fourth literal cost
+
+**The union is closed, and this is what opening it costs.** `ProvenanceSource` gained a fourth literal, `external.webhook`, in EFB-92. The bar for a fifth is the same as the bar this one met: a new literal is warranted only when an existing one would have to be used to say something FALSE, and it must be justified here before it is used anywhere.
+
+The three original literals divide the world by who acted: a caller through the API (`route.caller`), a user through an explicit action (`user.explicit`), or Sonata itself (`audit.system`). The github webhook path fits none of them. EFB-63 shipped it as `audit.system` and said so in a comment at the callsite: honest, because no live caller was acting and the pubkey was one the server had looked up — but lossy, because Sonata did not act either. GitHub did, usually on behalf of a person who is real, external, and named in the delivery.
+
+`external.webhook` says that and nothing more. It marks the ORIGIN of an action as outside this system; `pubkey` continues to carry who, whether that is `github:alice` for a delivery naming its author or `github:webhook` for the integration acting as itself. It deliberately does NOT get a `platform` sub-field: the platform is already the pubkey's prefix, and a second field that must agree with the first is the drift EFB-33 was made of.
+
+The literal is compile-time only. No builder reads `source` — `buildKanbanStatusChange` and its siblings read `pubkey` alone — so no published event's bytes depend on it, and adding it changed none. That is the property that lets a fifth literal be added later without a migration, and equally the reason a literal must never be added merely because a new name would read nicely at one callsite.
 
 `ProvenanceFromCaller` is the strong one, and the reason is that it **takes `Claims` and not a string**: there is no spelling of it that accepts a different person's pubkey. Prefer it wherever claims are in scope. `ProvenanceFromStoredActor` does take a bare string, and its safety is weaker and different in kind — the name, not the type, is what protects you. `ProvenanceFromStoredActor(issue.assignee_pubkey)` reads false on the page, where `actorPubkey: issue.assignee_pubkey` read fine.
 
