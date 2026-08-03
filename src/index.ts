@@ -34,11 +34,46 @@ const app = new Hono<AppHonoEnv>();
 // The Effect handler pattern every future route follows: describe the work
 // as an Effect against service Tags, then run it against the per-request
 // Live environment from `bootstrap(c.env)`.
+// EFB-82: healthz also reports the git sha this Worker was built from.
+//
+// This is the source of truth for "what is actually live", deliberately in
+// preference to deploy metadata. Two reasons. Wrangler 3's `deploy` has no
+// `--message` flag at all (only `versions upload` does, which is a different
+// gradual-rollout workflow), so the metadata channel the ticket assumed does
+// not exist here. And metadata describes what someone INTENDED to ship, while
+// a value compiled into the running Worker proves what IS shipped — the
+// distinction that made the EFB-14 FTS5 rollback undiagnosable for 34 hours.
+//
+// DELIBERATELY UNAUTHENTICATED — do not auth-gate this in a consistency pass.
+//
+// Three reasons, in order of weight:
+//
+//  1. The predeploy check must read it with nothing but git and curl, from any
+//     machine, before any credentials are loaded. Gating it defeats the whole
+//     primitive.
+//  2. It discloses nothing. evan108108/evenflow is a PUBLIC repo, so every
+//     commit sha is already enumerable by anyone via `git ls-remote`. Saying
+//     "the live build came from a commit in that public history" is zero
+//     information gain.
+//  3. It is a different class from EFB-76's 401-not-404 rule. That rule governs
+//     reads whose ANSWER VARIES PER CALLER and thereby reveals whether private
+//     things exist. This returns one identical, content-free answer to
+//     everybody. Version and diagnostic surfaces are conventionally open for
+//     exactly that reason.
 app.get("/healthz", async (c) => {
+  const gitSha = c.env.GIT_SHA ?? null;
   const healthz = Effect.gen(function* () {
     const audit = yield* AuditLog;
     yield* audit.record({ event_type: "healthz_check", details: { path: c.req.path } });
-    return { ok: true, service: "evenflow", version: "0.0.1" };
+    return {
+      ok: true,
+      service: "evenflow",
+      version: "0.0.1",
+      // null means "deployed without the wrapper, or before EFB-82" — the
+      // predeploy check treats that as refuse-by-default, not as fine.
+      git_sha: gitSha,
+      git_sha_short: gitSha === null ? null : gitSha.slice(0, 7),
+    };
   });
   return c.json(await Effect.runPromise(Effect.provide(healthz, bootstrap(c.env))));
 });
