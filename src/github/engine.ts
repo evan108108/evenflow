@@ -330,6 +330,10 @@ export const evaluateDelivery = (input: EvaluateInput): EvaluationPlan => {
     };
   }
 
+  // Which of the matched tickets is this PR actually ABOUT? Mentions get the
+  // link; only these get automation. See src/github/refs.ts.
+  const closing = new Set(delivery.refs.closingIds);
+
   const outcomes = targets.map((issue): PlannedIssueOutcome => {
     const effects: PlannedEffect[] = [];
     // Recording the PR link is unconditional on a matched ticket, not a
@@ -343,7 +347,14 @@ export const evaluateDelivery = (input: EvaluateInput): EvaluationPlan => {
         state: prLinkState(delivery),
       });
     }
-    if (rule !== null) effects.push(...planActions(rule.do, input, issue));
+    // THE FIX. This line already separated "the raw fact of the association"
+    // from automation — the comment above it said so — but every matched
+    // ticket reached it, so a body that merely CITED a finished ticket
+    // transitioned it. Now only the tickets this PR is about get here, and a
+    // mention stops at the link it earned.
+    if (rule !== null && closing.has(issue.short_id)) {
+      effects.push(...planActions(rule.do, input, issue));
+    }
     return {
       issue_id: issue.id,
       short_id: issue.short_id,

@@ -37,9 +37,55 @@ const OVERRIDE_RE = /^[ \t]*evenflow[ \t]*:[ \t]*(.+)$/gim;
  */
 const CANDIDATE_RE = /(?<![A-Za-z0-9-])([A-Za-z0-9]{2,5}-\d+)(?![A-Za-z0-9])(?!-\d)/g;
 
+/**
+ * Closing keywords, GitHub's own set. A body ref only means "this PR is about
+ * that ticket" when one of these introduces it.
+ *
+ * `[:\s]+` and the optional `#` accept the spellings people actually write:
+ * `Closes EFB-83`, `Closes: EFB-83`, `Fixes #EFB-83`.
+ */
+const CLOSING_RE =
+  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[:\s]+#?([A-Za-z0-9]{2,5}-\d+)(?![A-Za-z0-9])(?!-\d)/gi;
+
+/**
+ * Blank out regions whose ticket refs are not claims about this PR.
+ *
+ * Replaced with spaces rather than removed so every surviving offset is
+ * unchanged — the scan below is offset-insensitive today, but a masker that
+ * silently reflows text is a trap for whoever adds an offset-aware rule next.
+ *
+ * Three regions, and each one was verified to match BEFORE this existed:
+ *   * fenced blocks and inline code — a ref inside a sample is illustrating
+ *     something, not claiming a relationship.
+ *   * URLs — a link to `/issue/EFB-72` points at that ticket's PAGE. The
+ *     ticket UI already shows its PRs from the other direction, so reading a
+ *     hyperlink as "this PR touches that ticket" invents an association the
+ *     author did not make.
+ *
+ * This is why the two workarounds normally suggested for citing a ticket
+ * without triggering automation — put it in backticks, or link to it — both
+ * failed: nothing stripped either region, so both matched exactly like prose.
+ */
+const mask = (text: string): string => {
+  const blank = (s: string) => " ".repeat(s.length);
+  return text
+    .replace(/```[\s\S]*?```/g, blank)
+    .replace(/`[^`\n]*`/g, blank)
+    .replace(/\bhttps?:\/\/\S+/gi, blank);
+};
+
 const collect = (text: string | null | undefined, into: Set<string>): void => {
   if (typeof text !== "string" || text === "") return;
-  for (const m of text.matchAll(CANDIDATE_RE)) {
+  for (const m of mask(text).matchAll(CANDIDATE_RE)) {
+    const candidate = m[1]?.toUpperCase();
+    if (candidate !== undefined && SHORT_ID_RE.test(candidate)) into.add(candidate);
+  }
+};
+
+/** Refs a closing keyword introduces, in the body only. */
+const collectClosing = (text: string | null | undefined, into: Set<string>): void => {
+  if (typeof text !== "string" || text === "") return;
+  for (const m of mask(text).matchAll(CLOSING_RE)) {
     const candidate = m[1]?.toUpperCase();
     if (candidate !== undefined && SHORT_ID_RE.test(candidate)) into.add(candidate);
   }
@@ -52,8 +98,19 @@ export interface RefSources {
 }
 
 export interface RefMatch {
-  /** Uppercased short ids, de-duplicated, in discovery order. */
+  /**
+   * Every ticket this PR MENTIONS. Drives the github_links panel — a PR that
+   * names a ticket should show up on that ticket's card whether or not it is
+   * closing it.
+   */
   readonly shortIds: ReadonlyArray<string>;
+  /**
+   * The subset this PR is ABOUT. Drives lifecycle automation — transitions,
+   * container moves, external state.
+   *
+   * Always a subset of `shortIds`.
+   */
+  readonly closingIds: ReadonlyArray<string>;
   /** True when an `evenflow:` line decided it and inference was skipped. */
   readonly explicit: boolean;
 }
@@ -62,8 +119,27 @@ export interface RefMatch {
  * Extract ticket refs from a PR's text. An explicit `evenflow:` line short
  * -circuits inference; otherwise title, body and branch are all scanned.
  *
- * Multiple matches are all returned — the caller applies the action to
- * every matched ticket, per the approved design.
+ * TWO SETS, because two different questions were being answered by one:
+ *
+ *   shortIds  — which tickets does this PR MENTION?  (informational)
+ *   closingIds — which tickets is this PR ABOUT?     (lifecycle)
+ *
+ * Everything used to be the first set, and the automation consumed it. So a
+ * body that cited prior work for a reviewer — "follow-up to EFB-61", "see the
+ * doc from EFB-98" — transitioned every ticket it named. One batch of four PRs
+ * dragged eight finished tickets back onto the board.
+ *
+ * WHAT COUNTS AS "ABOUT", and the asymmetry is the whole fix:
+ *   * an `evenflow:` override — an explicit declaration of intent
+ *   * the BRANCH name — `feature/EFB-42-do-the-thing`
+ *   * the TITLE
+ *   * in the BODY, only behind a closing keyword — `Closes EFB-42`
+ *
+ * Branch and title count on their own because they are how a PR says what it
+ * IS; nobody names an unrelated ticket in a branch. A body is prose, and prose
+ * cites things. Requiring the keyword everywhere — the obvious reading of
+ * "match GitHub's convention" — would have broken the common case (a PR whose
+ * only ref is its branch name) to fix the rare one.
  */
 export const extractTicketRefs = (sources: RefSources): RefMatch => {
   const explicitIds = new Set<string>();
@@ -73,7 +149,10 @@ export const extractTicketRefs = (sources: RefSources): RefMatch => {
     }
   }
   if (explicitIds.size > 0) {
-    return { shortIds: [...explicitIds], explicit: true };
+    // An override says outright which tickets this PR is for, so it settles
+    // both questions at once.
+    const ids = [...explicitIds];
+    return { shortIds: ids, closingIds: ids, explicit: true };
   }
 
   const inferred = new Set<string>();
@@ -81,5 +160,11 @@ export const extractTicketRefs = (sources: RefSources): RefMatch => {
   collect(sources.body, inferred);
   // Branch names use slashes and dashes: feature/EFB-42-do-the-thing.
   collect(sources.branch, inferred);
-  return { shortIds: [...inferred], explicit: false };
+
+  const closing = new Set<string>();
+  collect(sources.title, closing);
+  collect(sources.branch, closing);
+  collectClosing(sources.body, closing);
+
+  return { shortIds: [...inferred], closingIds: [...closing], explicit: false };
 };
