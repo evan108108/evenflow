@@ -16,6 +16,7 @@
 // looks like a stalled sprint.
 
 import { Show, createMemo, createResource } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 
@@ -144,7 +145,7 @@ const TideSparkline = (props: { days: ReadonlyArray<TideDay> }) => (
 );
 
 export interface TideBadgeProps {
-  /** Board-scoped API prefix, e.g. `/api/v0/orgs/acme/boards/flow`. */
+  /** Board-scoped API prefix, e.g. url("board.get", { slug: "flow" }, "acme"). */
   readonly apiBase: string;
   /** Sprint to read, or null for the board's kanban-only tide. */
   readonly sprintId: string | null;

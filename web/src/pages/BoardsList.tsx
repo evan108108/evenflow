@@ -4,6 +4,7 @@
 // endpoint, which lands the board in the personal org.
 
 import { useNavigate } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -46,7 +47,7 @@ const fetchGroups = async (me: BootstrapMe | null): Promise<OrgGroup[]> => {
         // One fetch covers both views: live boards render here, archived
         // ones back the /boards/archived view + its count link.
         const res = await api<{ boards: BoardRow[] }>((c) =>
-          c.get(`/api/v0/orgs/${encodeURIComponent(org.slug)}/boards?include_archived=1`),
+          c.get(`${url("org.boards.list", { org_slug: org.slug })}?include_archived=1`),
         );
         return {
           org,
@@ -62,7 +63,7 @@ const fetchGroups = async (me: BootstrapMe | null): Promise<OrgGroup[]> => {
 };
 
 const createBoard = (input: NewBoardInput): Promise<{ board: BoardRow }> =>
-  api((c) => c.post<{ board: BoardRow }>("/api/v0/boards", input));
+  api((c) => c.post<{ board: BoardRow }>(url("board.create"), input));
 
 export const BoardsList = (props: { archived?: boolean }) => {
   const navigate = useNavigate();
@@ -104,10 +105,7 @@ export const BoardsList = (props: { archived?: boolean }) => {
   const unarchive = async (org: OrgSummary, board: BoardRow) => {
     try {
       await api((c) =>
-        c.post(
-          `/api/v0/orgs/${encodeURIComponent(org.slug)}/boards/${encodeURIComponent(board.slug)}/unarchive`,
-          {},
-        ),
+        c.delete(url("board.archive.clear", { slug: board.slug }, org.slug)),
       );
       void refetch();
     } catch {

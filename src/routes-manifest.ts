@@ -229,12 +229,20 @@ export const ROUTES = [
 
   // ---- github.ts ----------------------------------------------------------
   {
-    // EXTERNAL CONTRACT: GitHub itself POSTs here. Renaming this breaks every
-    // webhook already configured on github.com, so it is the one path in the
-    // API whose migration is not ours to make unilaterally.
+    // EXTERNAL CONTRACT: GitHub itself POSTs here, at a URL already saved in
+    // every repo's webhook settings. Renaming it breaks those silently — the
+    // deliveries just start 404ing — and unlike our own callers we cannot
+    // migrate them from this repo.
+    //
+    // It also does not need renaming. The convention is singular-when-followed-
+    // by-an-id, and `webhooks` here is followed by the literal `github`, not by
+    // a parameter; `github` is what `:board_id` qualifies. So the plural is
+    // correct: this is the collection of github webhook endpoints, one per
+    // board. An earlier draft of this migration renamed it anyway, which would
+    // have broken a live integration to satisfy a rule it already satisfied.
     id: "github.webhook.receive",
     method: "POST",
-    path: "/webhook/github/:board_id",
+    path: "/webhooks/github/:board_id",
     orgScoped: false,
     file: "github.ts",
     auth: "public",

@@ -7,6 +7,7 @@
 // handle stashed by the sign-up CTA (?claim=<handle> flow) exactly once.
 
 import { createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
 import { registerSessionKey } from "./sessionKeys";
@@ -42,7 +43,7 @@ const defaultFetcher: BootstrapFetcher = (body) =>
     .runPromise(
       Effect.gen(function* () {
         const client = yield* ApiClient;
-        return yield* client.post<BootstrapResponse>("/api/v0/session/bootstrap", body);
+        return yield* client.post<BootstrapResponse>(url("session.bootstrap"), body);
       }),
     )
     .then((response) => {

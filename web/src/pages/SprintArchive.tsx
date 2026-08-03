@@ -3,6 +3,7 @@
 // Dropped / Open, with the sprint's headline metrics up top.
 
 import { useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -120,7 +121,7 @@ export const SprintArchive = () => {
   const boardSlug = () => params["board_slug"] ?? "";
   const sprintId = () => params["sprintId"] ?? "";
   const basePath = () => `/@${handle()}/${boardSlug()}`;
-  const apiBase = () => `/api/v0/orgs/${handle()}/boards/${boardSlug()}`;
+  const apiBase = () => url("board.get", { slug: boardSlug() }, handle());
 
   const [archive] = createResource(
     () => sprintId(),

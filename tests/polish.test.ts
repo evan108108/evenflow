@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 const listBoards = async (h: Harness, qs = "") => {
-  const res = await h.app.request(`/api/v0/boards${qs}`, jsonReq("GET"), {});
+  const res = await h.app.request(`${url("board.list")}${qs}`, jsonReq("GET"), {});
   expect(res.status).toBe(200);
   return (await res.json()) as { boards: BoardShape[]; total: number };
 };

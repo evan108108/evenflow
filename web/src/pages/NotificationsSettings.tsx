@@ -4,6 +4,7 @@
 // so the copy promises persistence, not emails.
 
 import { Show, createResource, createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { TopBar } from "../components/TopBar";
@@ -27,7 +28,7 @@ const TOGGLES: ReadonlyArray<{ key: keyof NotificationsConfig & string; label: s
 
 export const NotificationsSettings = () => {
   const [config, { mutate }] = createResource(() =>
-    api<{ config: NotificationsConfig }>((c) => c.get("/api/v0/notifications/config")).then(
+    api<{ config: NotificationsConfig }>((c) => c.get(url("notifications.config.get"))).then(
       (r) => r.config,
     ),
   );
@@ -41,7 +42,7 @@ export const NotificationsSettings = () => {
     setError(null);
     try {
       const res = await api<{ config: NotificationsConfig }>((c) =>
-        c.patch("/api/v0/notifications/config", change),
+        c.patch(url("notifications.config.get"), change),
       );
       mutate(res.config);
       setSaved(true);

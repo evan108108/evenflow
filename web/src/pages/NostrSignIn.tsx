@@ -12,6 +12,7 @@
 // requested by default and never leave the tab.
 
 import { useNavigate } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { Show, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { AuthManager, appRuntime } from "../effects";
@@ -30,7 +31,7 @@ interface ChallengeWire {
   readonly sign_hint: string;
 }
 
-const SIGNIN_PATH = "/api/v0/signin/nostr";
+const SIGNIN_PATH = url("signin.nostr.verify");
 
 export const NostrSignIn = () => {
   const navigate = useNavigate();

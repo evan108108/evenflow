@@ -4,6 +4,7 @@
 // ApiClient seam every page runs through) plus the orgStore bootstrap seam.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "@routes-manifest";
 import { render } from "solid-js/web";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import type { JSX } from "solid-js";
@@ -40,7 +41,7 @@ const FAKE_JWT = `x.${btoa(
   JSON.stringify({ provider: "google", oauth_id: "1", login: "evan108108@gmail.com" }),
 )}.y`;
 
-type FetchRoute = (url: string, init?: RequestInit) => { status: number; body: unknown } | null;
+type FetchRoute = (reqUrl: string, init?: RequestInit) => { status: number; body: unknown } | null;
 
 let fetchCalls: Array<{ url: string; method: string; body: unknown }> = [];
 
@@ -49,11 +50,11 @@ const installFetch = (route: FetchRoute) => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const reqUrl = String(input);
       const method = init?.method ?? "GET";
       const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
-      fetchCalls.push({ url, method, body });
-      const matched = route(url, init) ?? { status: 404, body: { error: "not-found" } };
+      fetchCalls.push({ url: reqUrl, method, body });
+      const matched = route(reqUrl, init) ?? { status: 404, body: { error: "not-found" } };
       return new Response(JSON.stringify(matched.body), {
         status: matched.status,
         headers: { "Content-Type": "application/json" },
@@ -167,8 +168,8 @@ describe("OrgSwitcher", () => {
 
 describe("HandlePage", () => {
   it("renders the org header and boards for a known handle", async () => {
-    installFetch((url) => {
-      if (url.endsWith("/api/v0/orgs/acme")) {
+    installFetch((reqUrl) => {
+      if (reqUrl.endsWith(url("org.get", { org_slug: "acme" }))) {
         return {
           status: 200,
           body: {
@@ -177,7 +178,7 @@ describe("HandlePage", () => {
           },
         };
       }
-      if (url.endsWith("/api/v0/orgs/acme/boards")) {
+      if (reqUrl.endsWith(url("org.boards.list", { org_slug: "acme" }))) {
         return {
           status: 200,
           body: {
@@ -224,8 +225,8 @@ describe("InvitePreview", () => {
   };
 
   it("renders inviter, target, and role from the anonymous resolve", async () => {
-    installFetch((url) => {
-      if (url.includes("/api/v0/invites/inv-abc12345") && !url.includes("accept")) {
+    installFetch((reqUrl) => {
+      if (reqUrl.includes(url("invite.get", { code: "inv-abc12345" })) && !reqUrl.includes("accept")) {
         return { status: 200, body: PREVIEW };
       }
       return null;
@@ -241,11 +242,11 @@ describe("InvitePreview", () => {
 
   it("signed-in Accept POSTs and navigates to the returned target", async () => {
     window.localStorage.setItem("evenflow.jwt", FAKE_JWT);
-    installFetch((url, init) => {
-      if (url.endsWith("/accept") && init?.method === "POST") {
+    installFetch((reqUrl, init) => {
+      if (reqUrl.endsWith("/accept") && init?.method === "POST") {
         return { status: 200, body: { accepted: true, target_url: "/@acme/roadmap" } };
       }
-      if (url.includes("/api/v0/invites/inv-abc12345")) return { status: 200, body: PREVIEW };
+      if (reqUrl.includes(url("invite.get", { code: "inv-abc12345" }))) return { status: 200, body: PREVIEW };
       return null;
     });
     const { container, history, dispose } = mountAt("/i/inv-abc12345", "/i/:code", () => <InvitePreview />);
@@ -253,15 +254,15 @@ describe("InvitePreview", () => {
     [...container.querySelectorAll("button")].find((b) => b.textContent === "Accept")?.click();
     await tick(60);
     expect(
-      fetchCalls.some((c) => c.url.endsWith("/api/v0/invites/inv-abc12345/accept") && c.method === "POST"),
+      fetchCalls.some((c) => c.url.endsWith(url("invite.accept", { code: "inv-abc12345" })) && c.method === "POST"),
     ).toBe(true);
     expect(history.get()).toBe("/@acme/roadmap");
     dispose();
   });
 
   it("shows the lapse reason instead of Accept for dead invites", async () => {
-    installFetch((url) => {
-      if (url.includes("/api/v0/invites/")) {
+    installFetch((reqUrl) => {
+      if (reqUrl.includes(url("invite.get", { code: "inv-abc12345" }))) {
         return { status: 200, body: { ...PREVIEW, valid: false, reason: "expired" } };
       }
       return null;
@@ -279,11 +280,11 @@ describe("InvitePreview", () => {
 describe("NewOrg", () => {
   it("derives the handle from the name and POSTs the team-org body", async () => {
     window.localStorage.setItem("evenflow.jwt", FAKE_JWT);
-    installFetch((url, init) => {
-      if (url.endsWith("/api/v0/orgs") && init?.method === "POST") {
+    installFetch((reqUrl, init) => {
+      if (reqUrl.endsWith(url("org.create")) && init?.method === "POST") {
         return { status: 201, body: { org: { slug: "wave-crest" }, role: "owner" } };
       }
-      if (url.endsWith("/api/v0/session/bootstrap")) return { status: 200, body: BOOTSTRAP };
+      if (reqUrl.endsWith(url("session.bootstrap"))) return { status: 200, body: BOOTSTRAP };
       return null;
     });
     const { container, dispose } = mountAt("/o/new", "/o/new", () => <NewOrg />);
@@ -295,7 +296,7 @@ describe("NewOrg", () => {
     expect(container.querySelector<HTMLInputElement>("#org-slug")!.value).toBe("wave-crest");
     container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true }));
     await tick(60);
-    const post = fetchCalls.find((c) => c.url.endsWith("/api/v0/orgs") && c.method === "POST");
+    const post = fetchCalls.find((c) => c.url.endsWith(url("org.create")) && c.method === "POST");
     expect(post?.body).toEqual({ kind: "team", slug: "wave-crest", display_name: "Wave Crest" });
     dispose();
   });
@@ -377,14 +378,14 @@ describe("MembersPanel", () => {
 describe("BoardSettings", () => {
   it("renders the members panel and fires PATCH on a role change", async () => {
     window.localStorage.setItem("evenflow.jwt", FAKE_JWT);
-    installFetch((url, init) => {
-      if (url.endsWith("/api/v0/orgs/acme/boards/roadmap")) {
+    installFetch((reqUrl, init) => {
+      if (reqUrl.endsWith(url("board.get", { slug: "roadmap" }, "acme"))) {
         return {
           status: 200,
           body: { board: { id: "b1", slug: "roadmap", title: "Roadmap", visibility: "private" } },
         };
       }
-      if (url.endsWith("/members") && (init?.method ?? "GET") === "GET") {
+      if (reqUrl.endsWith("/members") && (init?.method ?? "GET") === "GET") {
         return {
           status: 200,
           body: {
@@ -395,11 +396,11 @@ describe("BoardSettings", () => {
           },
         };
       }
-      if (url.includes("/members/") && init?.method === "PATCH") {
+      if (reqUrl.includes("/member/") && init?.method === "PATCH") {
         return { status: 200, body: { pubkey: "google:2", role: "contributor" } };
       }
-      if (url.endsWith("/invites")) return { status: 200, body: { invites: [] } };
-      if (url.endsWith("/api/v0/profile/me")) {
+      if (reqUrl.endsWith("/invites")) return { status: 200, body: { invites: [] } };
+      if (reqUrl.endsWith(url("profile.me.get"))) {
         return { status: 200, body: { profile: { pubkey: "google:1" } } };
       }
       return null;
@@ -434,7 +435,7 @@ describe("BoardSettings", () => {
     expect(
       fetchCalls.some(
         (c) =>
-          c.url.endsWith("/api/v0/orgs/acme/boards/roadmap/members/google%3A2") &&
+          c.url.endsWith(url("org.board.member.update", { org_slug: "acme", slug: "roadmap", pubkey: "google:2" })) &&
           c.method === "PATCH" &&
           (c.body as { role: string }).role === "contributor",
       ),

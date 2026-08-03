@@ -4,6 +4,7 @@
 // AS for the provider dance.
 
 import { Context, Effect, Layer } from "effect";
+import { url } from "@routes-manifest";
 
 const STORAGE_KEY = "evenflow.jwt";
 
@@ -27,7 +28,7 @@ export const AuthManagerLive: Layer.Layer<AuthManager> = Layer.succeed(AuthManag
   clear: () => Effect.sync(() => window.localStorage.removeItem(STORAGE_KEY)),
   signIn: (provider) =>
     Effect.sync(() => {
-      window.location.assign(`/auth/oauth/start?provider=${provider}`);
+      window.location.assign(`${url("auth.oauth.start")}?provider=${provider}`);
     }),
 });
 

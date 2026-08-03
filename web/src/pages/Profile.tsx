@@ -5,6 +5,7 @@
 // fresh users — visible and overridable here before anything publishes).
 
 import { useNavigate } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
@@ -26,7 +27,7 @@ const fetchMe = (): Promise<MeResponse> =>
   appRuntime.runPromise(
     Effect.gen(function* () {
       const client = yield* ApiClient;
-      return yield* client.get<MeResponse>("/api/v0/profile/me");
+      return yield* client.get<MeResponse>(url("profile.me.get"));
     }),
   );
 
@@ -34,7 +35,7 @@ const uploadPicture = (image_b64: string, content_type: string): Promise<{ url: 
   appRuntime.runPromise(
     Effect.gen(function* () {
       const client = yield* ApiClient;
-      return yield* client.post<{ url: string }>("/api/v0/profile/picture", {
+      return yield* client.post<{ url: string }>(url("profile.picture.create"), {
         image_b64,
         content_type,
       });
@@ -57,7 +58,7 @@ const putMe = (body: Record<string, string>): Promise<{ profile: ProfileData }> 
   appRuntime.runPromise(
     Effect.gen(function* () {
       const client = yield* ApiClient;
-      return yield* client.put<{ profile: ProfileData }>("/api/v0/profile/me", body);
+      return yield* client.put<{ profile: ProfileData }>(url("profile.me.get"), body);
     }),
   );
 

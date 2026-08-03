@@ -6,6 +6,7 @@
 // struck through, so the audit story is visible.
 
 import { For, Show, createResource, createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { TopBar } from "../components/TopBar";
@@ -29,7 +30,7 @@ const when = (ms: number | null) =>
 
 export const DeveloperKeys = () => {
   const [keys, { refetch }] = createResource(() =>
-    api<{ keys: KeyView[] }>((c) => c.get("/api/v0/keys")).then((r) => r.keys),
+    api<{ keys: KeyView[] }>((c) => c.get(url("key.create"))).then((r) => r.keys),
   );
 
   const [name, setName] = createSignal("");
@@ -46,7 +47,7 @@ export const DeveloperKeys = () => {
     setError(null);
     try {
       const res = await api<{ key: KeyView; plaintext: string }>((c) =>
-        c.post("/api/v0/keys", { name: keyName }),
+        c.post(url("key.create"), { name: keyName }),
       );
       setMinted({ plaintext: res.plaintext, name: keyName });
       setCopied(false);
@@ -61,7 +62,7 @@ export const DeveloperKeys = () => {
 
   const revoke = (key: KeyView) => {
     setError(null);
-    api((c) => c.delete(`/api/v0/keys/${encodeURIComponent(key.id)}`))
+    api((c) => c.delete(url("key.delete", { id: key.id })))
       .then(() => void refetch())
       .catch(() => setError("The current pushed back — nothing changed."));
   };

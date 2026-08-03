@@ -18,7 +18,7 @@
       "sunset": "2026-09-30"
     },
     {
-      "route": "POST /webhook/github/:board_id",
+      "route": "POST /webhooks/github/:board_id",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31",
       "$comment": "PERMANENT EXEMPTION — raw-body-required-for-HMAC-verification / do-not-migrate. GitHub signs the exact bytes it sent (X-Hub-Signature-256), so this route must read the body as text and verify before parsing. Routing it through parseRouteBody would either verify a re-serialized body (silently wrong for any payload whose JSON round-trip is not byte-identical) or verify nothing. EFB-61 left it deliberately. The sunset date is retained only because the checker requires one; do not treat it as an intent to migrate."

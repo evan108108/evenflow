@@ -9,6 +9,7 @@
 // has_credentials — the secret is write-only from the browser's viewpoint.
 
 import { Show, createResource, createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { encryptCredsToServer } from "../lib/storageCrypto";
@@ -29,7 +30,7 @@ const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promis
   appRuntime.runPromise(Effect.flatMap(ApiClient, f));
 
 export const StorageSection = (props: { handle: string }) => {
-  const storageApi = () => `/api/v0/orgs/${encodeURIComponent(props.handle)}/storage`;
+  const storageApi = () => url("storage.get", { org_slug: props.handle });
 
   const [saved, { refetch }] = createResource(
     () => props.handle,
@@ -100,7 +101,7 @@ export const StorageSection = (props: { handle: string }) => {
             setError("Enter both the access key id and the secret access key.");
             return;
           }
-          const { pubkey } = await api<{ pubkey: string }>((c) => c.get("/api/v0/server-pubkey"));
+          const { pubkey } = await api<{ pubkey: string }>((c) => c.get(url("storage.serverPubkey")));
           const sealed = encryptCredsToServer(pubkey, {
             access_key_id: id,
             secret_access_key: secret,

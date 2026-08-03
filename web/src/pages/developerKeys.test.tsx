@@ -2,6 +2,7 @@
 // revoke) over stubbed fetch, and the public /docs render.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "@routes-manifest";
 import { render } from "solid-js/web";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import { DeveloperKeys } from "./DeveloperKeys";
@@ -87,7 +88,7 @@ describe("DeveloperKeys", () => {
     await flush();
     await flush();
 
-    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/api/v0/keys"))).toBe(true);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith(url("key.create")))).toBe(true);
     const modal = container.querySelector(".modal")!;
     expect(modal.textContent).toContain("only a hash");
     expect(modal.querySelector("code")!.textContent).toBe("evk_fresh000_THE_ONE_TIME_PLAINTEXT");
@@ -110,7 +111,7 @@ describe("DeveloperKeys", () => {
       .find((b) => b.textContent === "Revoke")!
       .click();
     await flush();
-    expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/api/v0/keys/k1"))).toBe(true);
+    expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith(url("key.delete", { id: "k1" })))).toBe(true);
     cleanup();
   });
 });

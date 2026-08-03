@@ -3,6 +3,7 @@
 // carry name, dates, points, and link to the sprint archive page.
 
 import { useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -89,7 +90,7 @@ export const SprintsList = () => {
   const handle = () => handleWithoutAt(params["handle"] ?? "");
   const boardSlug = () => params["board_slug"] ?? "";
   const basePath = () => `/@${handle()}/${boardSlug()}`;
-  const apiBase = () => `/api/v0/orgs/${handle()}/boards/${boardSlug()}`;
+  const apiBase = () => url("board.get", { slug: boardSlug() }, handle());
 
   const [sprints] = createResource(
     () => `${apiBase()}/sprints`,

@@ -16,7 +16,7 @@
 // us forever. Only signature failure and unreadable bodies are 4xx.
 
 import { Hono } from "hono";
-import { path } from "../routes-manifest";
+import { path, url } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { Audience, AuditLog, BoardEmitter, Db, DbError, bootstrap } from "../effects";
@@ -314,7 +314,7 @@ const githubConfigWire = (board: BoardShape, row: Record<string, unknown>) => ({
   preset: ((row["github_rule_preset"] as string | null) ?? "defaults") as RulePreset,
   external_states: allowedExternalStates((row["external_state_config"] as string | null) ?? null),
   external_state_config_is_custom: (row["external_state_config"] as string | null) !== null,
-  webhook_url: `/api/v0/webhooks/github/${board.id}`,
+  webhook_url: url("github.webhook.receive", { board_id: board.id }),
 });
 
 const loadBoardRow = (boardId: string) =>
@@ -763,7 +763,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
         );
         return {
           secret: plaintext,
-          webhook_url: `/api/v0/webhooks/github/${board.id}`,
+          webhook_url: url("github.webhook.receive", { board_id: board.id }),
           note: "Shown once. Paste into GitHub → Settings → Webhooks → Secret.",
         };
       }),

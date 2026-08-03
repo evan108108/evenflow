@@ -7,6 +7,7 @@
 // tests pass a runtime over a capturing ApiClient layer.
 
 import { createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Cause, Effect, Option, Runtime } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../../effects";
 import {
@@ -82,9 +83,12 @@ export const PAGE_SIZE = 50;
 export const createBoardStore = (
   slug: string,
   run: RunApi = runOnApp,
-  // Board-scoped API prefix. Legacy default; org-scoped pages pass
-  // /api/v0/orgs/<handle>/boards/<slug> (phase 16 canonical namespace).
-  apiBase: string = `/api/v0/boards/${encodeURIComponent(slug)}`,
+  // EFB-98: the org handle, not a hand-built prefix. This used to be an
+  // apiBase string that every call site concatenated onto — url("sprint.update", { slug, id }, org)
+  // — which is precisely the pattern that produced the wrong URL: it bakes in
+  // plural-followed-by-id and cannot follow a rename. Every URL below is built
+  // from the manifest instead, so a path change is a manifest edit.
+  org?: string,
 ) => {
   const [board, setBoard] = createSignal<Board | null>(null);
   const [issues, setIssues] = createSignal<Issue[]>([]);
@@ -140,7 +144,7 @@ export const createBoardStore = (
     if (after !== null) params.set("after", after);
     return api((c) =>
       c.get<{ issues: Issue[]; has_more: boolean; next_after: string | null }>(
-        `${apiBase}/issues?${params.toString()}`,
+        `${url("issue.list", { slug }, org)}?${params.toString()}`,
       ),
     );
   };
@@ -278,17 +282,29 @@ export const createBoardStore = (
     setLoading(true);
     try {
       const [b, sp] = await Promise.all([
-        api((c) => c.get<{ board: Board }>(apiBase)),
-        api((c) => c.get<{ sprints: Sprint[] }>(`${apiBase}/sprints`)),
+        api((c) => c.get<{ board: Board }>(url("board.get", { slug }, org))),
+        api((c) => c.get<{ sprints: Sprint[] }>(url("sprint.list", { slug }, org))),
       ]);
       setBoard(b.board);
       setSprints(sp.sprints);
       // Members feed the assignee picker in IssueSheet. Best-effort — the
-      // /members endpoint requires contributor scope, so viewers just get
+      // members endpoint requires contributor scope, so viewers just get
       // an empty list and see the current assignee (if any) as a chip.
-      api((c) => c.get<{ members: Array<{ pubkey: string; role: string }> }>(`${apiBase}/members`))
-        .then((r) => setMembers(r.members))
-        .catch(() => setMembers([]));
+      //
+      // EFB-98: only org boards have a member roster. This used to be
+      // `${apiBase}/members`, which for a personal board built
+      // /api/v0/boards/<slug>/members — a URL no route ever served. It 404'd
+      // every time and the catch below swallowed it, so "best-effort" was
+      // hiding a request that could never succeed. Now it is not sent.
+      if (org !== undefined) {
+        api((c) =>
+          c.get<{ members: Array<{ pubkey: string; role: string }> }>(
+            url("org.board.members.list", { org_slug: org, slug }),
+          ),
+        )
+          .then((r) => setMembers(r.members))
+          .catch(() => setMembers([]));
+      }
       // Prime the first page of every stream the board can show. The
       // sentinels take over from here, but priming means first paint has
       // cards even in columns that start off-screen horizontally — a
@@ -370,14 +386,14 @@ export const createBoardStore = (
     if (issue.container !== "active") {
       await optimistic(issue.id, { container: "active" }, async () => {
         const res = await api((c) =>
-          c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/promote_to_active`, {}),
+          c.post<{ issue: Issue }>(url("issue.container.set", { id: issue.id }), { container: "active" }),
         );
         return res.issue;
       });
     }
     await optimistic(issue.id, { status: to.name, column_id: to.id }, async () => {
       const res = await api((c) =>
-        c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/transition`, { column_id: to.id }),
+        c.post<{ issue: Issue }>(url("issue.transition", { id: issue.id }), { column_id: to.id }),
       );
       return res.issue;
     });
@@ -413,7 +429,7 @@ export const createBoardStore = (
     }
     await optimistic(issue.id, optimisticPos === null ? {} : { position: optimisticPos }, async () => {
       const res = await api((c) =>
-        c.patch<{ issue: Issue }>(`/api/v0/issues/${issue.id}/reorder`, {
+        c.put<{ issue: Issue }>(url("issue.position.set", { id: issue.id }), {
           ...(beforeId === null ? {} : { before_issue_id: beforeId }),
           ...(afterId === null ? {} : { after_issue_id: afterId }),
         }),
@@ -427,7 +443,7 @@ export const createBoardStore = (
 
   const refetchSprints = async () => {
     try {
-      const res = await api((c) => c.get<{ sprints: Sprint[] }>(`${apiBase}/sprints`));
+      const res = await api((c) => c.get<{ sprints: Sprint[] }>(url("sprint.list", { slug }, org)));
       setSprints(res.sprints);
     } catch {
       // Quiet refresh — same posture as refetchIssues.
@@ -439,7 +455,7 @@ export const createBoardStore = (
 
   const createSprint = async (name: string): Promise<Sprint | null> => {
     try {
-      const res = await api((c) => c.post<{ sprint: Sprint }>(`${apiBase}/sprints`, { name }));
+      const res = await api((c) => c.post<{ sprint: Sprint }>(url("sprint.list", { slug }, org), { name }));
       setSprints((list) => [...list, res.sprint]);
       setLastError(null);
       return res.sprint;
@@ -454,7 +470,7 @@ export const createBoardStore = (
     patch: { name?: string; goal?: string | null; planned_days?: number | null },
   ) => {
     try {
-      const res = await api((c) => c.patch<{ sprint: Sprint }>(`${apiBase}/sprints/${id}`, patch));
+      const res = await api((c) => c.patch<{ sprint: Sprint }>(url("sprint.update", { slug, id }, org), patch));
       replaceSprint(res.sprint);
       setLastError(null);
     } catch (e) {
@@ -465,7 +481,7 @@ export const createBoardStore = (
   /** Kickoff: the server moves the sprint's backlog issues to active. */
   const startSprint = async (id: string) => {
     try {
-      const res = await api((c) => c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/start`, {}));
+      const res = await api((c) => c.post<{ sprint: Sprint }>(url("sprint.start", { slug, id }, org), {}));
       replaceSprint(res.sprint);
       setLastError(null);
     } catch (e) {
@@ -486,7 +502,7 @@ export const createBoardStore = (
       if (opts?.carryOver !== undefined) body["carryOver"] = opts.carryOver;
       if (opts?.nextSprintId !== undefined) body["nextSprintId"] = opts.nextSprintId;
       const res = await api((c) =>
-        c.post<{ sprint: Sprint }>(`${apiBase}/sprints/${id}/complete`, body),
+        c.post<{ sprint: Sprint }>(url("sprint.complete", { slug, id }, org), body),
       );
       replaceSprint(res.sprint);
       setLastError(null);
@@ -501,7 +517,7 @@ export const createBoardStore = (
    *  rows so their card returns to Unassigned Backlog. */
   const deleteSprint = async (id: string) => {
     try {
-      await api((c) => c.delete<{ deleted: true }>(`${apiBase}/sprints/${id}`));
+      await api((c) => c.delete<{ deleted: true }>(url("sprint.update", { slug, id }, org)));
       setSprints((list) => list.filter((s) => s.id !== id));
       setLastError(null);
       void refetchIssues();
@@ -512,11 +528,20 @@ export const createBoardStore = (
 
   const setSprintMembership = (issue: Issue, sprintId: string | null) => {
     if ((issue.sprint_id ?? null) === sprintId) return Promise.resolve();
-    const verb = sprintId === null ? "remove-issue" : "add-issue";
+    // EFB-98: attach is a POST to the membership collection, detach a DELETE
+    // on the addressable member. This call site is where the original bug was
+    // reported from — it spelled the URL by hand and the server had a
+    // different one.
     const target = sprintId ?? issue.sprint_id;
     return optimistic(issue.id, { sprint_id: sprintId }, async () => {
       const res = await api((c) =>
-        c.post<{ issue: Issue }>(`${apiBase}/sprints/${target}/${verb}`, { issue_id: issue.id }),
+        sprintId === null
+          ? c.delete<{ issue: Issue }>(
+              url("sprint.issue.detach", { slug, id: target ?? "", issue_id: issue.id }, org),
+            )
+          : c.post<{ issue: Issue }>(url("sprint.issues.attach", { slug, id: target ?? "" }, org), {
+              issue_id: issue.id,
+            }),
       );
       return res.issue;
     });
@@ -533,14 +558,18 @@ export const createBoardStore = (
     const to: [Container, string | null] =
       target === "active" ? ["active", issue.column_id] : [target, null];
     return optimistic(issue.id, { container: target }, async () => {
-      const res = await api((c) => c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/${move}`, {}));
+      // EFB-98: one route, destination in the body. CONTAINER_OF_MOVE already
+      // held the mapping the three old URLs encoded in their names.
+      const res = await api((c) =>
+        c.post<{ issue: Issue }>(url("issue.container.set", { id: issue.id }), { container: target }),
+      );
       void refreshStreams([from, to]);
       return res.issue;
     });
   };
 
   const createIssue = async (input: NewIssueInput): Promise<Issue> => {
-    const res = await api((c) => c.post<{ issue: Issue }>(`${apiBase}/issues`, input));
+    const res = await api((c) => c.post<{ issue: Issue }>(url("issue.create", { slug }, org), input));
     setIssues((list) => [res.issue, ...list]);
     return res.issue;
   };
@@ -552,7 +581,7 @@ export const createBoardStore = (
     // BoardPage. Same pattern optimistic() uses for the drag paths.
     noteLocalMutation(id);
     try {
-      const res = await api((c) => c.patch<{ issue: Issue }>(`/api/v0/issues/${id}`, patch));
+      const res = await api((c) => c.patch<{ issue: Issue }>(url("issue.get", { id: id }), patch));
       replaceIssue(res.issue);
       setLastError(null);
       return res.issue;
@@ -580,7 +609,7 @@ export const createBoardStore = (
     noteLocalMutation(issue.id);
     try {
       const res = await api((c) =>
-        c.post<{ issue: Issue }>(`/api/v0/issues/${issue.id}/duplicate-of`, {
+        c.patch<{ issue: Issue }>(url("issue.update", { id: issue.id }), {
           duplicate_of_issue_id: targetId,
         }),
       );
@@ -603,7 +632,7 @@ export const createBoardStore = (
     const snapshot = issues();
     setIssues((list) => list.filter((i) => i.id !== id));
     try {
-      await api((c) => c.delete(`/api/v0/issues/${id}`));
+      await api((c) => c.delete(url("issue.get", { id: id })));
     } catch (e) {
       setIssues(snapshot);
       setLastError(errorText(e));
@@ -611,23 +640,23 @@ export const createBoardStore = (
   };
 
   const fetchComments = (issueId: string) =>
-    api((c) => c.get<{ comments: Comment[] }>(`/api/v0/issues/${issueId}/comments?limit=200`)).then(
+    api((c) => c.get<{ comments: Comment[] }>(`${url("comment.create", { id: issueId })}?limit=200`)).then(
       (r) => r.comments,
     );
 
   const postComment = (issueId: string, body: string, attachmentIds: ReadonlyArray<string> = []) =>
     api((c) =>
-      c.post<{ comment: Comment }>(`/api/v0/issues/${issueId}/comments`, {
+      c.post<{ comment: Comment }>(url("comment.create", { id: issueId }), {
         body,
         ...(attachmentIds.length === 0 ? {} : { attachment_ids: attachmentIds }),
       }),
     ).then((r) => r.comment);
 
   const deleteComment = (commentId: string) =>
-    api((c) => c.delete<{ deleted: boolean }>(`/api/v0/comments/${commentId}`));
+    api((c) => c.delete<{ deleted: boolean }>(url("comment.delete", { id: commentId })));
 
   const fetchIssueActivity = (issueId: string) =>
-    api((c) => c.get<{ activity: FeedItem[] }>(`/api/v0/issues/${issueId}/activity`)).then(
+    api((c) => c.get<{ activity: FeedItem[] }>(url("feed.issue.activity", { id: issueId }))).then(
       (r) => r.activity,
     );
 
@@ -635,7 +664,7 @@ export const createBoardStore = (
 
   const fetchAttachments = (issueId: string) =>
     api((c) =>
-      c.get<{ attachments: Attachment[] }>(`${apiBase}/issues/${issueId}/attachments`),
+      c.get<{ attachments: Attachment[] }>(url("attachment.list", { slug, issue_ref: issueId }, org)),
     ).then((r) => r.attachments);
 
   /** Base64 file → JSON upload. Returns the actionable rejection, if any. */
@@ -650,7 +679,7 @@ export const createBoardStore = (
     }
     try {
       const res = await api((c) =>
-        c.post<{ attachment: Attachment }>(`${apiBase}/issues/${issueId}/attachments`, {
+        c.post<{ attachment: Attachment }>(url("attachment.list", { slug, issue_ref: issueId }, org), {
           file_b64: btoa(binary),
           filename: file.name,
           content_type: file.type === "" ? "application/octet-stream" : file.type,
@@ -671,14 +700,14 @@ export const createBoardStore = (
   };
 
   const setAttachmentCover = (attachmentId: string, is_cover: boolean) =>
-    api((c) => c.patch<{ attachment: Attachment }>(`/api/v0/attachments/${attachmentId}`, { is_cover }));
+    api((c) => c.patch<{ attachment: Attachment }>(url("attachment.update", { id: attachmentId }), { is_cover }));
 
   const deleteAttachment = (attachmentId: string) =>
-    api((c) => c.delete<{ deleted: boolean }>(`/api/v0/attachments/${attachmentId}`));
+    api((c) => c.delete<{ deleted: boolean }>(url("attachment.update", { id: attachmentId })));
 
   return {
     slug,
-    apiBase,
+    apiBase: url("board.get", { slug }, org),
     board,
     issues,
     members,

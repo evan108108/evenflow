@@ -10,6 +10,7 @@
 // already answered is skipped at enqueue time).
 
 import { Effect } from "effect";
+import { url } from "@routes-manifest";
 import { createStore, reconcile } from "solid-js/store";
 import { ApiClient, appRuntime } from "../effects";
 
@@ -39,7 +40,7 @@ const defaultFetcher: Fetcher = (pubkeys) =>
     Effect.gen(function* () {
       const client = yield* ApiClient;
       const res = yield* client.get<{ profiles: ProfileData[] }>(
-        `/api/v0/profile?pubkeys=${encodeURIComponent(pubkeys.join(","))}`,
+        `${url("profile.list")}?pubkeys=${encodeURIComponent(pubkeys.join(","))}`,
       );
       return res.profiles;
     }),

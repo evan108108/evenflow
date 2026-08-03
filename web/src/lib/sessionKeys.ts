@@ -9,6 +9,7 @@
 // loses the key; the client self-heals via request-regrant on next login.
 
 import { Effect } from "effect";
+import { url } from "@routes-manifest";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { generateEpochKeypair, pubkeyFromPriv } from "./audience/audience-keys";
 import { ApiClient, appRuntime } from "../effects";
@@ -59,7 +60,7 @@ export const registerSessionKey = async (): Promise<boolean> => {
     await appRuntime.runPromise(
       Effect.gen(function* () {
         const client = yield* ApiClient;
-        return yield* client.post("/api/v0/session/register-key", { session_pubkey: pub });
+        return yield* client.post(url("session.key.register"), { session_pubkey: pub });
       }),
     );
     return true;

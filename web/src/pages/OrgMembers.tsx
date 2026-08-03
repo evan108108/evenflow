@@ -3,6 +3,7 @@
 // is read-only chips.
 
 import { useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -23,7 +24,7 @@ export const OrgMembers = () => {
   const params = useParams<{ handle: string }>();
   const handle = () => params.handle.replace(/^@/, "");
   const [members] = createResource(handle, (h) =>
-    api<{ members: MemberRow[] }>((c) => c.get(`/api/v0/orgs/${encodeURIComponent(h)}/members`)),
+    api<{ members: MemberRow[] }>((c) => c.get(url("org.members.list", { org_slug: h }))),
   );
 
   return (

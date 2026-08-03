@@ -4,6 +4,7 @@
 // /boards on mount — no sense making a returning user re-tap Sign in.
 
 import { For, onMount } from "solid-js";
+import { url } from "@routes-manifest";
 import { useNavigate } from "@solidjs/router";
 import { Effect } from "effect";
 import { ButterflyMark } from "../components/TopBar";
@@ -109,22 +110,22 @@ export const Landing = () => {
         */}
         <a
           class="btn btn-solid"
-          href="/auth/oauth/start?provider=google"
+          href={`${url("auth.oauth.start")}?provider=google`}
           rel="external"
           onClick={(e) => {
             e.preventDefault();
-            window.location.assign("/auth/oauth/start?provider=google");
+            window.location.assign(`${url("auth.oauth.start")}?provider=google`);
           }}
         >
           Sign in with Google
         </a>
         <a
           class="btn"
-          href="/auth/oauth/start?provider=github"
+          href={`${url("auth.oauth.start")}?provider=github`}
           rel="external"
           onClick={(e) => {
             e.preventDefault();
-            window.location.assign("/auth/oauth/start?provider=github");
+            window.location.assign(`${url("auth.oauth.start")}?provider=github`);
           }}
         >
           Sign in with GitHub
