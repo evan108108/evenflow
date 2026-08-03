@@ -14,6 +14,7 @@ import { Clock, Effect } from "effect";
 import { Db, type DbError } from "../effects";
 import type { Column } from "../columns";
 import { columnById } from "../columns";
+import { topOfColumnPosition, topOfContainerPosition } from "../lib/position";
 import { insertStatusChange } from "../lib/status-change";
 import type { EvaluationPlan, PlannedEffect } from "./engine";
 
@@ -108,15 +109,24 @@ const applyEffect = (
         // completed_at_ms follows the done-category edge, same rule as
         // routes/issues.ts nextCompletedAt: stamped on arrival (kept if
         // already set), cleared on exit.
+        // EFB-78: land at the top of the target column, same rule as the API
+        // transition path. This is the case the ticket was filed for — a merged
+        // PR auto-moves to Done, and Done is only a useful "what just shipped"
+        // feed if the arrival is at the top.
+        const position = yield* topOfColumnPosition({
+          boardId: input.boardId,
+          columnId: effect.column_id,
+          issueId,
+        });
         if (toDone) {
           yield* db.execute(
-            "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = COALESCE(completed_at_ms, ?) WHERE id = ?",
-            [effect.column_name, effect.column_id, now, now, issueId],
+            "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = COALESCE(completed_at_ms, ?) WHERE id = ?",
+            [effect.column_name, effect.column_id, position, now, now, issueId],
           );
         } else {
           yield* db.execute(
-            "UPDATE issueCache SET status = ?, column_id = ?, updated_at_ms = ?, completed_at_ms = NULL WHERE id = ?",
-            [effect.column_name, effect.column_id, now, issueId],
+            "UPDATE issueCache SET status = ?, column_id = ?, position = ?, updated_at_ms = ?, completed_at_ms = NULL WHERE id = ?",
+            [effect.column_name, effect.column_id, position, now, issueId],
           );
         }
         const statusChangeId = yield* insertStatusChange({
@@ -142,11 +152,16 @@ const applyEffect = (
 
       case "set_container": {
         const prev = input.statusByIssue.get(issueId);
-        yield* db.execute("UPDATE issueCache SET container = ?, updated_at_ms = ? WHERE id = ?", [
-          effect.container,
-          now,
+        // EFB-78: container twin of the branch above.
+        const position = yield* topOfContainerPosition({
+          boardId: input.boardId,
+          container: effect.container,
           issueId,
-        ]);
+        });
+        yield* db.execute(
+          "UPDATE issueCache SET container = ?, position = ?, updated_at_ms = ? WHERE id = ?",
+          [effect.container, position, now, issueId],
+        );
         const statusChangeId = yield* insertStatusChange({
           issue_id: issueId,
           board_id: input.boardId,
