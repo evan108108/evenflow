@@ -850,3 +850,397 @@ describe("EFB-38 assignee_pubkey validation", () => {
     );
   });
 });
+
+// ── EFB-85: the four issues.ts routes migrated to parseRouteBody ──────────
+//
+// Follow-up to EFB-61 (comments + boards). Each test below pins ONE predicate
+// and asserts the WIRE REASON, not merely that something failed — a migration
+// is allowed to turn a silent success into a 400, and is not allowed to change
+// an error string that callers already branch on.
+//
+// The quirk tests are the load-bearing half. Every one of them reproduces
+// behavior that existed before the migration and that the obvious schema
+// spelling would have broken; each was verified to FAIL when its predicate is
+// weakened to the obvious form.
+
+/** POST the create route and surface { status, reason }. */
+const postIssue = async (h: ReturnType<typeof makeHarness>, body: Record<string, unknown>) => {
+  const res = await h.app.request("/api/v0/boards/kb/issues", jsonReq("POST", body), {});
+  const json = (await res.json()) as { reason?: string; issue?: IssueShape };
+  return { status: res.status, reason: json.reason, issue: json.issue };
+};
+
+const postTransition = async (
+  h: ReturnType<typeof makeHarness>,
+  id: string,
+  body: Record<string, unknown>,
+) => {
+  const res = await h.app.request(`/api/v0/issues/${id}/transition`, jsonReq("POST", body), {});
+  const json = (await res.json()) as { reason?: string; issue?: IssueShape };
+  return { status: res.status, reason: json.reason, issue: json.issue };
+};
+
+const reorderBody = async (
+  h: ReturnType<typeof makeHarness>,
+  id: string,
+  body: Record<string, unknown>,
+) => {
+  const res = await h.app.request(`/api/v0/issues/${id}/reorder`, jsonReq("PATCH", body), {});
+  const json = (await res.json()) as { reason?: string };
+  return { status: res.status, reason: json.reason };
+};
+
+describe("EFB-85 — POST /boards/:slug/issues under parseRouteBody", () => {
+  // The create-route twin of EFB-53. Pre-migration this returned 201 with the
+  // key dropped: a caller who meant `assignee_pubkey` got a success and an
+  // unassigned issue, with nothing anywhere naming the mistake.
+  it("400s naming an unknown key that used to be silently dropped", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, { title: "T", assignee: "github:1" });
+    expect(status).toBe(400);
+    expect(reason).toBe("assignee-unknown");
+    expect(h.db.issues).toHaveLength(0);
+  });
+
+  // sprint_id and column_id are REAL fields reachable through other endpoints,
+  // so they answer `-immutable` ("wrong endpoint") rather than `-unknown` ("no
+  // such field"). The distinction is the whole reason ImmutableField exists.
+  it.each([
+    ["sprint_id", "sprint_id-immutable"],
+    ["column_id", "column_id-immutable"],
+  ])("tells a caller %s is a real field on the wrong endpoint", async (key, expected) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, { title: "T", [key]: "x" });
+    expect(status).toBe(400);
+    expect(reason).toBe(expected);
+  });
+
+  // Server-assigned fields get the OTHER answer, and deliberately so: no honest
+  // client sends them to any endpoint, so "does not exist" is the true reply.
+  it.each(["id", "short_id", "position", "github_links", "completed_at_ms"])(
+    "answers %s-unknown for a server-assigned field",
+    async (key) => {
+      const h = makeHarness();
+      await createBoard(h);
+      const { status, reason } = await postIssue(h, { title: "T", [key]: "x" });
+      expect(status).toBe(400);
+      expect(reason).toBe(`${key}-unknown`);
+    },
+  );
+
+  // THE EFB-61 TRAP, reproduced. `Schema.minLength(1)` ACCEPTS "   ", so the
+  // obvious primitive would have silently loosened a contract the hand-rolled
+  // `v.trim() !== ""` enforced. Weaken the filter to NonEmptyString and this
+  // test goes red — which is the only reason to trust it.
+  it("still rejects a whitespace-only title (minLength(1) would accept it)", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, { title: "   " });
+    expect(status).toBe(400);
+    expect(reason).toBe("title");
+    expect(h.db.issues).toHaveLength(0);
+  });
+
+  it("400s naming `title` when it is missing entirely", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, {});
+    expect(status).toBe(400);
+    expect(reason).toBe("title");
+  });
+
+  // The reason strings the hand-rolled validators answered, one per field,
+  // unchanged by the migration.
+  it.each([
+    [{ title: "T", priority: "high" }, "priority"],
+    [{ title: "T", estimate: 1.5 }, "estimate"],
+    [{ title: "T", labels: [1] }, "labels"],
+    [{ title: "T", labels: "bug" }, "labels"],
+    [{ title: "T", type: "epic" }, "type"],
+    [{ title: "T", body_format: "rtf" }, "body_format"],
+    [{ title: "T", container: "someday" }, "container"],
+    [{ title: "T", body: 3 }, "body"],
+  ])("keeps the wire reason for %j", async (body, expected) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, body);
+    expect(status).toBe(400);
+    expect(reason).toBe(expected);
+  });
+
+  // status stays Schema.Unknown so that a non-string and an unknown name give
+  // ONE answer, as they always have. Typing it String would split this into
+  // `status` for 3 and `status-not-a-column` for "Nope" — two reasons for one
+  // broken field, and a changed string for a case already covered above.
+  it.each([3, "Nope", null])("answers status-not-a-column for %j", async (v) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, reason } = await postIssue(h, { title: "T", status: v });
+    expect(status).toBe(400);
+    expect(reason).toBe("status-not-a-column");
+  });
+
+  // EFB-38's split survives the migration: shape is the schema's answer,
+  // roster membership is the handler's, and they answer different strings.
+  it("separates a malformed assignee from a non-member one", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const bad = await postIssue(h, { title: "T", assignee_pubkey: "not a pubkey" });
+    expect(bad.status).toBe(400);
+    expect(bad.reason).toBe("assignee_pubkey");
+
+    const stranger = await postIssue(h, {
+      title: "T",
+      assignee_pubkey: "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2",
+    });
+    expect(stranger.status).toBe(400);
+    expect(stranger.reason).toBe("not-a-member");
+  });
+
+  // Invariant 4 on the create path: the row stores the ONE canonical spelling,
+  // whichever the caller sent. Two spellings of one key must not become two
+  // assignees (EFB-38/42/51).
+  it("stores the canonical identity form for a raw-hex assignee", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const boardId = h.db.boards[0]!["id"] as string;
+    const hex = "049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2";
+    seedBoardMember(h, boardId, `nostr:${hex}`, "contributor");
+    const { status, issue } = await postIssue(h, { title: "T", assignee_pubkey: hex });
+    expect(status).toBe(201);
+    expect(issue!.assignee_pubkey).toBe(`nostr:${hex}`);
+  });
+
+  // The happy path is unchanged — the point of a migration.
+  it("still creates with every accepted field and applies the same defaults", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const { status, issue } = await postIssue(h, {
+      title: "T",
+      body: null,
+      body_format: "plain",
+      type: "bug",
+      status: "In Progress",
+      container: "active",
+      priority: 2,
+      estimate: 5,
+      labels: ["a", "b"],
+    });
+    expect(status).toBe(201);
+    expect(issue).toMatchObject({
+      title: "T",
+      body: null,
+      body_format: "plain",
+      type: "bug",
+      status: "In Progress",
+      container: "active",
+      priority: 2,
+      estimate: 5,
+      labels: ["a", "b"],
+      sprint_id: null,
+    });
+  });
+});
+
+describe("EFB-85 — POST /issues/:id/transition under parseRouteBody", () => {
+  it("400s naming an unknown key", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const { status, reason } = await postTransition(h, issue.id, { to_colum: "Done" });
+    expect(status).toBe(400);
+    expect(reason).toBe("to_colum-unknown");
+  });
+
+  // QUIRK. The branch is `column_id !== undefined`, not a truthiness test, so
+  // an explicit null ADDRESSES a column and fails as one — it does not fall
+  // back to the `to` name-match. Making column_id nullable in the schema would
+  // silently change which error a caller sees.
+  it.each([null, 3])("treats column_id: %j as addressing a column, not a fallback", async (v) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const { status, reason } = await postTransition(h, issue.id, { column_id: v, to: "Done" });
+    expect(status).toBe(400);
+    expect(reason).toBe("column_id");
+  });
+
+  it("400s naming column_id for a well-formed id that is not on this board", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const { status, reason } = await postTransition(h, issue.id, { column_id: "nope" });
+    expect(status).toBe(400);
+    expect(reason).toBe("column_id");
+  });
+
+  // QUIRK. `body.to ?? body.to_status` is NULLISH coalescing, so an explicit
+  // `to: null` falls THROUGH to to_status rather than short-circuiting. This
+  // test is the difference between `??` and `||`/`!== undefined`.
+  it("falls through from a null `to` to `to_status`", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const { status, issue: moved } = await postTransition(h, issue.id, {
+      to: null,
+      to_status: "Done",
+    });
+    expect(status).toBe(200);
+    expect(moved!.status).toBe("Done");
+  });
+
+  // Sending none of the three still reaches validateStatus(undefined). A
+  // required-field rule in the schema would have changed this string.
+  it("answers status-not-a-column for a body naming no destination", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const { status, reason } = await postTransition(h, issue.id, {});
+    expect(status).toBe(400);
+    expect(reason).toBe("status-not-a-column");
+  });
+
+  it("still transitions by column_id and by legacy name", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const board = h.db.boards[0]!;
+    const columns = JSON.parse(board["columns"] as string) as Array<{ id: string; name: string }>;
+    const done = columns.find((col) => col.name === "Done")!;
+
+    const byId = await postTransition(h, issue.id, { column_id: done.id });
+    expect(byId.status).toBe(200);
+    expect(byId.issue!.status).toBe("Done");
+
+    const second = await createIssue(h, { title: "Second" });
+    const byName = await postTransition(h, second.id, { to: "Done" });
+    expect(byName.status).toBe(200);
+    expect(byName.issue!.status).toBe("Done");
+  });
+});
+
+describe("EFB-85 — POST /issues/:id/move-to-board under parseRouteBody", () => {
+  // Two problems in one body, and PARSE_OPTIONS carries `errors: "all"`, so
+  // the caller learns about both in one round trip rather than fixing the typo
+  // and then discovering the required field is missing. `target_board` is the
+  // near-miss a client actually makes; naming BOTH is what makes the answer
+  // self-diagnosing.
+  it("reports the unknown key and the missing required field together", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const res = await h.app.request(
+      `/api/v0/issues/${issue.id}/move-to-board`,
+      jsonReq("POST", { target_board: "x" }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe(
+      "target_board-unknown,target_board_id",
+    );
+  });
+
+  it.each([undefined, "", null, 3])("400s naming target_board_id for %j", async (v) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const res = await h.app.request(
+      `/api/v0/issues/${issue.id}/move-to-board`,
+      jsonReq("POST", v === undefined ? {} : { target_board_id: v }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe("target_board_id");
+  });
+
+  // QUIRK, and the reason target_board_id is NonEmptyString rather than the
+  // trim filter used on `title`: the old guard was `=== ""`, so "   " was
+  // accepted and fell through to a board lookup that 404s. Tightening it to a
+  // 400 would be a different answer to the same request.
+  it("still lets a whitespace-only target reach the lookup and 404", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const issue = await createIssue(h);
+    const res = await h.app.request(
+      `/api/v0/issues/${issue.id}/move-to-board`,
+      jsonReq("POST", { target_board_id: "   " }),
+      {},
+    );
+    expect(res.status).toBe(404);
+  });
+
+  // QUIRK. The body is parsed BEFORE the issue is fetched, so a malformed body
+  // aimed at an issue that does not exist answers 400 about the body, not 404
+  // about the issue. Parsing after the fetch would silently swap these.
+  it("answers 400 for a bad body even when the issue does not exist", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request(
+      "/api/v0/issues/does-not-exist/move-to-board",
+      jsonReq("POST", { target_board_id: "" }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe("target_board_id");
+  });
+});
+
+describe("EFB-85 — PATCH /issues/:id/reorder under parseRouteBody", () => {
+  it("400s naming an unknown key", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const { status, reason } = await reorderBody(h, a.id, { before_issue: "x" });
+    expect(status).toBe(400);
+    expect(reason).toBe("before_issue-unknown");
+  });
+
+  it.each(["before_issue_id", "after_issue_id"])("400s naming %s for a non-string", async (key) => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const { status, reason } = await reorderBody(h, a.id, { [key]: 3 });
+    expect(status).toBe(400);
+    expect(reason).toBe(key);
+  });
+
+  // QUIRK. An explicit null means "no neighbour on this side" — the same
+  // statement as omitting the key — so a body of two nulls is the both-missing
+  // case and answers `neighbors`. `requireAnyOf` would have answered
+  // `empty-patch` here, because both keys ARE present.
+  it("treats two explicit nulls as no neighbours at all", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const { status, reason } = await reorderBody(h, a.id, {
+      before_issue_id: null,
+      after_issue_id: null,
+    });
+    expect(status).toBe(400);
+    expect(reason).toBe("neighbors");
+  });
+
+  // QUIRK, and the reason these are plain `Schema.String`: "" is a well-formed
+  // id that fails the LOOKUP, so it answers `neighbors`. Under NonEmptyString
+  // it would answer `before_issue_id` — a changed error string, which is the
+  // one thing a migration may not do quietly.
+  it("still routes an empty-string neighbour to the lookup, not the schema", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const { status, reason } = await reorderBody(h, a.id, { before_issue_id: "" });
+    expect(status).toBe(400);
+    expect(reason).toBe("neighbors");
+  });
+
+  it("still reorders against a real neighbour", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const a = await createIssue(h);
+    const b = await createIssue(h, { title: "B" });
+    const { status } = await reorderBody(h, b.id, { after_issue_id: a.id });
+    expect(status).toBe(200);
+  });
+});
