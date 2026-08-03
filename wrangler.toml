@@ -1,3 +1,27 @@
+# ── Deploy account (EFB-81) ───────────────────────────────────────────────
+#
+# Account 0dfbf8a0b8a8c8dca0ca0a1ca25d0962 — evan108108@gmail.com.
+# Credentials: `set -a; source /Users/evan/projects/4a/.env; set +a`
+#
+# The ID is here because the ADJECTIVE is ambiguous and the ID is not. Calling
+# this "Evan's personal account" is true, but there are two accounts that
+# answer to that description, and `wrangler whoami` on the ambient OAuth token
+# lists the OTHER one:
+#
+#   Enginable                              159ddc1706d598cfcb1feae611ef1a7f
+#   Evan.frohlich@enginable.com's Account  88c3dd1a748d4ec20eae209113025f6d
+#   evan108108@gmail.com  ← evenflow       0dfbf8a0b8a8c8dca0ca0a1ca25d0962  (NOT listed)
+#
+# So a deployer reading "personal", running `wrangler whoami`, and picking the
+# personal-looking entry lands on 88c3dd — where this Worker does not exist.
+# `wrangler deployments list` answers `10007 This Worker does not exist` on
+# both listed accounts, which is the good failure. The bad one is `wrangler
+# deploy`: against the wrong account it SILENTLY CREATES a second `evenflow`
+# Worker that no traffic reaches, and reports success.
+#
+# Verify before deploying, don't infer:
+#   wrangler deployments list   → newest version id should match /healthz
+#
 name = "evenflow"
 main = "src/index.ts"
 compatibility_date = "2026-07-28"
@@ -45,7 +69,8 @@ directory = "./dist/web"
 binding = "ASSETS"
 
 # D1 database — cache + config surface (see migrations/README.md).
-# Lives on Evan's personal Cloudflare account (same as evenflow.work + 4a).
+# On the same account as the Worker — see the deploy-account note at the top
+# of this file for the id and why the name alone is not enough to find it.
 # Provisioned 2026-07-28 via `wrangler d1 create evenflow`.
 [[d1_databases]]
 binding = "DB"
