@@ -44,10 +44,22 @@ const app = new Hono<AppHonoEnv>();
 // a value compiled into the running Worker proves what IS shipped — the
 // distinction that made the EFB-14 FTS5 rollback undiagnosable for 34 hours.
 //
-// Unauthenticated, matching the rest of this endpoint. A commit sha is a hash:
-// it confirms a commit id but grants nothing without repo access, and the
-// predeploy check has to read it from any machine before it has credentials
-// loaded. Nothing else about build state is exposed here.
+// DELIBERATELY UNAUTHENTICATED — do not auth-gate this in a consistency pass.
+//
+// Three reasons, in order of weight:
+//
+//  1. The predeploy check must read it with nothing but git and curl, from any
+//     machine, before any credentials are loaded. Gating it defeats the whole
+//     primitive.
+//  2. It discloses nothing. evan108108/evenflow is a PUBLIC repo, so every
+//     commit sha is already enumerable by anyone via `git ls-remote`. Saying
+//     "the live build came from a commit in that public history" is zero
+//     information gain.
+//  3. It is a different class from EFB-76's 401-not-404 rule. That rule governs
+//     reads whose ANSWER VARIES PER CALLER and thereby reveals whether private
+//     things exist. This returns one identical, content-free answer to
+//     everybody. Version and diagnostic surfaces are conventionally open for
+//     exactly that reason.
 app.get("/healthz", async (c) => {
   const gitSha = c.env.GIT_SHA ?? null;
   const healthz = Effect.gen(function* () {

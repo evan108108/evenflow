@@ -28,11 +28,18 @@ let server: Server;
 let port: number;
 let body: unknown = {};
 let status = 200;
+/** When set, successive requests get successive entries — simulates an
+ *  edge mid-rollout answering from two Worker versions at once. */
+let bodySequence: unknown[] | null = null;
+let served = 0;
 
 beforeAll(async () => {
   server = createServer((_req, res) => {
     res.writeHead(status, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(body));
+    const next =
+      bodySequence === null ? body : (bodySequence[served] ?? bodySequence[bodySequence.length - 1]);
+    served += 1;
+    res.end(JSON.stringify(next));
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   port = (server.address() as { port: number }).port;
@@ -41,6 +48,14 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((ok) => server.close(() => ok()));
 });
+
+/** Reset the response mode between tests so ordering can't leak. */
+const serve = (b: unknown, seq: unknown[] | null = null) => {
+  body = b;
+  bodySequence = seq;
+  served = 0;
+  status = 200;
+};
 
 const run = (env: Record<string, string> = {}) =>
   new Promise<{ code: number; stdout: string; stderr: string }>((ok) => {
@@ -59,8 +74,7 @@ const run = (env: Record<string, string> = {}) =>
 
 describe("predeploy ancestry check", () => {
   it("clears a deploy when the live sha is an ancestor of HEAD", async () => {
-    body = { ok: true, git_sha: git("rev-parse", "HEAD~1") };
-    status = 200;
+    serve({ ok: true, git_sha: git("rev-parse", "HEAD~1") });
     const r = await run();
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("is an ancestor of HEAD");
@@ -70,7 +84,7 @@ describe("predeploy ancestry check", () => {
   });
 
   it("clears a redeploy of the identical commit", async () => {
-    body = { ok: true, git_sha: git("rev-parse", "HEAD") };
+    serve({ ok: true, git_sha: git("rev-parse", "HEAD") });
     const r = await run();
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("live sha == HEAD");
@@ -79,7 +93,7 @@ describe("predeploy ancestry check", () => {
   it("REFUSES when the live sha is not an ancestor — the EFB-14 state", async () => {
     // A real commit, parented one back from HEAD, reachable from no ref.
     const dangling = git("commit-tree", `${git("rev-parse", "HEAD^{tree}")}`, "-p", "HEAD~1", "-m", "someone's unmerged branch");
-    body = { ok: true, git_sha: dangling };
+    serve({ ok: true, git_sha: dangling });
     const r = await run();
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("NOT an ancestor");
@@ -91,7 +105,7 @@ describe("predeploy ancestry check", () => {
   });
 
   it("REFUSES an unstamped prod by default, and says how to proceed", async () => {
-    body = { ok: true, git_sha: null };
+    serve({ ok: true, git_sha: null });
     const r = await run();
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("no git sha");
@@ -99,10 +113,35 @@ describe("predeploy ancestry check", () => {
   });
 
   it("proceeds past an unstamped prod only with the explicit override", async () => {
-    body = { ok: true, git_sha: null };
+    serve({ ok: true, git_sha: null });
     const r = await run({ ALLOW_UNSTAMPED: "1" });
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("unstamped");
+  });
+
+  // Found by running the check against real prod right after deploying it:
+  // the first read reported the OLD sha and the next three the new one.
+  // Worker versions propagate across edge isolates rather than flipping
+  // atomically, so a single sample is not evidence of what is live. The
+  // dangerous direction is a stale isolate reporting an older sha that
+  // happens to BE an ancestor, which would clear a deploy the true live sha
+  // would have blocked.
+  it("REFUSES when prod answers with two different versions mid-rollout", async () => {
+    const a = git("rev-parse", "HEAD~1");
+    const b = git("rev-parse", "HEAD~2");
+    serve(null, [{ ok: true, git_sha: a }, { ok: true, git_sha: b }, { ok: true, git_sha: b }]);
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("more than one version");
+    expect(r.stderr).toMatch(/Wait for it to settle/);
+  });
+
+  it("treats a stamped/unstamped split as disagreement too", async () => {
+    serve(null, [{ ok: true, git_sha: git("rev-parse", "HEAD~1") }, { ok: true, git_sha: null }, { ok: true, git_sha: null }]);
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("more than one version");
+    expect(r.stderr).toContain("unstamped");
   });
 
   it("REFUSES when /healthz is unreachable rather than assuming the best", async () => {
@@ -112,8 +151,8 @@ describe("predeploy ancestry check", () => {
   });
 
   it("REFUSES on a non-200 from /healthz", async () => {
+    serve({ error: "boom" });
     status = 500;
-    body = { error: "boom" };
     const r = await run();
     status = 200;
     expect(r.code).toBe(1);

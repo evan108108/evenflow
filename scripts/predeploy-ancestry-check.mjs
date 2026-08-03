@@ -64,11 +64,34 @@ const fail = (headline, ...lines) => {
 
 const head = git("rev-parse", "HEAD");
 
-let live;
-try {
-  const res = await fetch(HEALTH_URL, { headers: { "Cache-Control": "no-cache" } });
+/**
+ * Sample /healthz several times and require the answers to agree.
+ *
+ * Worker versions propagate across edge isolates rather than flipping at
+ * once: for a window after a deploy, some locations still answer from the
+ * previous version. Observed live while building this — the first read after
+ * a deploy reported the OLD sha and the next three the new one.
+ *
+ * One sample is therefore not evidence. The dangerous direction is subtle: a
+ * stale isolate reporting an older sha that happens to BE an ancestor would
+ * clear a deploy that the true live sha would have blocked. So disagreement
+ * is treated as its own refusal — mid-rollout, "what is live" has no single
+ * answer, and that is precisely when you should not be deploying over it.
+ *
+ * The cache-buster is belt-and-braces: this route sends no cf-cache-status
+ * today, but CDN config is not a stable assumption to build a safety check on.
+ */
+const SAMPLES = 3;
+const sample = async (i) => {
+  const url = `${HEALTH_URL}${HEALTH_URL.includes("?") ? "&" : "?"}_pd=${Date.now()}-${i}`;
+  const res = await fetch(url, { headers: { "Cache-Control": "no-cache" } });
   if (!res.ok) fail(`${HEALTH_URL} answered ${res.status}.`, "Cannot establish what is live. Not deploying blind.");
-  live = await res.json();
+  return res.json();
+};
+
+let observed = [];
+try {
+  for (let i = 0; i < SAMPLES; i++) observed.push(await sample(i));
 } catch (e) {
   fail(
     `could not reach ${HEALTH_URL} (${e.message}).`,
@@ -77,7 +100,19 @@ try {
   );
 }
 
-const liveSha = live?.git_sha ?? null;
+const seen = [...new Set(observed.map((o) => o?.git_sha ?? null))];
+if (seen.length > 1) {
+  fail(
+    "prod is answering with more than one version right now.",
+    `Saw: ${seen.map((s) => (s === null ? "unstamped" : s.slice(0, 7))).join(", ")}`,
+    "",
+    "A deploy is still propagating across the edge, so there is no single",
+    "answer to what is live. Wait for it to settle and re-run — deploying into",
+    "a rollout means you cannot know what you are replacing.",
+  );
+}
+
+const liveSha = seen[0] ?? null;
 
 // Refuse-by-default rather than warn-and-continue. An unstamped prod means
 // someone deployed outside the wrapper, which is the same class of unknown
