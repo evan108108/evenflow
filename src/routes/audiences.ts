@@ -1,114 +1,60 @@
-// /api/v0 private-board key grants (phase 16.5).
+// /api/v0 private-board key grants (phase 16.5) — HTTP shell over
+// src/actions/audiences.ts.
 //
-// GET  …/boards/:slug/key-grant       — the caller's current-epoch grant
-//                                       for THIS session's registered key.
-// POST …/boards/:slug/request-regrant — self-service re-issue after a
-//                                       fresh login (new session keypair)
-//                                       or an epoch rotation. Auto-approved
-//                                       for anyone still holding board
-//                                       access — the same authz the board
-//                                       read path uses.
+// GET  …/board/:slug/key-grant       — the caller's current-epoch grant
+//                                      for THIS session's registered key.
+// POST …/board/:slug/request-regrant — self-service re-issue after a
+//                                      fresh login (new session keypair)
+//                                      or an epoch rotation.
 //
-// Grants target SESSION pubkeys (sessionKeyRegistrations), looked up by
-// the caller's jwt_hash — never by member identity alone — so a stolen
-// member stand-in string can't fetch another device's ciphertext.
+// Neither route reads a body, so there is no parse here and nothing for
+// check:boundary to see. What stays is transport: params, the bearer,
+// requireCaller, runJson.
 
 import { Hono } from "hono";
 import { path } from "../routes-manifest";
-import { Effect, Exit } from "effect";
-import { Db, bootstrap, hashToken } from "../effects";
+import { Effect } from "effect";
+import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { callerPubkey, requireCaller, resolveBoardScope } from "../authz";
-import { ConflictError, NotFoundError, errorResponse } from "./errors";
-import { AudienceKeyError, grantMemberOnJoin } from "../audiences";
-
-interface GrantRow {
-  readonly epoch: number;
-  readonly grant_ciphertext: string;
-  readonly grant_sender_pubkey: string;
-  readonly recipient_pubkey: string;
-}
+import { requireCaller } from "../authz";
+import { errorResponse } from "./errors";
+import { makeRunJson } from "../lib/run-json";
+import { actionInput } from "../actions/types";
+import {
+  createRegrantRequest,
+  getKeyGrant,
+  type AudienceServices,
+  type AudiencesFailure,
+} from "../actions/audiences";
 
 export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
   const audiences = new Hono<AppHonoEnv>();
-
-  const grantView = (board: { audience_pubkey: string | null }, row: GrantRow) => ({
-    grant: {
-      epoch: row.epoch,
-      grant_ciphertext: row.grant_ciphertext,
-      grant_sender_pubkey: row.grant_sender_pubkey,
-      session_pubkey: row.recipient_pubkey,
-      audience_pubkey: board.audience_pubkey,
-    },
-  });
-
-  /** The caller's registered session pub for THIS jwt, or null. */
-  const sessionPubOfCaller = (token: string) =>
-    Effect.gen(function* () {
-      const db = yield* Db;
-      const jwtHash = yield* hashToken(token);
-      const row = yield* db.queryFirst<{ session_pubkey: string }>(
-        "SELECT session_pubkey FROM sessionKeyRegistrations WHERE jwt_hash = ?",
-        [jwtHash],
-      );
-      return row?.session_pubkey ?? null;
-    });
+  const runJson = makeRunJson<AudiencesFailure, AudienceServices>(layerFor, errorResponse);
 
   audiences.get(path("audience.keyGrant.get"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const pubkey = callerPubkey(claims);
-      const { board } = yield* resolveBoardScope(
-        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
-        pubkey,
-        "viewer",
+      return yield* getKeyGrant(
+        actionInput(claims, c.req.param(), undefined, {
+          token: c.get("token") ?? "",
+          orgSlug: c.req.param("org_slug") ?? null,
+        }),
       );
-      if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
-      const sessionPub = yield* sessionPubOfCaller(c.get("token") ?? "");
-      if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });
-      const db = yield* Db;
-      const row = yield* db.queryFirst<GrantRow>(
-        "SELECT * FROM boardMemberKeyGrant WHERE board_id = ? AND member_pubkey = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL",
-        [board.id, pubkey, sessionPub, board.audience_epoch],
-      );
-      if (row === null) return yield* new NotFoundError({ reason: "grant" });
-      return grantView(board, row);
     });
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value);
+    return runJson(c, program);
   });
 
   audiences.post(path("audience.regrantRequest.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const pubkey = callerPubkey(claims);
-      const { board } = yield* resolveBoardScope(
-        { org_slug: c.req.param("org_slug"), slug: c.req.param("slug") },
-        pubkey,
-        "viewer",
+      return yield* createRegrantRequest(
+        actionInput(claims, c.req.param(), undefined, {
+          token: c.get("token") ?? "",
+          orgSlug: c.req.param("org_slug") ?? null,
+        }),
       );
-      if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
-      const sessionPub = yield* sessionPubOfCaller(c.get("token") ?? "");
-      if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });
-      yield* grantMemberOnJoin(board, pubkey).pipe(
-        Effect.mapError((e) =>
-          e instanceof AudienceKeyError
-            ? new ConflictError({ reason: `audience-${e.reason}` })
-            : e,
-        ),
-      );
-      const db = yield* Db;
-      const row = yield* db.queryFirst<GrantRow>(
-        "SELECT * FROM boardMemberKeyGrant WHERE board_id = ? AND member_pubkey = ? AND recipient_pubkey = ? AND epoch = ? AND revoked_at_ms IS NULL",
-        [board.id, pubkey, sessionPub, board.audience_epoch],
-      );
-      if (row === null) return yield* new NotFoundError({ reason: "grant" });
-      return grantView(board, row);
     });
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value, 201);
+    return runJson(c, program, 201);
   });
 
   return audiences;

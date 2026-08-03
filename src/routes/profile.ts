@@ -1,81 +1,50 @@
-// /api/v0 profile — public user profiles backed by kind-0 events on 4a,
-// cached in profileCache for chip-speed reads.
+// /api/v0 profile — HTTP shell over src/actions/profile.ts.
 //
-// The substrate is the source of truth: PUT publishes a standard Nostr
-// kind 0 through the gateway (KMS-signed, relay fan-out) and only then
-// caches the row locally, so cache and substrate can't fork. Reads are
-// lazy: serve the cached row while it's fresh (15 min), refresh from 4a
-// past that, and degrade to the stale row — warn-logged, never an error —
-// when 4a is unreachable. A pubkey with no kind 0 at all still resolves
-// 200 with empty fields; bulk chip rendering depends on misses being data.
+// EFB-98 split this file in two. What stays here is transport: the 401, the
+// bearer, the raw reads, errorResponse, runJson.
+//
+// THE RAW READS STAY HERE, and that is load-bearing rather than stylistic.
+// POST /profile/picture and PUT /profile/me are on scripts/boundary-allowlist.json
+// and GET /profile is on the query allowlist, every entry pinned to
+// `src/routes/profile.ts` — and both checkers scan src/routes as TEXT. Move a
+// read into the action module and the entry stops describing anything real
+// while the checker keeps exiting 0: detected debt silently downgraded to
+// declared (EFB-98 rule 11). The reads are built here and handed over as
+// un-run Effects; the POLICY over what they produce is business logic and
+// lives in the action (rule 12).
 
 import { Hono } from "hono";
 import { path } from "../routes-manifest";
 import type { Context } from "hono";
-import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { AuditLog, Db, DbError, FourA, FourAError, bootstrap } from "../effects";
+import { Cause, Effect, Option } from "effect";
+import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
-import { callerPubkey } from "../authz";
-import { canonicalizeIdentityRef } from "../lib/identity";
+import { ValidationError } from "../lib/errors";
+import { makeRunJson } from "../lib/run-json";
+import { actionInput } from "../actions/types";
+import {
+  createProfilePicture,
+  getMyProfile,
+  getProfile,
+  listProfiles,
+  setMyProfile,
+  type ProfileFailure,
+  type ProfileServices,
+  type UploadedImage,
+} from "../actions/profile";
 
-export const PROFILE_CACHE_TTL_MS = 15 * 60 * 1000;
-export const BULK_MAX = 100;
-
-// Mirror the gateway's caps so bad input fails here with a field-named 400
-// instead of a relayed gateway error. Rejections never truncate.
-const NAME_MAX = 64;
-const DISPLAY_NAME_MAX = 128;
-const PICTURE_MAX = 512;
-const ABOUT_MAX = 4000;
+// Re-exported for tests/profile.test.ts, which reaches for the caps rather
+// than hard-coding them. The values live with the logic that enforces them.
+export { BULK_MAX, PROFILE_CACHE_TTL_MS, MAX_UPLOAD_BYTES, ALLOWED_IMAGE_TYPES } from "../actions/profile";
+export type { ProfileShape } from "../actions/profile";
 
 const BEARER_PREFIX = "Bearer ";
 
-// Picture uploads (proxied to 4a's POST /v0/blob). Server-side downscale /
-// re-encode (512px + JPEG) is a follow-up; v1 trusts the client to send a
-// reasonable size under the hard cap.
-export const MAX_UPLOAD_BYTES = 256 * 1024;
-export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
-
-class ValidationError extends Data.TaggedError("ValidationError")<{
-  readonly reason: string;
-}> {}
-
-type ProfileFailure = ValidationError | DbError | FourAError;
-
-export interface ProfileShape {
-  readonly pubkey: string;
-  readonly name: string | null;
-  readonly display_name: string | null;
-  readonly picture: string | null;
-  readonly about: string | null;
-  readonly event_id: string | null;
-  readonly updated_at_ms: number | null;
-}
-
-const emptyProfile = (pubkey: string): ProfileShape => ({
-  pubkey,
-  name: null,
-  display_name: null,
-  picture: null,
-  about: null,
-  event_id: null,
-  updated_at_ms: null,
-});
-
-type CacheRow = Record<string, unknown>;
-
-const rowToProfile = (row: CacheRow): ProfileShape => ({
-  pubkey: String(row["pubkey"]),
-  name: (row["name"] as string | null) ?? null,
-  display_name: (row["display_name"] as string | null) ?? null,
-  picture: (row["picture"] as string | null) ?? null,
-  about: (row["about"] as string | null) ?? null,
-  event_id: (row["event_id"] as string | null) ?? null,
-  updated_at_ms: ((row["updated_at_ms"] as number | null) ?? 0) === 0
-    ? null
-    : (row["updated_at_ms"] as number),
-});
-
+/**
+ * This router's OWN failure mapping, deliberately not the shared errorResponse
+ * from ./errors: a FourAError here answers 502 `4a-<reason>`, and the shared
+ * one has no such arm. Rule 3 — failure-union-to-status-code is transport.
+ */
 const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<ProfileFailure>) => {
   const failure = Cause.failureOption(cause);
   if (Option.isSome(failure)) {
@@ -92,130 +61,104 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<ProfileFailure
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const upsertCache = (profile: ProfileShape, fetchedAtMs: number) =>
-  Effect.gen(function* () {
-    const db = yield* Db;
-    yield* db.execute(
-      `INSERT INTO profileCache (pubkey, name, display_name, picture, about, event_id, updated_at_ms, fetched_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(pubkey) DO UPDATE SET name = excluded.name, display_name = excluded.display_name, picture = excluded.picture, about = excluded.about, event_id = excluded.event_id, updated_at_ms = excluded.updated_at_ms, fetched_at_ms = excluded.fetched_at_ms`,
-      [
-        profile.pubkey,
-        profile.name,
-        profile.display_name,
-        profile.picture,
-        profile.about,
-        profile.event_id,
-        profile.updated_at_ms ?? 0,
-        fetchedAtMs,
-      ],
-    );
-  });
+/**
+ * The raw JSON read for PUT /profile/me, kept in this file per rule 11.
+ *
+ * Deliberately NOT `readJsonBody` from ./errors: that helper is byte-identical
+ * in behaviour, but this route is on the allowlist under its own hand-rolled
+ * read, and swapping the spelling during a migration is the kind of quiet
+ * change that makes a diff unreadable as "the same code".
+ */
+const readProfileBody = (c: Context<AppHonoEnv>) =>
+  Effect.tryPromise({
+    try: () => c.req.json() as Promise<Record<string, unknown>>,
+    catch: () => new ValidationError({ reason: "expected-json" }),
+  }).pipe(
+    Effect.filterOrFail(
+      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
+      () => new ValidationError({ reason: "expected-json-object" }),
+    ),
+  );
 
 /**
- * The lazy-cache read every GET shares: fresh row → serve it; stale/missing
- * → refresh from 4a and cache (misses too — a pubkey with no kind 0 gets an
- * empty row so chip rendering doesn't re-poll the substrate every 15
- * minutes for users who never wrote a profile); 4a failure → warn + stale
- * row if present, else empty.
+ * The raw image read for POST /profile/picture — multipart or base64 JSON.
+ *
+ * Everything here is a READ: getting bytes and a claimed content type off the
+ * request. What those bytes are ALLOWED to be — type, emptiness, size — is
+ * policy and lives in the action. That split is rule 12, and this is the case
+ * it was written from.
  */
-const resolveProfile = (
-  pubkey: string,
-): Effect.Effect<ProfileShape, DbError, Db | FourA> =>
+const readUploadedImage = (
+  c: Context<AppHonoEnv>,
+  contentTypeHeader: string,
+): Effect.Effect<UploadedImage, ValidationError, never> =>
   Effect.gen(function* () {
-    const db = yield* Db;
-    const now = yield* Clock.currentTimeMillis;
-    const row = yield* db.queryFirst<CacheRow>(
-      "SELECT * FROM profileCache WHERE pubkey = ?",
-      [pubkey],
-    );
-    if (row !== null && now - (row["fetched_at_ms"] as number) < PROFILE_CACHE_TTL_MS) {
-      return rowToProfile(row);
+    let bytes: Uint8Array;
+    let imageType: string;
+
+    if (contentTypeHeader === "multipart/form-data") {
+      const form = yield* Effect.tryPromise({
+        try: () => c.req.formData(),
+        catch: () => new ValidationError({ reason: "expected-multipart" }),
+      });
+      // FormDataEntryValue is string | File; workers-types has no global
+      // File to instanceof against, so duck-type on the Blob surface.
+      const entry = form.get("file") as { type?: string; arrayBuffer?: () => Promise<ArrayBuffer> } | string | null;
+      if (entry === null || typeof entry === "string" || typeof entry.arrayBuffer !== "function") {
+        return yield* new ValidationError({ reason: "missing-file" });
+      }
+      imageType = (entry.type ?? "").split(";")[0]!.trim().toLowerCase();
+      bytes = new Uint8Array(yield* Effect.promise(() => entry.arrayBuffer!()));
+    } else {
+      const body = yield* Effect.tryPromise({
+        try: () => c.req.json() as Promise<Record<string, unknown>>,
+        catch: () => new ValidationError({ reason: "expected-json" }),
+      });
+      if (typeof body["image_b64"] !== "string" || body["image_b64"] === "") {
+        return yield* new ValidationError({ reason: "image_b64" });
+      }
+      if (typeof body["content_type"] !== "string") {
+        return yield* new ValidationError({ reason: "content_type" });
+      }
+      imageType = body["content_type"].split(";")[0]!.trim().toLowerCase();
+      try {
+        const bin = atob(body["image_b64"]);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } catch {
+        return yield* new ValidationError({ reason: "image_b64-not-base64" });
+      }
     }
-
-    const fourA = yield* FourA;
-    const remote = yield* fourA.fetchProfile(pubkey).pipe(Effect.either);
-    if (remote._tag === "Left") {
-      console.warn(`[profile] 4a fetch failed for ${pubkey}: ${remote.left.reason}${remote.left.detail === undefined ? "" : ` (${remote.left.detail})`}`);
-      return row === null ? emptyProfile(pubkey) : rowToProfile(row);
-    }
-
-    const profile: ProfileShape = {
-      pubkey,
-      name: remote.right.fields.name ?? null,
-      display_name: remote.right.fields.display_name ?? null,
-      picture: remote.right.fields.picture ?? null,
-      about: remote.right.fields.about ?? null,
-      event_id: remote.right.event_id,
-      updated_at_ms: remote.right.updated_at_ms,
-    };
-    yield* upsertCache(profile, now);
-    return profile;
-  });
-
-/** Validate one optional profile field: string under cap, "" normalized to absent. */
-const readField = (
-  body: Record<string, unknown>,
-  field: "name" | "display_name" | "picture" | "about",
-  max: number,
-): Effect.Effect<string | undefined, ValidationError> =>
-  Effect.gen(function* () {
-    const value = body[field];
-    if (value === undefined || value === null || value === "") return undefined;
-    if (typeof value !== "string") return yield* new ValidationError({ reason: field });
-    if (value.length > max) return yield* new ValidationError({ reason: `${field}-too-long` });
-    return value;
+    return { bytes, imageType };
   });
 
 export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   const profile = new Hono<AppHonoEnv>();
+  const runJson = makeRunJson<ProfileFailure, ProfileServices>(layerFor, errorResponse);
 
-  const runJson = async (
-    c: Context<AppHonoEnv>,
-    program: Effect.Effect<unknown, ProfileFailure, Db | FourA | AuditLog>,
-  ) => {
-    const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
-    if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
-    return c.json(exit.value, 200);
-  };
+  // This router answers `missing-authorization`, where `requireCaller` answers
+  // `authentication-required`. Both are wire-visible strings and a mechanical
+  // migration may not change one into the other (BOUNDARY_DISCIPLINE.md:244),
+  // so the check stays exactly as it was rather than being normalised to the
+  // helper every other family uses.
+  const unauthorized = (c: Context<AppHonoEnv>) =>
+    c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
+
+  // The bearer, sliced the way this file has always sliced it. Deliberately
+  // not `c.get("token")`: that is set by middleware and need not be
+  // character-identical to this, and the value is handed to 4a as a
+  // credential — not somewhere to discover a difference.
+  const bearerOf = (c: Context<AppHonoEnv>) =>
+    (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
 
   // ── GET /profile/me ─────────────────────────────────────────────────────
   profile.get(path("profile.me.get"), async (c) => {
     const claims = c.get("claims");
-    if (claims === undefined) {
-      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
-    }
-    const program = Effect.gen(function* () {
-      const me = yield* resolveProfile(callerPubkey(claims));
-      let out = me;
-      // Fresh-user display seed: no kind 0 and nothing named yet → show the
-      // login-prefix instead of the raw provider:oauth_id. Response-only —
-      // never cached, never published — so the substrate stays exactly what
-      // the user chose to write.
-      if (me.event_id === null && me.display_name === null && me.name === null) {
-        out = { ...out, display_name: claims.login.split("@")[0] ?? null };
-      }
-      // OAuth avatar seed. Previously response-only ("save to keep it"),
-      // but that meant every card-side profile lookup returned picture:null
-      // for users who signed in with OAuth and never explicitly saved. Now
-      // we persist it to profileCache the first time we see it, so bulk
-      // lookups from cards / assignee avatars find the picture too. Users
-      // can still replace it explicitly. seeded_from is left set so the UI
-      // can still surface the "provider avatar" affordance if it wants.
-      let seeded_from: "oauth" | null = null;
-      if (out.picture === null && claims.picture !== undefined) {
-        out = { ...out, picture: claims.picture };
-        seeded_from = "oauth";
-        const db = yield* Db;
-        const nowMs = yield* Clock.currentTimeMillis;
-        yield* db.execute(
-          "UPDATE profileCache SET picture = ?, updated_at_ms = ?, fetched_at_ms = ? WHERE pubkey = ? AND picture IS NULL",
-          [claims.picture, nowMs, nowMs, callerPubkey(claims)],
-        );
-      }
-      return { profile: out, seeded_from };
-    });
-    return runJson(c, program);
+    if (claims === undefined) return unauthorized(c);
+    return runJson(
+      c,
+      getMyProfile(actionInput(claims, c.req.param(), undefined, { token: bearerOf(c) })),
+    );
   });
 
   // ── POST /profile/picture ───────────────────────────────────────────────
@@ -223,74 +166,24 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // return the immutable URL. Deliberately does NOT publish a kind 0 — the
   // URL only reaches the substrate when the user Saves (PUT /profile/me),
   // so the UI can preview before anything goes public.
+  //
+  // The read is constructed here and run inside the action. NOT a rule-10
+  // deferral — nothing gates above it, and the action yields it first, exactly
+  // where it has always run. It travels as an Effect so the raw markers stay
+  // in this file (rule 11) while the policy over the result lives with the
+  // logic that owns it (rule 12).
   profile.post(path("profile.picture.create"), async (c) => {
     const claims = c.get("claims");
-    if (claims === undefined) {
-      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
-    }
-    const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
+    if (claims === undefined) return unauthorized(c);
     const contentTypeHeader = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-
-    const program = Effect.gen(function* () {
-      let bytes: Uint8Array;
-      let imageType: string;
-
-      if (contentTypeHeader === "multipart/form-data") {
-        const form = yield* Effect.tryPromise({
-          try: () => c.req.formData(),
-          catch: () => new ValidationError({ reason: "expected-multipart" }),
-        });
-        // FormDataEntryValue is string | File; workers-types has no global
-        // File to instanceof against, so duck-type on the Blob surface.
-        const entry = form.get("file") as { type?: string; arrayBuffer?: () => Promise<ArrayBuffer> } | string | null;
-        if (entry === null || typeof entry === "string" || typeof entry.arrayBuffer !== "function") {
-          return yield* new ValidationError({ reason: "missing-file" });
-        }
-        imageType = (entry.type ?? "").split(";")[0]!.trim().toLowerCase();
-        bytes = new Uint8Array(yield* Effect.promise(() => entry.arrayBuffer!()));
-      } else {
-        const body = yield* Effect.tryPromise({
-          try: () => c.req.json() as Promise<Record<string, unknown>>,
-          catch: () => new ValidationError({ reason: "expected-json" }),
-        });
-        if (typeof body["image_b64"] !== "string" || body["image_b64"] === "") {
-          return yield* new ValidationError({ reason: "image_b64" });
-        }
-        if (typeof body["content_type"] !== "string") {
-          return yield* new ValidationError({ reason: "content_type" });
-        }
-        imageType = body["content_type"].split(";")[0]!.trim().toLowerCase();
-        try {
-          const bin = atob(body["image_b64"]);
-          bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        } catch {
-          return yield* new ValidationError({ reason: "image_b64-not-base64" });
-        }
-      }
-
-      if (!ALLOWED_IMAGE_TYPES.includes(imageType)) {
-        return yield* new ValidationError({ reason: "unsupported-image-type" });
-      }
-      if (bytes.byteLength === 0) {
-        return yield* new ValidationError({ reason: "empty-image" });
-      }
-      if (bytes.byteLength > MAX_UPLOAD_BYTES) {
-        return yield* new ValidationError({ reason: "image-too-large" });
-      }
-
-      const fourA = yield* FourA;
-      const blob = yield* fourA.uploadBlob(token, bytes, imageType);
-
-      const audit = yield* AuditLog;
-      yield* audit.record({
-        event_type: "profile_picture_uploaded",
-        actor: claims.login,
-        details: { sha256: blob.sha256, bytes: bytes.byteLength, content_type: imageType },
-      });
-      return { url: blob.url, sha256: blob.sha256 };
-    });
-    return runJson(c, program);
+    return runJson(
+      c,
+      createProfilePicture(
+        actionInput(claims, c.req.param(), readUploadedImage(c, contentTypeHeader), {
+          token: bearerOf(c),
+        }),
+      ),
+    );
   });
 
   // ── PUT /profile/me ─────────────────────────────────────────────────────
@@ -298,124 +191,30 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // substrate is the source of truth), cache only what actually published.
   profile.put(path("profile.me.set"), async (c) => {
     const claims = c.get("claims");
-    if (claims === undefined) {
-      return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
-    }
-    const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
-    const program = Effect.gen(function* () {
-      const pubkey = callerPubkey(claims);
-      const body = yield* Effect.tryPromise({
-        try: () => c.req.json() as Promise<Record<string, unknown>>,
-        catch: () => new ValidationError({ reason: "expected-json" }),
-      }).pipe(
-        Effect.filterOrFail(
-          (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-          () => new ValidationError({ reason: "expected-json-object" }),
-        ),
-      );
-
-      const name = yield* readField(body, "name", NAME_MAX);
-      const displayName = yield* readField(body, "display_name", DISPLAY_NAME_MAX);
-      const picture = yield* readField(body, "picture", PICTURE_MAX);
-      if (picture !== undefined && !picture.startsWith("https://")) {
-        return yield* new ValidationError({ reason: "picture-not-https" });
-      }
-      const about = yield* readField(body, "about", ABOUT_MAX);
-
-      const fourA = yield* FourA;
-      const published = yield* fourA.publishProfile(token, {
-        ...(name === undefined ? {} : { name }),
-        ...(displayName === undefined ? {} : { display_name: displayName }),
-        ...(picture === undefined ? {} : { picture }),
-        ...(about === undefined ? {} : { about }),
-      });
-
-      const now = yield* Clock.currentTimeMillis;
-      const updated: ProfileShape = {
-        pubkey,
-        name: name ?? null,
-        display_name: displayName ?? null,
-        picture: picture ?? null,
-        about: about ?? null,
-        event_id: published.event_id,
-        updated_at_ms: now,
-      };
-      yield* upsertCache(updated, now);
-
-      const audit = yield* AuditLog;
-      yield* audit.record({
-        event_type: "profile_updated",
-        actor: claims.login,
-        details: { event_id: published.event_id, hex_pubkey: published.pubkey },
-      });
-      return { profile: updated };
-    });
-    return runJson(c, program);
+    if (claims === undefined) return unauthorized(c);
+    return runJson(
+      c,
+      setMyProfile(
+        actionInput(claims, c.req.param(), readProfileBody(c), { token: bearerOf(c) }),
+      ),
+    );
   });
 
   // ── GET /profile?pubkeys=a,b,c — bulk resolve for chip rendering ────────
   // Registered before /profile/:pubkey so the bare path wins the match.
-  profile.get(path("profile.list"), async (c) => {
-    const raw = c.req.query("pubkeys");
-    const program = Effect.gen(function* () {
-      if (raw === undefined || raw.trim() === "") {
-        return yield* new ValidationError({ reason: "pubkeys" });
-      }
-      // EFB-51: normalize BEFORE the Set, not after. Dedupe on raw strings
-      // would let `049b628c…` and `nostr:049b628c…` survive as two entries
-      // that then resolve to one identity — the caller gets the same person
-      // twice and the cache is read under a key nothing writes.
-      //
-      // Unnormalizable input is passed through UNCHANGED rather than
-      // rejected, deliberately and unlike the single-pubkey routes. This is
-      // the chip-rendering path: today a junk pubkey yields one empty
-      // profile, and turning that into a 400 would fail an entire board's
-      // avatars over one stale id. Leniency here is a UX decision, not an
-      // oversight — see the test that pins it.
-      const pubkeys = [
-        ...new Set(
-          raw
-            .split(",")
-            .map((p) => p.trim())
-            .filter((p) => p !== "")
-            .map((p) => canonicalizeIdentityRef(p) ?? p),
-        ),
-      ];
-      if (pubkeys.length === 0) return yield* new ValidationError({ reason: "pubkeys" });
-      if (pubkeys.length > BULK_MAX) {
-        return yield* new ValidationError({ reason: `pubkeys-max-${BULK_MAX}` });
-      }
-      const profiles = yield* Effect.all(
-        pubkeys.map((p) => resolveProfile(p)),
-        { concurrency: 8 },
-      );
-      return { profiles };
-    });
-    return runJson(c, program);
-  });
+  profile.get(path("profile.list"), async (c) =>
+    runJson(
+      c,
+      listProfiles(
+        actionInput(null, c.req.param(), undefined, { query: c.req.query() }),
+      ),
+    ),
+  );
 
   // ── GET /profile/:pubkey ────────────────────────────────────────────────
-  //
-  // EFB-51: the last `:pubkey` route reading the param raw. profileCache is
-  // keyed by the canonical ref every write path stores (EFB-38), so passing
-  // the URL through unnormalized meant `/profile/049b628c…` and
-  // `/profile/npub1qjdk…` both missed the row written as
-  // `nostr:049b628c…` — one person, three spellings, two of them invisible.
-  // Reading through the same canonicalizer the write paths use is what keeps
-  // the cache single-keyed; a second normalization rule here would just be a
-  // new way to drift.
-  profile.get(path("profile.get"), async (c) => {
-    const program = Effect.gen(function* () {
-      // 400 rather than 404: "that is not a pubkey" and "nobody by that
-      // pubkey" are different answers, and collapsing them would report a
-      // typo as an absent person.
-      const ref = canonicalizeIdentityRef(c.req.param("pubkey"));
-      if (ref === null) return yield* new ValidationError({ reason: "pubkey" });
-      const me = yield* resolveProfile(ref);
-      return { profile: me };
-    });
-    return runJson(c, program);
-  });
+  profile.get(path("profile.get"), async (c) =>
+    runJson(c, getProfile(actionInput(null, c.req.param(), undefined))),
+  );
 
   return profile;
 };
