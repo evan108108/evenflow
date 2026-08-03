@@ -17,7 +17,8 @@
 // arbitrary query syntax. So it gets tested at the level it lives at.
 
 import { describe, expect, it } from "vitest";
-import { ftsMatchExpression } from "../src/routes/search";
+// EFB-98: search's logic is an action now; the route is the HTTP shell over it.
+import { ftsMatchExpression } from "../src/actions/search";
 
 describe("ftsMatchExpression — user text to FTS5 MATCH", () => {
   it("quotes each term and joins with implicit AND", () => {

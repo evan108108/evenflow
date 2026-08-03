@@ -70,13 +70,13 @@
     {
       "route": "GET /board/:slug/sprint/:id/tide",
       "file": "src/routes/sprints.ts",
-      "note": "Reads ?days= through the requestedDays helper. INVISIBLE to the checker until EFB-71 taught resolveIdentifierBody to follow concise-arrow helper bodies - it was reported as reading no query at all. Found by building this check, not by review.",
+      "note": "Reads ?days=. Was INVISIBLE to the checker until EFB-71 taught resolveIdentifierBody to follow concise-arrow helper bodies - it was reported as reading no query at all. Found by building this check, not by review. EFB-98 moved requestedDays into src/actions/sprints.ts; the route now hands the whole query string over with c.req.query(), so the read stays in this file where detection can see it.",
       "sunset": "2026-10-31"
     },
     {
       "route": "GET /board/:slug/tide",
       "file": "src/routes/sprints.ts",
-      "note": "Reads ?days= through the same requestedDays helper; same invisibility, same fix.",
+      "note": "Reads ?days= through the same requestedDays helper; same invisibility, same fix, and the same EFB-98 note as the sprint tide route above.",
       "sunset": "2026-10-31"
     }
   ]
