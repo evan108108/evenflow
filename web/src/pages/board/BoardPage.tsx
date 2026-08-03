@@ -39,6 +39,7 @@ import { activeSprintFilterId, sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
 import { TopBar } from "../../components/TopBar";
+import { BoardSearch } from "../../components/BoardSearch";
 import { TideBadge } from "../../components/TideBadge";
 import { IssueSheet } from "../../components/IssueSheet";
 import { createBoardStore, type NewIssueInput } from "./store";
@@ -483,6 +484,11 @@ export const BoardPage = () => {
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
                 </Show>
                 <div class="spacer" />
+                {/* Search is a read, so it stays for a signed-out viewer on a
+                    public board — same reasoning as Sprints below. The server
+                    scopes results to this board and authorizes before it
+                    touches the index (EFB-14). */}
+                <BoardSearch apiBase={apiBase} base={base()} />
                 {/* Sprint history stays: it is a read-only view, and a
                     signed-out visitor on a public board may read it. */}
                 <a class="btn" href={`${base()}/sprints`} title="Sprint history">

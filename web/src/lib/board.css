@@ -2998,3 +2998,111 @@ input.sprint-name:focus {
   white-space: nowrap;
   border: 0;
 }
+
+/* ── EFB-14: board search ──────────────────────────────────────────────── */
+
+.board-search {
+  position: relative;
+  /* Sits between the title and the action buttons in .board-header, which is
+     flex with a .spacer. A fixed basis keeps the input from growing into the
+     buttons on a wide viewport or collapsing to nothing on a narrow one. */
+  flex: 0 1 16rem;
+}
+
+.board-search-input {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.92rem;
+  color: var(--color-ink);
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+}
+
+.board-search-input::placeholder {
+  color: var(--color-ink-placeholder);
+}
+
+.board-search-panel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.35rem 0;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-ink-faint);
+  border-radius: var(--radius-chamfer);
+  box-shadow: 0 12px 28px rgba(23, 35, 59, 0.14);
+}
+
+.board-search-section {
+  margin: 0;
+  padding: 0.45rem 0.9rem 0.25rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+}
+
+.board-search-empty {
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.9rem;
+  color: var(--color-ink-soft);
+}
+
+.board-search-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.board-search-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+/* One row, one line. A wrapped title turns an 8-row panel into a wall. */
+.board-search-title,
+.board-search-comment-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-search-ref {
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--color-ink-soft);
+}
+
+.board-search-row-comment {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.board-search-comment-body {
+  max-width: 100%;
+}
+
+.board-search-comment-on {
+  font-size: 0.76rem;
+  color: var(--color-ink-soft);
+}
+
+/* Matches the .board-header-desktop breakpoint above, where MobileBoardHeader
+   takes over — search follows its own header rather than stranding an input
+   nobody can see. Mobile search is a follow-up, not a silent omission. */
+@media (max-width: 768px) {
+  .board-search {
+    display: none;
+  }
+}
