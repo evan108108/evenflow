@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
-import { PostCommentBody } from "../src/routes/comments";
+import { PostCommentBody } from "../src/actions/comments";
 import type { CommentShape } from "../src/shapes";
 import {
   CALLER,

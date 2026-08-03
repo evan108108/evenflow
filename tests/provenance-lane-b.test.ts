@@ -54,7 +54,10 @@ import type { BoardShape } from "../src/shapes";
 
 // `?raw` — read the route sources at build time. See tests/raw.d.ts.
 import ISSUES_SRC from "../src/routes/issues.ts?raw";
-import COMMENTS_SRC from "../src/routes/comments.ts?raw";
+// EFB-98: comments' emit callsites live in the ACTION module now — the route
+// file is a transport shell. A source-scanning guard has to follow the code it
+// guards, or it silently starts proving nothing.
+import COMMENTS_SRC from "../src/actions/comments.ts?raw";
 import GITHUB_SRC from "../src/routes/github.ts?raw";
 import BOARDS_SRC from "../src/routes/boards.ts?raw";
 import SPRINTS_SRC from "../src/routes/sprints.ts?raw";
@@ -267,7 +270,7 @@ interface Callsite {
 
 const SOURCES: ReadonlyArray<readonly [string, string]> = [
   ["routes/issues.ts", ISSUES_SRC],
-  ["routes/comments.ts", COMMENTS_SRC],
+  ["actions/comments.ts", COMMENTS_SRC],
   ["routes/github.ts", GITHUB_SRC],
   ["routes/boards.ts", BOARDS_SRC],
   ["routes/sprints.ts", SPRINTS_SRC],
@@ -321,7 +324,7 @@ const CALLSITES = SOURCES.flatMap(([file, src]) => extractCallsites(file, src));
 
 /** Which constructor each callsite is allowed to use, keyed by file:line. */
 const expectedActor = (c: Callsite): string | null => {
-  if (c.file === "routes/comments.ts") {
+  if (c.file === "actions/comments.ts") {
     // created → the caller IS the author; deleted → nobody (see the trap above).
     return c.actor.startsWith("ProvenanceFromCaller") ||
       c.actor === "ProvenanceFromSystem()"
@@ -353,7 +356,12 @@ describe("EFB-63 — every emit callsite names its actor", () => {
     // Both arms still have to be a constructor or `null`, which is the rule
     // that matters: what is banned is an inline object literal, and a ternary
     // between two admissible values cannot smuggle one in.
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    // EFB-98: `ProvenanceFromCaller(input.claims)` is admitted alongside
+    // `(claims)`. An action reads its caller off the input record rather than
+    // off a Context, and the constructor is the same one — widening the
+    // spelling keeps the rule (a NAMED constructor, never an inline literal)
+    // exactly as strict.
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -364,7 +372,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // The guard above is only safe because it is narrow. An inline literal in
   // either arm must still be caught.
   it("rejects a fabricated literal even inside a guard", () => {
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -385,7 +393,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   it("names route.caller exactly where a live caller was seen", () => {
     const callerSites = CALLSITES.filter((c) => c.actor.includes("ProvenanceFromCaller"));
     expect(callerSites.map((c) => c.file).sort()).toEqual([
-      "routes/comments.ts", // comment.created — caller is the author
+      "actions/comments.ts", // comment.created — caller is the author
       "routes/issues.ts", // issue.created
       "routes/issues.ts", // issue.transitioned
       "routes/issues.ts", // issue.transitioned (duplicate-of, when it moved)
@@ -404,9 +412,10 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   });
 
   it("attributes nobody on the comment tombstone", () => {
-    const comments = CALLSITES.filter((c) => c.file === "routes/comments.ts");
+    const comments = CALLSITES.filter((c) => c.file === "actions/comments.ts");
     expect(comments.map((c) => expectedActor(c))).toEqual([
-      "ProvenanceFromCaller(claims)",
+      // EFB-98: same constructor, reading the caller off the action input.
+      "ProvenanceFromCaller(input.claims)",
       "ProvenanceFromSystem()",
     ]);
   });
