@@ -325,7 +325,7 @@ export const GithubSection = (props: { apiBase: string }) => {
             <button type="button" onClick={rotate} disabled={busy()}>
               {config()?.has_secret === true ? "Generate new secret" : "Generate secret"}
             </button>
-            <button type="button" class="danger" onClick={disconnect} disabled={busy()}>
+            <button type="button" class="btn btn-danger" onClick={disconnect} disabled={busy()}>
               Disconnect
             </button>
           </div>

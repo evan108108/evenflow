@@ -3,17 +3,35 @@
 
 /* ── generic form control baseline ──
    Every form input in the app should read as the same object at rest.
-   Scoped rules (.profile-form, .modal, …) can still tighten specifics,
-   but no page should ever surface a bare browser-default password or
-   number field again. If you find a field looking stubby: it's an input
-   type that isn't listed here — add it. */
-input[type="text"],
-input[type="password"],
-input[type="email"],
-input[type="number"],
-input[type="url"],
-input[type="search"],
-input[type="tel"],
+   Scoped rules (.profile-form, .modal, …) can still tighten specifics.
+
+   EFB-94 flipped this from an ALLOWLIST of type= values to an EXCLUSION list.
+   The old form matched on the literal `type` ATTRIBUTE, so two things fell
+   through it silently: a type the list never got around to (`date`, `tel` on a
+   new form), and — the one that actually bit — `<input>` with NO type
+   attribute at all. Such an input BEHAVES as text, but an attribute selector
+   matches the attribute, not the behaviour, so it got nothing. Seven of them
+   were live across four files. The old comment here said "if a field looks
+   stubby, add its type to the list", which put the burden on whoever wrote the
+   markup to remember; the burden now runs the other way.
+
+   Listed below are only the controls whose NATIVE affordance we must not paint
+   over — a checkbox, a radio, a file picker or a range slider would be ruined
+   by a text field's padding and border. Everything else, named or not, gets the
+   house look by default. Specificity is held at (0,1,1) — identical to the old
+   `input[type="text"]` — by using a single :not() with a selector list, so no
+   existing scoped override changes rank. */
+input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="file"],
+    [type="submit"],
+    [type="reset"],
+    [type="button"],
+    [type="image"]
+  ),
 textarea,
 select {
   font-family: var(--font-sans);
@@ -188,6 +206,9 @@ select:disabled {
 }
 
 .user-nav-item {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   display: block;
   width: 100%;
   text-align: left;
@@ -205,6 +226,12 @@ select:disabled {
 }
 
 .user-nav-org {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  padding: 1px 6px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -621,6 +648,10 @@ select:disabled {
 }
 
 .issue-sheet .close {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  padding: 1px 6px;
+  border-radius: 0;
   position: absolute;
   top: 0.9rem;
   right: 1rem;
@@ -896,6 +927,9 @@ select:disabled {
 }
 
 .issue-ref {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   font-family: var(--font-serif);
   font-size: 0.8rem;
   letter-spacing: 0.06em;
@@ -967,6 +1001,9 @@ select:disabled {
 }
 
 .copy-url {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   font-family: var(--font-sans);
   font-size: 0.68rem;
   letter-spacing: 0.05em;
@@ -1477,6 +1514,9 @@ select:disabled {
 }
 
 .column-row .column-delete {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   font: inherit;
   font-size: 1.05rem;
   line-height: 1;
@@ -1891,6 +1931,9 @@ select:disabled {
 }
 
 .attachment-action {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   font: inherit;
   font-size: 0.95rem;
   line-height: 1;
@@ -2439,6 +2482,9 @@ input.sprint-name:focus {
 }
 
 .filter-menu-clear {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   display: block;
   width: 100%;
   text-align: left;
@@ -2589,6 +2635,9 @@ input.sprint-name:focus {
 }
 
 .rail-collapse {
+  /* EFB-94: chrome button, not a house button — pins the geometry it had
+     before the base `button` rule became unconditional. */
+  border-radius: 0;
   font: inherit;
   color: inherit;
   background: none;
@@ -3105,4 +3154,79 @@ input.sprint-name:focus {
   .board-search {
     display: none;
   }
+}
+
+/* ── settings form rhythm (EFB-94) ──────────────────────────────────────
+   The webhook and import panels were authored in a utility-class idiom this
+   app does not have, so besides losing the control styling they lost all
+   vertical rhythm: fields butted against each other, headings sat on top of
+   the row above, and sixteen checkboxes ran together as one wall of text.
+   These are the two shapes those panels actually needed, named so the next
+   panel can reach for them instead of inventing spacing inline. Additive —
+   nothing existing selects them. */
+
+/* A column of form controls with the same rhythm .field-label already
+   assumes between a label and its input. */
+.form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  margin: 0.8rem 0;
+}
+
+/* Wrapping group of checkboxes/radios. `gap` does the work the old
+   `flex flex-wrap gap-2` was asking for and never got. */
+.checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1.1rem;
+  margin: 0.2rem 0 0.4rem;
+}
+
+.checkbox-grid label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* The box itself keeps its native affordance — the baseline rule
+   deliberately excludes checkboxes — it only needs to stop crowding
+   its text. */
+.checkbox-grid input[type="checkbox"] {
+  margin: 0;
+}
+
+/* A settings list row: content on the left, actions hard right. */
+.stack-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+}
+
+.stack-row > .grow-min {
+  min-width: 0;
+}
+
+/* Inline status badge — the "not delivering" case a lapsed webhook needs to
+   announce, since the gate leaves the row enabled and merely stops sending. */
+.badge-warn {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(180, 120, 20, 0.16);
+  color: #8a5a12;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+/* Wide preview tables scroll inside their own box rather than pushing the
+   settings column sideways. */
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-ink-faint);
+  border-radius: 6px;
+  margin: 0.6rem 0;
 }

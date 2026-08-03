@@ -87,17 +87,27 @@ a {
   font-variant-numeric: lining-nums;
 }
 
+/* The house button look is the DEFAULT, unconditionally. You write CSS for a
+   button only where it DIFFERS from this.
+
+   This was `button:not([class])` until EFB-94, which inverted the polarity:
+   the mere PRESENCE of a class — any class, including one matching no rule in
+   this app — switched the default off. That is not what "default" means, and
+   it failed silently. The webhook and import panels were authored in a utility
+   -class idiom this app does not have (there is no Tailwind here), so their
+   controls were disqualified from the default by classes that then styled
+   nothing, and rendered as raw browser chrome. Nothing errored; the markup was
+   simply invisible to the rule meant to catch exactly that case.
+
+   Specificity is deliberately left at (0,0,1) — LOWER than the old
+   `:not([class])` form — so any component class overrides on the properties it
+   declares. Component buttons that are not house buttons (nav items, chips,
+   icon carets, the layout toggle) each declare their own look; where one used
+   to rely on inheriting nothing, it now states the property explicitly. */
 button {
+  display: inline-block;
   font-family: var(--font-sans);
   cursor: pointer;
-}
-
-/* Any button that didn't opt into a class inherits the outline .btn look
-   — so a stray <button>Save</button> doesn't fall back to the browser's
-   grey system chrome. Class-tagged buttons (.btn, .btn-solid, icon carets,
-   the layout toggle, etc.) are unaffected. */
-button:not([class]) {
-  display: inline-block;
   padding: 0.55rem 1.1rem;
   border: 1.5px solid var(--color-ink);
   border-radius: var(--radius-chamfer);
@@ -107,11 +117,11 @@ button:not([class]) {
   letter-spacing: 0.02em;
   transition: background 140ms ease, color 140ms ease;
 }
-button:not([class]):hover:not(:disabled) {
+button:hover:not(:disabled) {
   background: var(--color-ink);
   color: var(--color-cream);
 }
-button:not([class]):disabled {
+button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
