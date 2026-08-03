@@ -297,7 +297,10 @@ describe("default preset ordering", () => {
       "match",
       facts({ event: "check_run", action: "completed", conclusion: "failure", draft: null }),
     );
-    expect(hit?.do.type).toBe("add_comment");
+    // `do` is single-action or array form since EFB-72 — unwrap before reading
+    // `.type`, the same discipline planActions uses in engine.ts.
+    const actions = hit === null ? [] : Array.isArray(hit.do) ? hit.do : [hit.do];
+    expect(actions.map((a) => a.type)).toEqual(["add_comment"]);
   });
 
   it("status_only strips every transition", () => {

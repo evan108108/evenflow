@@ -14,9 +14,12 @@ import {
   tokenFor,
   type Harness,
 } from "./harness";
+import type { InviteShape } from "../src/shapes";
 
+// POST /invites returns the parsed row verbatim, so track InviteShape rather
+// than hand-listing fields — that drift is what hid bind_to_pubkey from tsc.
 interface InviteCreateBody {
-  invite: { id: string; code: string; role: string; expires_at_ms: number };
+  invite: InviteShape;
   url: string;
 }
 
