@@ -59,7 +59,12 @@ import ISSUES_SRC from "../src/routes/issues.ts?raw";
 // guards, or it silently starts proving nothing.
 import COMMENTS_SRC from "../src/actions/comments.ts?raw";
 import GITHUB_SRC from "../src/routes/github.ts?raw";
-import BOARDS_SRC from "../src/routes/boards.ts?raw";
+// EFB-98: boards' emit callsites live in the ACTION module now — the route
+// file is a transport shell. Same reason comments moved: a source-scanning
+// guard has to follow the code it guards, or it silently starts proving
+// nothing. All four are `null` actors (board.created/updated/deleted carry no
+// actor slot), so only the path changes; the rule is untouched.
+import BOARDS_SRC from "../src/actions/boards.ts?raw";
 import SPRINTS_SRC from "../src/routes/sprints.ts?raw";
 import ATTACHMENTS_SRC from "../src/routes/attachments.ts?raw";
 import IMPORTS_SRC from "../src/routes/imports.ts?raw";
@@ -272,7 +277,7 @@ const SOURCES: ReadonlyArray<readonly [string, string]> = [
   ["routes/issues.ts", ISSUES_SRC],
   ["actions/comments.ts", COMMENTS_SRC],
   ["routes/github.ts", GITHUB_SRC],
-  ["routes/boards.ts", BOARDS_SRC],
+  ["actions/boards.ts", BOARDS_SRC],
   ["routes/sprints.ts", SPRINTS_SRC],
   ["routes/attachments.ts", ATTACHMENTS_SRC],
   ["routes/imports.ts", IMPORTS_SRC],
