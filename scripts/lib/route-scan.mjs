@@ -334,13 +334,27 @@ export function scanRoutes(routesDir, options) {
  * exists to measure a blind spot the loudest lie in the output.
  */
 export function countOpaqueRegistrations(routesDir, verbs) {
-  const pattern = new RegExp(
-    String.raw`\b[A-Za-z_$][\w$]*\.(${verbs.join("|")})\(\s*(?!["\x60]|path\(\s*")[A-Za-z_$]`,
-    "g",
-  );
   let n = 0;
   for (const f of fs.readdirSync(routesDir).filter((x) => x.endsWith(".ts"))) {
     const src = fs.readFileSync(path.join(routesDir, f), "utf8");
+    // Only identifiers that are ACTUALLY Hono routers in this file. Matching
+    // any `<ident>.get(` counted `map.get(key)`, `TOOL_BY_NAME.get(name)` and a
+    // Durable Object `ns.get(ns.idFromName(...))` as route registrations — and
+    // `.get` is far too common a method name for that to be rare.
+    //
+    // The consequence was worse than noise. This number is the one that tells a
+    // human HOW MUCH THE SCAN CANNOT SEE, so inflating it with lookups makes
+    // the blind spot look bigger than it is and buries a real opaque
+    // registration among false ones. A number reported as a measure of
+    // uncertainty has to be trustworthy or it is worse than absent.
+    const routers = [...src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Hono\b/g)].map(
+      (m) => m[1],
+    );
+    if (routers.length === 0) continue;
+    const pattern = new RegExp(
+      String.raw`\b(?:${routers.join("|")})\.(${verbs.join("|")})\(\s*(?!["\x60]|path\(\s*")[A-Za-z_$]`,
+      "g",
+    );
     n += [...src.matchAll(pattern)].length;
   }
   return n;
