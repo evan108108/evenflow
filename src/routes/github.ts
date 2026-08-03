@@ -96,6 +96,11 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
   const app = new Hono<AppHonoEnv>();
   const runJson = makeRunJson<GithubFailure, GithubServices>(layerFor, errorResponse);
 
+  // Org-scoped mounts contribute org_slug via the mount prefix, so it
+  // is read off the whole param bag rather than the route pattern
+  // (same accessor sprints.ts uses). EFB-98 moved the read here, to the one
+  // place that fills ActionInput.orgSlug, so an action asks a single field and
+  // never has to know which mount delivered the parameter.
   const orgSlug = (c: Context<AppHonoEnv>) => c.req.param("org_slug") ?? null;
 
   // ── inbound webhook ─────────────────────────────────────────────────────
