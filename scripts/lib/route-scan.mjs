@@ -206,7 +206,21 @@ export function resolveIdentifierBody(src, name) {
  */
 export function withHelpers(handlerSrc, fileSrc) {
   const called = new Set();
-  for (const m of handlerSrc.matchAll(/\b([a-z][\w$]*)\s*\(/g)) called.add(m[1]);
+  // The lookbehind is load-bearing: `\b` alone matches AFTER A DOT, so a raw
+  // `c.req.query(...)` read contributed the bare identifier `query`, and a
+  // same-file `const query = …` then got concatenated into this handler's
+  // source. A handler reading no schema at all was reported as calling both a
+  // schema parse and a raw read, and the check exited 1 on a route that was
+  // fine.
+  //
+  // `.param(`, `.get(` and `.json(` leak the same way, so any file pairing a
+  // raw read with a same-named local trips it. The bug is older than EFB-98;
+  // src/routes/issues.ts is simply the first file to collide.
+  //
+  // A dot-preceded name is a method call on some object, never a free function
+  // declared in this file, so excluding it strictly removes false pull-ins and
+  // cannot drop a real helper: a same-file helper is called bare.
+  for (const m of handlerSrc.matchAll(/(?<![.\w$])([a-z][\w$]*)\s*\(/g)) called.add(m[1]);
   let combined = handlerSrc;
   for (const name of called) {
     if (name === "if" || name === "for" || name === "while" || name === "switch") continue;
