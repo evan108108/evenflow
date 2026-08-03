@@ -60,15 +60,17 @@ type Mount = {
 /**
  * The org-scoped prefix.
  *
- * Still `/orgs/` at this step, deliberately. Extracting the mount list and
- * renaming the prefix are two different changes, and doing them in one commit
- * would mean a red suite proves nothing about either. This step is provably
- * behavior-preserving — same routers, same prefixes, same order — so the
- * existing tests are a real regression signal for it. The rename to `/org/`
- * lands next and is a one-line edit here, which is the property the manifest
- * exists to provide.
+ * `/org/:org_slug`, singular, because it is followed by an id. The previous
+ * `/orgs/:org_slug` violated the first rule in docs/REST_CONVENTIONS.md, and
+ * it was the prefix under which half the API was served — so leaving it would
+ * have meant enforcing a convention everywhere except the most-used path in
+ * the system.
+ *
+ * That this is one line is the point. Step 1 landed the mount table with the
+ * old value so its refactor could be proven neutral against a green suite;
+ * the rename is this edit plus the callers.
  */
-export const ORG_PREFIX = "/api/v0/orgs/:org_slug";
+export const ORG_PREFIX = "/api/v0/org/:org_slug";
 export const API_PREFIX = "/api/v0";
 
 export const MOUNTS: readonly Mount[] = [

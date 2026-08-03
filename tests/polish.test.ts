@@ -3,6 +3,7 @@
 // notifications config CRUD.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import type { BoardShape, IssueShape } from "../src/shapes";
 import {
   CALLER,
@@ -37,7 +38,7 @@ describe("board archive", () => {
     await createBoard(h, "kb");
     await createBoard(h, "kb2");
 
-    const res = await h.app.request("/api/v0/boards/kb/archive", jsonReq("POST", {}), {});
+    const res = await h.app.request(url("board.archive.set", { slug: "kb" }), jsonReq("POST", {}), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardShape };
     expect(board.archived_at_ms).toBe(1_000);
@@ -52,7 +53,7 @@ describe("board archive", () => {
 
     // Org-scoped listing filters too.
     const org = callerOrg(h);
-    const orgList = await h.app.request(`/api/v0/orgs/${String(org["slug"])}/boards`, jsonReq("GET"), {});
+    const orgList = await h.app.request(url("board.create", {}, String(org["slug"])), jsonReq("GET"), {});
     expect(((await orgList.json()) as { boards: BoardShape[] }).boards.map((b) => b.slug)).toEqual(["kb2"]);
 
     // Unarchive restores.
@@ -66,7 +67,7 @@ describe("board archive", () => {
     await createBoard(h, "kb");
     seedOrgMember(h, String(callerOrg(h)["id"]), pubkeyFor("bob"), "admin");
     const res = await h.app.request(
-      "/api/v0/boards/kb/archive",
+      url("board.archive.set", { slug: "kb" }),
       jsonReq("POST", {}, tokenFor("bob")),
       {},
     );
@@ -76,8 +77,8 @@ describe("board archive", () => {
   it("keeps archived boards reachable by direct slug", async () => {
     const h = makeHarness();
     await createBoard(h, "kb");
-    await h.app.request("/api/v0/boards/kb/archive", jsonReq("POST", {}), {});
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("GET"), {});
+    await h.app.request(url("board.archive.set", { slug: "kb" }), jsonReq("POST", {}), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("GET"), {});
     expect(res.status).toBe(200);
   });
 });
@@ -97,8 +98,7 @@ describe("cross-board issue move", () => {
     const eventsBefore = h.emitter.events.length;
 
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: target["id"] }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board_id: target["id"] }),
       {},
     );
     expect(res.status).toBe(200);
@@ -126,14 +126,12 @@ describe("cross-board issue move", () => {
     const h = makeHarness();
     const { issue } = await setupTwoBoards(h);
     const self = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: issue.board_id }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board_id: issue.board_id }),
       {},
     );
     expect(self.status).toBe(400);
     const ghost = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: "nope" }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board_id: "nope" }),
       {},
     );
     expect(ghost.status).toBe(404);
@@ -150,8 +148,7 @@ describe("cross-board issue move", () => {
       issue_prefix: "THR", next_issue_number: 1, created_at_ms: 1, updated_at_ms: 1,
     });
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: "foreign" }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board_id: "foreign" }),
       {},
     );
     expect(res.status).toBe(404);
@@ -161,7 +158,7 @@ describe("cross-board issue move", () => {
 describe("notifications config", () => {
   it("reads defaults with no row, PATCHes partially, and persists", async () => {
     const h = makeHarness();
-    const dft = await h.app.request("/api/v0/notifications/config", jsonReq("GET"), {});
+    const dft = await h.app.request(url("notifications.config.get"), jsonReq("GET"), {});
     expect(dft.status).toBe(200);
     expect(await dft.json()).toEqual({
       config: {
@@ -173,15 +170,15 @@ describe("notifications config", () => {
     });
 
     const patch = await h.app.request(
-      "/api/v0/notifications/config",
+      url("notifications.config.get"),
       jsonReq("PATCH", { email_on_mention: false, email_digest: "weekly" }),
       {},
     );
     expect(patch.status).toBe(200);
 
     // Partial: untouched fields keep their values across a second PATCH.
-    await h.app.request("/api/v0/notifications/config", jsonReq("PATCH", { email_on_assignment: false }), {});
-    const read = await h.app.request("/api/v0/notifications/config", jsonReq("GET"), {});
+    await h.app.request(url("notifications.config.get"), jsonReq("PATCH", { email_on_assignment: false }), {});
+    const read = await h.app.request(url("notifications.config.get"), jsonReq("GET"), {});
     expect(await read.json()).toEqual({
       config: {
         email_on_mention: false,
@@ -197,18 +194,18 @@ describe("notifications config", () => {
   it("rejects bad digests and non-boolean toggles; requires auth", async () => {
     const h = makeHarness();
     const bad = await h.app.request(
-      "/api/v0/notifications/config",
+      url("notifications.config.get"),
       jsonReq("PATCH", { email_digest: "hourly" }),
       {},
     );
     expect(bad.status).toBe(400);
     const badBool = await h.app.request(
-      "/api/v0/notifications/config",
+      url("notifications.config.get"),
       jsonReq("PATCH", { email_on_mention: "yes" }),
       {},
     );
     expect(badBool.status).toBe(400);
-    const anon = await h.app.request("/api/v0/notifications/config", { method: "GET" }, {});
+    const anon = await h.app.request(url("notifications.config.get"), { method: "GET" }, {});
     expect(anon.status).toBe(401);
   });
 });

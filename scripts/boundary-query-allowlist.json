@@ -21,38 +21,38 @@
       "sunset": "2026-11-30"
     },
     {
-      "route": "GET /boards/:slug/velocity",
+      "route": "GET /board/:slug/velocity",
       "file": "src/routes/boards.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "GET /issues/:id/comments",
+      "route": "GET /issue/:id/comments",
       "file": "src/routes/comments.ts",
       "sunset": "2026-10-31"
     },
     {
-      "route": "GET /boards/:slug/activity",
+      "route": "GET /board/:slug/activity",
       "file": "src/routes/feed.ts",
       "sunset": "2026-10-31"
     },
     {
-      "route": "GET /issues/:id/activity",
+      "route": "GET /issue/:id/activity",
       "file": "src/routes/feed.ts",
       "sunset": "2026-10-31"
     },
     {
-      "route": "GET /boards/:slug/github/audit",
+      "route": "GET /board/:slug/github/audit",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31"
     },
     {
-      "route": "GET /issues/:id",
+      "route": "GET /issue/:id",
       "file": "src/routes/issues.ts",
       "note": "Reads ?include=. Same file as the migrated reference route, deliberately left for the issues-subsystem pass so this PR migrates exactly one route.",
       "sunset": "2026-10-31"
     },
     {
-      "route": "GET /orgs/:slug/boards",
+      "route": "GET /org/:org_slug/boards",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
@@ -68,13 +68,13 @@
       "sunset": "2026-11-30"
     },
     {
-      "route": "GET /boards/:slug/sprints/:id/tide",
+      "route": "GET /board/:slug/sprint/:id/tide",
       "file": "src/routes/sprints.ts",
       "note": "Reads ?days= through the requestedDays helper. INVISIBLE to the checker until EFB-71 taught resolveIdentifierBody to follow concise-arrow helper bodies - it was reported as reading no query at all. Found by building this check, not by review.",
       "sunset": "2026-10-31"
     },
     {
-      "route": "GET /boards/:slug/tide",
+      "route": "GET /board/:slug/tide",
       "file": "src/routes/sprints.ts",
       "note": "Reads ?days= through the same requestedDays helper; same invisibility, same fix.",
       "sunset": "2026-10-31"

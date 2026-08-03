@@ -3,12 +3,12 @@
   "$reAudit": "EFB-87. Every entry here is re-audited against detection on every run, and a mismatch FAILS. An entry whose route now reads through parseRouteBody, or in which no body-read marker appears at all, or which names no route the scan can see, is an entry that has stopped describing anything - and the second case is the dangerous one, because renaming a helper out from under UNMIGRATED_MARKERS stops every entry on this list from being checked at the same silent moment. Until EFB-87 that produced a clean OK, while the identical route WITHOUT an entry failed loudly: the allowlist was buying silence about exactly the routes the tool knew least about. The one escape is an entry-level \"scanner_blind_reason\": a written sentence saying why detection cannot see debt that is really there (a read behind a helper the one-level-deep resolver will not follow, or a route the registration regex cannot match). It downgrades the failure to an acknowledged warning printed on the route's own debt line, so the claim stays visible and arguable in review. An empty reason is rejected - it has the form of a declaration and none of the cost. Nothing here uses it today, and that is the intended state; it exists so that a genuinely invisible read has an honest home instead of being laundered into the noBody list, which would be a false declaration.",
   "unmigrated": [
     {
-      "route": "POST /boards/:slug/issues/:issue_ref/attachments",
+      "route": "POST /board/:slug/issue/:issue_ref/attachments",
       "file": "src/routes/attachments.ts",
       "sunset": "2026-12-31"
     },
     {
-      "route": "PATCH /attachments/:id",
+      "route": "PATCH /attachment/:id",
       "file": "src/routes/attachments.ts",
       "sunset": "2026-12-31"
     },
@@ -18,23 +18,23 @@
       "sunset": "2026-09-30"
     },
     {
-      "route": "POST /webhooks/github/:board_id",
+      "route": "POST /webhook/github/:board_id",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31",
       "$comment": "PERMANENT EXEMPTION — raw-body-required-for-HMAC-verification / do-not-migrate. GitHub signs the exact bytes it sent (X-Hub-Signature-256), so this route must read the body as text and verify before parsing. Routing it through parseRouteBody would either verify a re-serialized body (silently wrong for any payload whose JSON round-trip is not byte-identical) or verify nothing. EFB-61 left it deliberately. The sunset date is retained only because the checker requires one; do not treat it as an intent to migrate."
     },
     {
-      "route": "PUT /boards/:slug/github",
+      "route": "PUT /board/:slug/github",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31"
     },
     {
-      "route": "PUT /boards/:slug/github/rules",
+      "route": "PUT /board/:slug/github/rules",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31"
     },
     {
-      "route": "POST /boards/:slug/github/test",
+      "route": "POST /board/:slug/github/test",
       "file": "src/routes/github.ts",
       "sunset": "2026-12-31"
     },
@@ -64,32 +64,32 @@
       "sunset": "2026-11-30"
     },
     {
-      "route": "PATCH /orgs/:slug",
+      "route": "PATCH /org/:org_slug",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "POST /orgs/:slug/transfer",
+      "route": "POST /org/:org_slug/transfer",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "POST /orgs/:slug/members",
+      "route": "POST /org/:org_slug/members",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "PATCH /orgs/:slug/members/:pubkey",
+      "route": "PATCH /org/:org_slug/member/:pubkey",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "POST /orgs/:org_slug/boards/:slug/members",
+      "route": "POST /org/:org_slug/board/:slug/members",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
     {
-      "route": "PATCH /orgs/:org_slug/boards/:slug/members/:pubkey",
+      "route": "PATCH /org/:org_slug/board/:slug/member/:pubkey",
       "file": "src/routes/orgs.ts",
       "sunset": "2026-11-30"
     },
@@ -109,7 +109,7 @@
       "sunset": "2026-09-30"
     },
     {
-      "route": "POST /session/register-key",
+      "route": "POST /session/keys",
       "file": "src/routes/session.ts",
       "sunset": "2026-09-30"
     },
@@ -119,69 +119,54 @@
       "sunset": "2026-09-30"
     },
     {
-      "route": "PUT /orgs/:handle/storage",
+      "route": "PUT /org/:org_slug/storage",
       "file": "src/routes/storage.ts",
       "sunset": "2026-12-31"
     }
   ],
   "noBody": [
     {
-      "route": "POST /boards/:slug/request-regrant",
+      "route": "POST /board/:slug/regrant-requests",
       "file": "src/routes/audiences.ts",
       "reason": "Re-issues the caller's own key grant; identity comes from the JWT, nothing is read from the request."
     },
     {
-      "route": "POST /boards/:slug/archive",
+      "route": "POST /board/:slug/archive",
       "file": "src/routes/boards.ts",
       "reason": "Flag flip. The archive/unarchive state is encoded in the route, not a body."
     },
     {
-      "route": "POST /boards/:slug/unarchive",
+      "route": "POST /board/:slug/unarchive",
       "file": "src/routes/boards.ts",
       "reason": "Flag flip. The archive/unarchive state is encoded in the route, not a body."
     },
     {
-      "route": "POST /boards/:slug/github/secret",
+      "route": "POST /board/:slug/github/secret",
       "file": "src/routes/github.ts",
       "reason": "Rotates a generated secret server-side; the caller supplies nothing."
     },
     {
-      "route": "POST /invites/:code/accept",
+      "route": "POST /invite/:code/accept",
       "file": "src/routes/invites.ts",
       "reason": "Acts on the :code path param plus caller identity."
     },
     {
-      "route": "POST /invites/:code/decline",
+      "route": "POST /invite/:code/decline",
       "file": "src/routes/invites.ts",
       "reason": "Acts on the :code path param plus caller identity."
     },
     {
-      "route": "POST /invites/:id/email",
+      "route": "POST /invite/:id/email",
       "file": "src/routes/invites.ts",
       "reason": "Re-sends to the address already stored on the invite row."
     },
     {
-      "route": "POST /issues/:id/promote_to_active",
-      "file": "src/routes/issues.ts",
-      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
-    },
-    {
-      "route": "POST /issues/:id/promote_to_backlog",
-      "file": "src/routes/issues.ts",
-      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
-    },
-    {
-      "route": "POST /issues/:id/send_to_icebox",
-      "file": "src/routes/issues.ts",
-      "reason": "Container flip; the destination is encoded in the route and identity comes from the JWT — nothing is read from the request. Verified by inspection 2026-07-31 (EFB-17). NOTE: registered via `issues.post(path, ...)` with a variable path, so check:boundary cannot see this route at all — this entry is an audit-trail declaration, NOT an enforced one. A future body read here would be invisible to the checker until registration enumeration is declaration-based."
-    },
-    {
-      "route": "POST /boards/:slug/sprints/:id/start",
+      "route": "POST /board/:slug/sprint/:id/start",
       "file": "src/routes/sprints.ts",
       "reason": "State transition addressed entirely by path params."
     },
     {
-      "route": "POST /orgs/:handle/storage/test",
+      "route": "POST /org/:org_slug/storage/test",
       "file": "src/routes/storage.ts",
       "reason": "Probes the org's configured storage with server-generated bytes."
     }

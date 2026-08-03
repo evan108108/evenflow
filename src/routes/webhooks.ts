@@ -12,6 +12,7 @@
 // which is handler code with extra steps.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Clock, Data, Effect, Exit } from "effect";
 import { Db, DbError, bootstrap } from "../effects";
@@ -234,7 +235,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
   // does now is capture the identity that gate will check.
 
   // ── list ────────────────────────────────────────────────────────────────
-  app.get("/boards/:slug/webhooks", (c) =>
+  app.get(path("webhook.list"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -284,7 +285,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
   );
 
   // ── create ──────────────────────────────────────────────────────────────
-  app.post("/boards/:slug/webhooks", (c) =>
+  app.post(path("webhook.create"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -346,7 +347,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
   );
 
   // ── update ──────────────────────────────────────────────────────────────
-  app.patch("/boards/:slug/webhooks/:id", (c) =>
+  app.patch(path("webhook.update"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -408,7 +409,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
   // audit trail and one that vanishes with the thing it audits is not an audit
   // trail — see the soft-FK note in migration 0025. The sweep joins, so orphan
   // rows can never produce a phantom POST.
-  app.delete("/boards/:slug/webhooks/:id", (c) =>
+  app.delete(path("webhook.delete"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -430,7 +431,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
   );
 
   // ── delivery log ────────────────────────────────────────────────────────
-  app.get("/boards/:slug/webhooks/:id/deliveries", (c) =>
+  app.get(path("webhook.deliveries.list"), (c) =>
     run(
       c,
       Effect.gen(function* () {

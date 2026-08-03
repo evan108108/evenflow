@@ -14,6 +14,7 @@
 // regression guard for exactly that.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   bearer,
   createBoard,
@@ -32,7 +33,7 @@ import type { BoardShape } from "../src/shapes";
 /** Minting an audience needs a registered session key (same as tide-publish). */
 const registerKey = async (h: Harness, sessionPub: string) => {
   const res = await h.app.request(
-    "/api/v0/session/register-key",
+    url("session.key.register"),
     jsonReq("POST", { session_pubkey: sessionPub }),
     {},
   );
@@ -111,7 +112,7 @@ describe("public board — plaintext kanban publish", () => {
     await createPublicBoard(h);
     const issue = await createIssue(h);
     await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "a comment" }),
       {},
     );
@@ -152,7 +153,7 @@ describe("private board — stays silent", () => {
     await createBoard(h); // born private, audience never minted
     const issue = await createIssue(h, { title: "Confidential title" });
     await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "confidential comment" }),
       {},
     );
@@ -169,7 +170,7 @@ describe("private board — stays silent", () => {
     await registerKey(h, session.pub);
     await createBoard(h);
     const flip = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "private" }),
       {},
     );
@@ -194,7 +195,7 @@ describe("board visibility flip", () => {
     expect(plaintextPosts(h)).toHaveLength(0);
 
     const flip = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "public" }),
       {},
     );
@@ -216,7 +217,7 @@ describe("board visibility flip", () => {
 // instead — these tests are what stop that parameter being "simplified" away.
 describe("board delete — 30550 tombstone", () => {
   const deleteBoard = (h: Harness, slug = "kb") =>
-    h.app.request(`/api/v0/boards/${slug}`, { method: "DELETE", headers: bearer }, {});
+    h.app.request(url("board.get", { slug: slug }), { method: "DELETE", headers: bearer }, {});
 
   const boardEvents = (h: Harness) =>
     plaintextPosts(h)
@@ -243,7 +244,7 @@ describe("board delete — 30550 tombstone", () => {
   it("supersedes the live board event — the tombstone is the last 30550", async () => {
     const h = makeHarness();
     await createPublicBoard(h);
-    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { title: "Renamed" }), {});
+    await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { title: "Renamed" }), {});
     await settle();
     const beforeDelete = boardEvents(h);
     expect(beforeDelete.length).toBeGreaterThanOrEqual(2);
@@ -280,7 +281,7 @@ describe("board delete — 30550 tombstone", () => {
     const h = makeHarness();
     await createPublicBoard(h);
     const issue = await createIssue(h, { title: "Orphaned by the delete" });
-    await h.app.request(`/api/v0/issues/${issue.id}/comments`, jsonReq("POST", { body: "c" }), {});
+    await h.app.request(url("comment.create", { id: issue.id }), jsonReq("POST", { body: "c" }), {});
     await settle();
 
     await deleteBoard(h);
@@ -307,7 +308,7 @@ describe("board delete — 30550 tombstone", () => {
 
 describe("board delete — private boards", () => {
   const deleteBoard = (h: Harness) =>
-    h.app.request("/api/v0/boards/kb", { method: "DELETE", headers: bearer }, {});
+    h.app.request(url("board.get", { slug: "kb" }), { method: "DELETE", headers: bearer }, {});
 
   // The snapshot feeds the SAME gate as every other emit, so the three-state
   // collapse this file exists to guard is still guarded on the delete path.
@@ -332,7 +333,7 @@ describe("board delete — private boards", () => {
     await registerKey(h, session.pub);
     await createBoard(h);
     const flip = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "private" }),
       {},
     );
@@ -358,7 +359,7 @@ describe("tide publish — EFB-22 gate fix", () => {
     const h = makeHarness();
     await createBoard(h);
 
-    const res = await h.app.request("/api/v0/boards/kb/tide", { headers: bearer }, {});
+    const res = await h.app.request(url("board.tide", { slug: "kb" }), { headers: bearer }, {});
     expect(res.status).toBe(200);
     await settle();
 
@@ -377,7 +378,7 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     );
   const kindsOf = (h: Harness) => eventsOf(h).map((e) => e.kind);
   const transition = (h: Harness, id: string, to: string) =>
-    h.app.request(`/api/v0/issues/${id}/transition`, jsonReq("POST", { to }), {});
+    h.app.request(url("issue.transition", { id: id }), jsonReq("POST", { to }), {});
 
   it("publishes a 30553 on a public-board transition and stamps statusChangeCache", async () => {
     const h = makeHarness();
@@ -441,7 +442,7 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     const issue = await createIssue(h);
     seedBoardMember(h, h.db.boards[0]!["id"] as string, stranger, "contributor");
     await h.app.request(
-      `/api/v0/issues/${issue.id}`,
+      url("issue.get", { id: issue.id }),
       jsonReq("PATCH", { assignee_pubkey: stranger }),
       {},
     );
@@ -516,7 +517,7 @@ describe("EFB-33 — 30553 KanbanStatusChange", () => {
     await registerKey(h, session.pub);
     await createBoard(h);
     expect(
-      (await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {}))
+      (await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "private" }), {}))
         .status,
     ).toBe(200);
     const issue = await createIssue(h, { title: "Secret" });

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   CALLER,
   bearer,
@@ -31,7 +32,7 @@ interface FeedItem {
 type FeedBody = { activity: FeedItem[]; has_more: boolean };
 
 const getActivity = async (h: Harness, qs = "", slug = "kb") => {
-  const res = await h.app.request(`/api/v0/boards/${slug}/activity${qs}`, { headers: bearer }, {});
+  const res = await h.app.request(url("feed.board.activity", { slug }) + qs, { headers: bearer }, {});
   return { res, body: (await res.json()) as FeedBody };
 };
 
@@ -41,12 +42,12 @@ const seedThreeKinds = async (h: Harness) => {
   const issue = await createIssue(h); // creation row @1000
   vi.setSystemTime(2_000);
   await h.app.request(
-    `/api/v0/issues/${issue.id}/transition`,
+    url("issue.transition", { id: issue.id }),
     jsonReq("POST", { to_status: "In Progress" }),
     {},
   );
   vi.setSystemTime(3_000);
-  await h.app.request(`/api/v0/issues/${issue.id}/send_to_icebox`, jsonReq("POST"), {});
+  await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "icebox" }), {});
   return issue;
 };
 
@@ -108,7 +109,7 @@ describe("GET /api/v0/boards/:slug/activity", () => {
   it("returns issue_title null once the issue is deleted (audit rows outlive it)", async () => {
     const h = makeHarness();
     const issue = await seedThreeKinds(h);
-    const del = await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("DELETE"), {});
+    const del = await h.app.request(url("issue.get", { id: issue.id }), jsonReq("DELETE"), {});
     expect(del.status).toBe(200);
     const { body } = await getActivity(h);
     expect(body.activity).toHaveLength(3);
@@ -122,14 +123,14 @@ describe("GET /api/v0/boards/:slug/activity", () => {
     // — a 403 here would tell any signed-up account the board exists.
     expect((await getActivity(h, "", "theirs")).res.status).toBe(404);
     // Anonymous passes optionalAuth; a private board answers 401 (EFB-76).
-    const res = await h.app.request("/api/v0/boards/theirs/activity", {}, {});
+    const res = await h.app.request(url("feed.board.activity", { slug: "theirs" }), {}, {});
     expect(res.status).toBe(401);
   });
 });
 
 describe("GET /api/v0/issues/:id/activity", () => {
   const getIssueActivity = async (h: Harness, id: string, qs = "") => {
-    const res = await h.app.request(`/api/v0/issues/${id}/activity${qs}`, { headers: bearer }, {});
+    const res = await h.app.request(url("feed.issue.activity", { id }) + qs, { headers: bearer }, {});
     return { res, body: (await res.json()) as FeedBody };
   };
 
@@ -138,7 +139,7 @@ describe("GET /api/v0/issues/:id/activity", () => {
     const issue = await seedThreeKinds(h);
     vi.setSystemTime(4_000);
     await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: "Done" }),
       {},
     );
@@ -189,7 +190,7 @@ describe("GET /api/v0/boards/:slug/stream", () => {
     await createBoard(h);
     const subscribed: string[] = [];
     const res = await h.app.request(
-      "/api/v0/boards/kb/stream",
+      url("feed.board.stream", { slug: "kb" }),
       { headers: bearer },
       { BOARD: fakeBoardNs(subscribed) },
     );
@@ -208,14 +209,14 @@ describe("GET /api/v0/boards/:slug/stream", () => {
     seedForeignBoardAndIssue(h);
     // Anonymous on a private board: 401 (EFB-76). The viewer floor is
     // public-only, so nothing here opens a private stream to anonymous.
-    expect((await h.app.request("/api/v0/boards/kb/stream", {}, {})).status).toBe(401);
+    expect((await h.app.request(url("feed.board.stream", { slug: "kb" }), {}, {})).status).toBe(401);
     const foreign = await h.app.request(
-      "/api/v0/boards/theirs/stream",
+      url("feed.board.stream", { slug: "theirs" }),
       { headers: bearer },
       { BOARD: fakeBoardNs([]) },
     );
     expect(foreign.status).toBe(404);
-    const unbound = await h.app.request("/api/v0/boards/kb/stream", { headers: bearer }, {});
+    const unbound = await h.app.request(url("feed.board.stream", { slug: "kb" }), { headers: bearer }, {});
     expect(unbound.status).toBe(500);
   });
 });
@@ -224,8 +225,8 @@ describe("BoardEmitter wire-up (mutations fan out through the emitter)", () => {
   it("captures issue lifecycle events with the board id", async () => {
     const h = makeHarness();
     const issue = await seedThreeKinds(h);
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { title: "Renamed" }), {});
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("DELETE"), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { title: "Renamed" }), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("DELETE"), {});
     const boardId = h.db.boards[0]!["id"];
     // Scoped to the issue family: board creation emits its own board.created
     // since EFB-24, and the per-event assertions below are about issue
@@ -249,11 +250,11 @@ describe("BoardEmitter wire-up (mutations fan out through the emitter)", () => {
     const issue = await createIssue(h); // status Todo, container backlog
     h.emitter.events.length = 0;
     await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: "Todo" }),
       {},
     );
-    await h.app.request(`/api/v0/issues/${issue.id}/promote_to_backlog`, jsonReq("POST"), {});
+    await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "backlog" }), {});
     expect(h.emitter.events).toHaveLength(0);
   });
 
@@ -263,13 +264,13 @@ describe("BoardEmitter wire-up (mutations fan out through the emitter)", () => {
     const issue = await createIssue(h);
     h.emitter.events.length = 0;
     const created = await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "hello" }),
       {},
     );
     expect(created.status).toBe(201);
     const commentId = ((await created.json()) as { comment: { id: string } }).comment.id;
-    await h.app.request(`/api/v0/comments/${commentId}`, jsonReq("DELETE"), {});
+    await h.app.request(url("comment.delete", { id: commentId }), jsonReq("DELETE"), {});
     expect(h.emitter.events.map((e) => e.event.kind)).toEqual([
       "comment.created",
       "comment.deleted",

@@ -4,6 +4,7 @@
 // OAuth flow there automatically.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 
 import type { AppHonoEnv } from "../http";
 
@@ -12,7 +13,7 @@ import type { AppHonoEnv } from "../http";
 // could not go through the shared mount table in src/router.ts.
 export const makeWellKnownRouter = () => {
   const wellKnown = new Hono<AppHonoEnv>();
-  wellKnown.get("/.well-known/oauth-protected-resource", (c) =>
+  wellKnown.get(path("wellknown.oauthProtectedResource"), (c) =>
     c.json({
       resource: "https://evenflow.work",
       authorization_servers: ["https://api.4a4.ai"],

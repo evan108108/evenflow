@@ -13,6 +13,7 @@
 // the tests stay honest if POSITION_STEP or the seeding changes.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import type { IssueShape } from "../src/shapes";
 import { createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
 
@@ -60,7 +61,7 @@ describe("EFB-78 — transitions land at the top of the target column", () => {
   };
 
   const transition = (h: Harness, issueId: string, columnId: string) =>
-    h.app.request(`/api/v0/issues/${issueId}/transition`, jsonReq("POST", { column_id: columnId }), {});
+    h.app.request(url("issue.transition", { id: issueId }), jsonReq("POST", { column_id: columnId }), {});
 
   it("puts the arriving issue strictly above every other issue in the column", async () => {
     const h = makeHarness();
@@ -149,8 +150,7 @@ describe("EFB-78 — container moves land at the top too", () => {
     const mover = await createIssue(h, { title: "Pulled into active" });
 
     const res = await h.app.request(
-      `/api/v0/issues/${mover.id}/promote_to_active`,
-      jsonReq("POST"),
+      url("issue.container.set", { id: mover.id }), jsonReq("POST", { container: "active" }),
       {},
     );
     expect(res.status).toBe(200);

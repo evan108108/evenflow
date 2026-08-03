@@ -6,6 +6,7 @@
 // read of a new day.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Layer } from "effect";
 import { Db, DbError, type DbService } from "../src/effects";
 import type { IssueShape, SprintShape } from "../src/shapes";
@@ -42,7 +43,7 @@ interface TideBody {
 
 const createSprint = async (h: Harness): Promise<SprintShape> => {
   const res = await h.app.request(
-    "/api/v0/boards/kb/sprints",
+    url("sprint.list", { slug: "kb" }),
     jsonReq("POST", { name: "Sprint 1" }),
     {},
   );
@@ -52,7 +53,7 @@ const createSprint = async (h: Harness): Promise<SprintShape> => {
 
 const addIssue = async (h: Harness, sprintId: string, issueId: string) => {
   const res = await h.app.request(
-    `/api/v0/boards/kb/sprints/${sprintId}/add-issue`,
+    url("sprint.issues.attach", { slug: "kb", id: sprintId }),
     jsonReq("POST", { issue_id: issueId }),
     {},
   );
@@ -60,7 +61,7 @@ const addIssue = async (h: Harness, sprintId: string, issueId: string) => {
 };
 
 const patchIssue = async (h: Harness, issueId: string, body: Record<string, unknown>) => {
-  const res = await h.app.request(`/api/v0/issues/${issueId}`, jsonReq("PATCH", body), {});
+  const res = await h.app.request(url("issue.get", { id: issueId }), jsonReq("PATCH", body), {});
   expect(res.status).toBe(200);
   return ((await res.json()) as { issue: IssueShape }).issue;
 };
@@ -87,7 +88,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     await patchIssue(h, a.id, { status: "Done" });
 
     vi.setSystemTime(at(2));
-    const body = await getTide(h, "/api/v0/boards/kb/sprints/" + sprint.id + "/tide?days=3");
+    const body = await getTide(h, url("sprint.list", { slug: "kb" }) + sprint.id + "/tide?days=3");
 
     expect(body.days).toHaveLength(3);
     expect(body.days.map((d) => d.remaining_pts)).toEqual([8, 3, 3]);
@@ -108,7 +109,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     await patchIssue(h, a.id, { estimate: 8 });
     expect(h.db.estimateHistory).toHaveLength(2); // null→3, then 3→8
 
-    const body = await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide?days=2`);
+    const body = await getTide(h, `${url("sprint.tide", { slug: "kb", id: sprint.id })}?days=2`);
     expect(body.days.map((d) => d.remaining_pts)).toEqual([3, 8]);
   });
 
@@ -116,7 +117,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     const h = makeHarness();
     await createBoard(h);
     const sprint = await createSprint(h);
-    const body = await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
+    const body = await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }));
 
     expect(body.days).toHaveLength(7);
     expect(body.direction).toBe("flat");
@@ -129,14 +130,14 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     const sprint = await createSprint(h);
     for (const bad of ["0", "91", "abc", "2.5"]) {
       const res = await h.app.request(
-        `/api/v0/boards/kb/sprints/${sprint.id}/tide?days=${bad}`,
+        `${url("sprint.tide", { slug: "kb", id: sprint.id })}?days=${bad}`,
         { headers: bearer },
         {},
       );
       expect(res.status, `days=${bad}`).toBe(400);
     }
     const missing = await h.app.request(
-      "/api/v0/boards/kb/sprints/nope/tide",
+      url("sprint.tide", { slug: "kb", id: "nope" }),
       { headers: bearer },
       {},
     );
@@ -147,7 +148,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     const h = makeHarness();
     await createBoard(h); // boards are created private by default
     const sprint = await createSprint(h);
-    const path = `/api/v0/boards/kb/sprints/${sprint.id}/tide`;
+    const path = url("sprint.tide", { slug: "kb", id: sprint.id });
 
     // EFB-76 reached this route without it being named in the ticket: the tide
     // read funnels through resolveBoardScope like every other board-scoped
@@ -157,7 +158,7 @@ describe("GET /api/v0/boards/:slug/sprints/:id/tide", () => {
     expect(hidden.status).toBe(401);
 
     const opened = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "public" }),
       {},
     );
@@ -172,7 +173,7 @@ describe("GET /api/v0/boards/:slug/tide — kanban-only", () => {
     const h = makeHarness();
     await createBoard(h);
     const narrowed = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { done_window_days: 2 }),
       {},
     );
@@ -184,7 +185,7 @@ describe("GET /api/v0/boards/:slug/tide — kanban-only", () => {
     await patchIssue(h, a.id, { status: "Done" });
 
     vi.setSystemTime(at(3));
-    const body = await getTide(h, "/api/v0/boards/kb/tide?days=4");
+    const body = await getTide(h, `${url("board.tide", { slug: "kb" })}?days=4`);
 
     // A was Done on day 0 with a 2-day window: counted days 0-1, gone after.
     expect(body.days.map((d) => d.committed_pts)).toEqual([8, 8, 3, 3]);
@@ -205,11 +206,11 @@ describe("tide roll-forward", () => {
     await patchIssue(h, a.id, { estimate: 5 });
 
     // Same day as the writes: nothing has finished yet, so nothing is closed.
-    await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
+    await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }));
     expect(h.db.tideSnapshots).toHaveLength(0);
 
     vi.setSystemTime(at(1));
-    await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
+    await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }));
     expect(h.db.tideSnapshots).toHaveLength(1);
     expect(h.db.tideSnapshots[0]).toMatchObject({
       sprint_id: sprint.id,
@@ -223,7 +224,7 @@ describe("tide roll-forward", () => {
     });
 
     // A second read the same day must not write a duplicate.
-    await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
+    await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }));
     expect(h.db.tideSnapshots).toHaveLength(1);
   });
 
@@ -279,7 +280,7 @@ describe("tide roll-forward", () => {
     vi.setSystemTime(at(1));
     // Both requests see no row, both try to insert. The partial unique index
     // rejects the loser — which must not become a 500 on a GET.
-    const path = `/api/v0/boards/kb/sprints/${sprint.id}/tide`;
+    const path = url("sprint.tide", { slug: "kb", id: sprint.id });
     const [first, second] = await Promise.all([
       h.app.request(path, { headers: bearer }, {}),
       h.app.request(path, { headers: bearer }, {}),
@@ -298,8 +299,8 @@ describe("tide roll-forward", () => {
     await createBoard(h);
     const sprint = await createSprint(h);
     vi.setSystemTime(at(1));
-    await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide`);
-    await getTide(h, "/api/v0/boards/kb/tide");
+    await getTide(h, url("sprint.tide", { slug: "kb", id: sprint.id }));
+    await getTide(h, url("board.tide", { slug: "kb" }));
 
     expect(h.db.tideSnapshots).toHaveLength(2);
     expect(new Set(h.db.tideSnapshots.map((s) => s["sprint_id"]))).toEqual(

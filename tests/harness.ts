@@ -8,6 +8,7 @@
 // (/api/v0/orgs/:org_slug).
 
 import { expect } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Hono } from "hono";
 import { Effect, Layer } from "effect";
 import {
@@ -110,7 +111,7 @@ export const createBoard = async (
   overrides?: Record<string, unknown>,
 ) => {
   const res = await h.app.request(
-    "/api/v0/boards",
+    url("board.create"),
     jsonReq("POST", { slug, title: "Board", ...overrides }),
     {},
   );
@@ -133,7 +134,7 @@ export const createIssue = async (
   slug = "kb",
 ): Promise<IssueShape> => {
   const res = await h.app.request(
-    `/api/v0/boards/${slug}/issues`,
+    url("issue.create", { slug: slug }),
     jsonReq("POST", { title: "An issue", ...overrides }),
     {},
   );

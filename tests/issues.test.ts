@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import type { IssueShape } from "../src/shapes";
 import {
   CALLER,
@@ -85,7 +86,7 @@ describe("POST /api/v0/boards/:slug/issues", () => {
       [{ title: "x", estimate: 1.5 }, "estimate"],
     ];
     for (const [body, reason] of cases) {
-      const res = await h.app.request("/api/v0/boards/kb/issues", jsonReq("POST", body), {});
+      const res = await h.app.request(url("issue.create", { slug: "kb" }), jsonReq("POST", body), {});
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "invalid-body", reason });
     }
@@ -95,7 +96,7 @@ describe("POST /api/v0/boards/:slug/issues", () => {
     const h = makeHarness();
     seedForeignBoardAndIssue(h);
     for (const slug of ["nope", "theirs"]) {
-      const res = await h.app.request(`/api/v0/boards/${slug}/issues`, jsonReq("POST", { title: "x" }), {});
+      const res = await h.app.request(url("issue.create", { slug: slug }), jsonReq("POST", { title: "x" }), {});
       expect(res.status).toBe(404);
     }
   });
@@ -109,7 +110,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
       vi.setSystemTime(1_000 * (i + 1));
       await createIssue(h, { title });
     }
-    const res = await h.app.request("/api/v0/boards/kb/issues?limit=2", { headers: bearer }, {});
+    const res = await h.app.request(`${url("issue.create", { slug: "kb" })}?limit=2`, { headers: bearer }, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { issues: IssueShape[]; total: number; has_more: boolean };
     expect(body.issues.map((i) => i.title)).toEqual(["c", "b"]);
@@ -125,7 +126,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
       vi.setSystemTime(1_000 * (i + 1));
       ids.push((await createIssue(h, { title })).id);
     }
-    const res = await h.app.request(`/api/v0/boards/kb/issues?after=${ids[1]}`, { headers: bearer }, {});
+    const res = await h.app.request(`${url("issue.create", { slug: "kb" })}?after=${ids[1]}`, { headers: bearer }, {});
     const body = (await res.json()) as { issues: IssueShape[]; has_more: boolean };
     expect(body.issues.map((i) => i.title)).toEqual(["a"]);
     expect(body.has_more).toBe(false);
@@ -139,18 +140,18 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     await createIssue(h, { title: "labeled", status: "In Review", labels: ["bug"] });
 
     const byStatus = (await (
-      await h.app.request("/api/v0/boards/kb/issues?status=Todo", { headers: bearer }, {})
+      await h.app.request(`${url("issue.create", { slug: "kb" })}?status=Todo`, { headers: bearer }, {})
     ).json()) as { issues: IssueShape[]; total: number };
     expect(byStatus.issues.map((i) => i.title)).toEqual(["todo-active"]);
     expect(byStatus.total).toBe(1);
 
     const byContainer = (await (
-      await h.app.request("/api/v0/boards/kb/issues?container=active", { headers: bearer }, {})
+      await h.app.request(`${url("issue.create", { slug: "kb" })}?container=active`, { headers: bearer }, {})
     ).json()) as { issues: IssueShape[] };
     expect(byContainer.issues.map((i) => i.title)).toEqual(["todo-active"]);
 
     const byLabel = (await (
-      await h.app.request("/api/v0/boards/kb/issues?label=bug", { headers: bearer }, {})
+      await h.app.request(`${url("issue.create", { slug: "kb" })}?label=bug`, { headers: bearer }, {})
     ).json()) as { issues: IssueShape[] };
     expect(byLabel.issues.map((i) => i.title)).toEqual(["labeled"]);
 
@@ -158,7 +159,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     // paged kanban columns impossible — a column stream is inherently
     // container=active AND column_id=X.
     const combined = await h.app.request(
-      "/api/v0/boards/kb/issues?status=Todo&container=active",
+      `${url("issue.create", { slug: "kb" })}?status=Todo&container=active`,
       { headers: bearer },
       {},
     );
@@ -169,7 +170,7 @@ describe("GET /api/v0/boards/:slug/issues", () => {
     // ...and compose conjunctively, not as a union: a status that does not
     // co-occur with the container yields nothing.
     const disjoint = await h.app.request(
-      "/api/v0/boards/kb/issues?status=In%20Review&container=active",
+      `${url("issue.create", { slug: "kb" })}?status=In%20Review&container=active`,
       { headers: bearer },
       {},
     );
@@ -183,10 +184,10 @@ describe("GET /api/v0/issues/:id", () => {
     await createBoard(h);
     seedForeignBoardAndIssue(h);
     const issue = await createIssue(h);
-    const ok = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: bearer }, {});
+    const ok = await h.app.request(url("issue.get", { id: issue.id }), { headers: bearer }, {});
     expect(ok.status).toBe(200);
     for (const id of ["nope", "fi"]) {
-      const res = await h.app.request(`/api/v0/issues/${id}`, { headers: bearer }, {});
+      const res = await h.app.request(url("issue.get", { id: id }), { headers: bearer }, {});
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "not-found", reason: "issue" });
     }
@@ -200,7 +201,7 @@ describe("PATCH /api/v0/issues/:id", () => {
     const issue = await createIssue(h);
     vi.setSystemTime(5_000);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}`,
+      url("issue.get", { id: issue.id }),
       jsonReq("PATCH", { title: "Renamed", estimate: 3 }),
       {},
     );
@@ -217,7 +218,7 @@ describe("PATCH /api/v0/issues/:id", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     vi.setSystemTime(5_000);
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { status: "In Progress" }), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { status: "In Progress" }), {});
     expect(h.db.statusChanges).toHaveLength(2);
     expect(h.db.statusChanges[1]).toMatchObject({
       from_status: "Todo",
@@ -234,7 +235,7 @@ describe("PATCH /api/v0/issues/:id", () => {
     const issue = await createIssue(h, { container: "active" });
     vi.setSystemTime(5_000);
     const done = (await (
-      await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { status: "Done" }), {})
+      await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { status: "Done" }), {})
     ).json()) as { issue: IssueShape };
     expect(done.issue.completed_at_ms).toBe(5_000);
     expect(h.db.statusChanges[1]).toMatchObject({
@@ -244,7 +245,7 @@ describe("PATCH /api/v0/issues/:id", () => {
 
     vi.setSystemTime(6_000);
     const reverted = (await (
-      await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { status: "In Review" }), {})
+      await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { status: "In Review" }), {})
     ).json()) as { issue: IssueShape };
     expect(reverted.issue.completed_at_ms).toBeNull();
   });
@@ -259,7 +260,7 @@ describe("PATCH /api/v0/issues/:id", () => {
       [{}, "empty-patch"],
     ];
     for (const [body, reason] of cases) {
-      const res = await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", body), {});
+      const res = await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", body), {});
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "invalid-body", reason });
     }
@@ -268,7 +269,7 @@ describe("PATCH /api/v0/issues/:id", () => {
   it("404s on a foreign issue", async () => {
     const h = makeHarness();
     seedForeignBoardAndIssue(h);
-    const res = await h.app.request("/api/v0/issues/fi", jsonReq("PATCH", { title: "X" }), {});
+    const res = await h.app.request(url("issue.get", { id: "fi" }), jsonReq("PATCH", { title: "X" }), {});
     expect(res.status).toBe(404);
   });
 });
@@ -280,7 +281,7 @@ describe("POST /api/v0/issues/:id/transition", () => {
     const issue = await createIssue(h, { container: "active" });
     vi.setSystemTime(5_000);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: "Done" }),
       {},
     );
@@ -301,7 +302,7 @@ describe("POST /api/v0/issues/:id/transition", () => {
     const issue = await createIssue(h);
     vi.setSystemTime(5_000);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: issue.status }),
       {},
     );
@@ -316,7 +317,7 @@ describe("POST /api/v0/issues/:id/transition", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: "Nope" }),
       {},
     );
@@ -333,19 +334,19 @@ describe("container moves", () => {
 
     vi.setSystemTime(2_000);
     const toBacklog = (await (
-      await h.app.request(`/api/v0/issues/${issue.id}/promote_to_backlog`, jsonReq("POST"), {})
+      await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "backlog" }), {})
     ).json()) as { issue: IssueShape };
     expect(toBacklog.issue.container).toBe("backlog");
 
     vi.setSystemTime(3_000);
     const toActive = (await (
-      await h.app.request(`/api/v0/issues/${issue.id}/promote_to_active`, jsonReq("POST"), {})
+      await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "active" }), {})
     ).json()) as { issue: IssueShape };
     expect(toActive.issue.container).toBe("active");
 
     vi.setSystemTime(4_000);
     const toIcebox = (await (
-      await h.app.request(`/api/v0/issues/${issue.id}/send_to_icebox`, jsonReq("POST"), {})
+      await h.app.request(url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "icebox" }), {})
     ).json()) as { issue: IssueShape };
     expect(toIcebox.issue.container).toBe("icebox");
 
@@ -366,8 +367,7 @@ describe("container moves", () => {
     const issue = await createIssue(h); // container backlog
     vi.setSystemTime(9_000);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/promote_to_backlog`,
-      jsonReq("POST"),
+      url("issue.container.set", { id: issue.id }), jsonReq("POST", { container: "backlog" }),
       {},
     );
     expect(res.status).toBe(200);
@@ -383,27 +383,27 @@ describe("DELETE /api/v0/issues/:id", () => {
     const h = makeHarness();
     await createBoard(h);
     const issue = await createIssue(h);
-    await h.app.request(`/api/v0/issues/${issue.id}/comments`, jsonReq("POST", { body: "hi" }), {});
+    await h.app.request(url("comment.create", { id: issue.id }), jsonReq("POST", { body: "hi" }), {});
     expect(h.db.comments).toHaveLength(1);
 
-    const res = await h.app.request(`/api/v0/issues/${issue.id}`, { method: "DELETE", headers: bearer }, {});
+    const res = await h.app.request(url("issue.get", { id: issue.id }), { method: "DELETE", headers: bearer }, {});
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: true });
     expect(h.db.issues).toHaveLength(0);
     expect(h.db.comments).toHaveLength(0);
     expect(h.db.statusChanges).toHaveLength(1); // audit survives
 
-    const gone = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: bearer }, {});
+    const gone = await h.app.request(url("issue.get", { id: issue.id }), { headers: bearer }, {});
     expect(gone.status).toBe(404);
   });
 });
 
 describe("auth gating", () => {
   it.each([
-    ["POST", "/api/v0/boards/kb/issues"],
-    ["PATCH", "/api/v0/issues/x"],
-    ["DELETE", "/api/v0/issues/x"],
-    ["POST", "/api/v0/issues/x/transition"],
+    ["POST", url("issue.create", { slug: "kb" })],
+    ["PATCH", url("issue.get", { id: "x" })],
+    ["DELETE", url("issue.get", { id: "x" })],
+    ["POST", url("issue.transition", { id: "x" })],
     ["POST", "/api/v0/issues/x/promote_to_backlog"],
     ["POST", "/api/v0/issues/x/promote_to_active"],
     ["POST", "/api/v0/issues/x/send_to_icebox"],
@@ -420,8 +420,8 @@ describe("auth gating", () => {
   // was "send auth"), and the 401 is uniform across private and nonexistent
   // so it leaks no more than the 404 did.
   it.each([
-    ["GET", "/api/v0/boards/kb/issues"],
-    ["GET", "/api/v0/issues/x"],
+    ["GET", url("issue.create", { slug: "kb" })],
+    ["GET", url("issue.get", { id: "x" })],
   ])("%s %s answers 401 to anonymous callers on private/unknown resources", async (method, path) => {
     const h = makeHarness();
     await createBoard(h);
@@ -438,8 +438,8 @@ describe("auth gating", () => {
     await createBoard(h);
     const issue = await createIssue(h);
 
-    const realButPrivate = await h.app.request(`/api/v0/issues/${issue.short_id}`, {}, {});
-    const fabricated = await h.app.request("/api/v0/issues/KAN-99999", {}, {});
+    const realButPrivate = await h.app.request(url("issue.get", { id: issue.short_id }), {}, {});
+    const fabricated = await h.app.request(url("issue.get", { id: "KAN-99999" }), {}, {});
 
     expect(realButPrivate.status).toBe(401);
     expect(fabricated.status).toBe(401);
@@ -455,7 +455,7 @@ describe("auth gating", () => {
     const issue = await createIssue(h);
 
     const outsider = await h.app.request(
-      `/api/v0/issues/${issue.short_id}`,
+      url("issue.get", { id: issue.short_id }),
       { headers: bearerFor(tokenFor("outsider")) },
       {},
     );
@@ -467,12 +467,12 @@ describe("auth gating", () => {
     await createBoard(h);
     await createIssue(h);
     const patched = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "public" }),
       {},
     );
     expect(patched.status).toBe(200);
-    const res = await h.app.request("/api/v0/boards/kb/issues", {}, {});
+    const res = await h.app.request(url("issue.create", { slug: "kb" }), {}, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { issues: unknown[] };
     expect(body.issues).toHaveLength(1);
@@ -506,7 +506,7 @@ describe("short ids", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     for (const ref of ["BOA-1", "boa-1", issue.id]) {
-      const res = await h.app.request(`/api/v0/issues/${ref}`, { headers: bearer }, {});
+      const res = await h.app.request(url("issue.get", { id: ref }), { headers: bearer }, {});
       expect(res.status).toBe(200);
       const body = (await res.json()) as { issue: IssueShape };
       expect(body.issue.id).toBe(issue.id);
@@ -519,7 +519,7 @@ describe("short ids", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      "/api/v0/issues/BOA-1/transition",
+      url("issue.transition", { id: "BOA-1" }),
       jsonReq("POST", { to_status: "Done" }),
       {},
     );
@@ -532,7 +532,7 @@ describe("short ids", () => {
   it("404s an unknown short id", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/issues/BOA-99", { headers: bearer }, {});
+    const res = await h.app.request(url("issue.get", { id: "BOA-99" }), { headers: bearer }, {});
     expect(res.status).toBe(404);
   });
 });
@@ -543,7 +543,7 @@ const reorder = (
   h: ReturnType<typeof makeHarness>,
   issueId: string,
   body: Record<string, unknown>,
-) => h.app.request(`/api/v0/issues/${issueId}/reorder`, jsonReq("PATCH", body), {});
+) => h.app.request(url("issue.position.set", { id: issueId }), jsonReq("PUT", body), {});
 
 describe("PATCH /api/v0/issues/:id/reorder", () => {
   it("creates assign appended positions (max + 1000)", async () => {
@@ -627,7 +627,7 @@ describe("PATCH /api/v0/issues/:id/reorder", () => {
     await createBoard(h);
     const a = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${a.id}`,
+      url("issue.get", { id: a.id }),
       jsonReq("PATCH", { position: 42 }),
       {},
     );
@@ -673,7 +673,7 @@ describe("EFB-38 assignee_pubkey validation", () => {
   };
 
   const patchAssignee = (h: ReturnType<typeof makeHarness>, id: string, v: unknown) =>
-    h.app.request(`/api/v0/issues/${id}`, jsonReq("PATCH", { assignee_pubkey: v }), {});
+    h.app.request(url("issue.get", { id: id }), jsonReq("PATCH", { assignee_pubkey: v }), {});
 
   const storedAssignee = (h: ReturnType<typeof makeHarness>, id: string) =>
     h.db.issues.find((r) => r["id"] === id)?.["assignee_pubkey"] ?? null;
@@ -728,7 +728,7 @@ describe("EFB-38 assignee_pubkey validation", () => {
   describe("POST create applies the same rules", () => {
     const postIssue = (h: ReturnType<typeof makeHarness>, v: unknown) =>
       h.app.request(
-        "/api/v0/boards/kb/issues",
+        url("issue.create", { slug: "kb" }),
         jsonReq("POST", { title: "assigned at birth", assignee_pubkey: v }),
         {},
       );
@@ -768,7 +768,7 @@ describe("EFB-38 assignee_pubkey validation", () => {
     const row = h.db.issues.find((r) => r["id"] === issue.id)!;
     row["assignee_pubkey"] = HEX;
 
-    const res = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: bearer }, {});
+    const res = await h.app.request(url("issue.get", { id: issue.id }), { headers: bearer }, {});
     expect(res.status).toBe(200);
     expect(((await res.json()) as { issue: IssueShape }).issue.assignee_pubkey).toBe(HEX);
   });
@@ -865,7 +865,7 @@ describe("EFB-38 assignee_pubkey validation", () => {
 
 /** POST the create route and surface { status, reason }. */
 const postIssue = async (h: ReturnType<typeof makeHarness>, body: Record<string, unknown>) => {
-  const res = await h.app.request("/api/v0/boards/kb/issues", jsonReq("POST", body), {});
+  const res = await h.app.request(url("issue.create", { slug: "kb" }), jsonReq("POST", body), {});
   const json = (await res.json()) as { reason?: string; issue?: IssueShape };
   return { status: res.status, reason: json.reason, issue: json.issue };
 };
@@ -875,7 +875,7 @@ const postTransition = async (
   id: string,
   body: Record<string, unknown>,
 ) => {
-  const res = await h.app.request(`/api/v0/issues/${id}/transition`, jsonReq("POST", body), {});
+  const res = await h.app.request(url("issue.transition", { id: id }), jsonReq("POST", body), {});
   const json = (await res.json()) as { reason?: string; issue?: IssueShape };
   return { status: res.status, reason: json.reason, issue: json.issue };
 };
@@ -885,7 +885,7 @@ const reorderBody = async (
   id: string,
   body: Record<string, unknown>,
 ) => {
-  const res = await h.app.request(`/api/v0/issues/${id}/reorder`, jsonReq("PATCH", body), {});
+  const res = await h.app.request(url("issue.position.set", { id: id }), jsonReq("PUT", body), {});
   const json = (await res.json()) as { reason?: string };
   return { status: res.status, reason: json.reason };
 };
@@ -1132,8 +1132,7 @@ describe("EFB-85 — POST /issues/:id/move-to-board under parseRouteBody", () =>
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board: "x" }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board: "x" }),
       {},
     );
     expect(res.status).toBe(400);
@@ -1147,8 +1146,7 @@ describe("EFB-85 — POST /issues/:id/move-to-board under parseRouteBody", () =>
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", v === undefined ? {} : { target_board_id: v }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", v === undefined ? {} : { target_board_id: v }),
       {},
     );
     expect(res.status).toBe(400);
@@ -1164,8 +1162,7 @@ describe("EFB-85 — POST /issues/:id/move-to-board under parseRouteBody", () =>
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: "   " }),
+      url("issue.board.set", { id: issue.id }), jsonReq("PUT", { target_board_id: "   " }),
       {},
     );
     expect(res.status).toBe(404);
@@ -1178,8 +1175,7 @@ describe("EFB-85 — POST /issues/:id/move-to-board under parseRouteBody", () =>
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(
-      "/api/v0/issues/does-not-exist/move-to-board",
-      jsonReq("POST", { target_board_id: "" }),
+      url("issue.board.set", { id: "does-not-exist" }), jsonReq("PUT", { target_board_id: "" }),
       {},
     );
     expect(res.status).toBe(400);

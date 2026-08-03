@@ -52,6 +52,7 @@
 // missing, which is the failure mode this codebase treats as the worst one.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Clock, Data, Effect, Exit } from "effect";
 import { Audience, AuditLog, BoardEmitter, Db, DbError, bootstrap } from "../effects";
@@ -215,7 +216,7 @@ export const makeImportsRouter = (layerFor?: LayerFor) => {
     });
 
   // ── POST /boards/:slug/issues/bulk ──────────────────────────────────────
-  app.post("/boards/:slug/issues/bulk", (c) =>
+  app.post(path("import.issues.bulk"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -665,7 +666,7 @@ export const makeImportsRouter = (layerFor?: LayerFor) => {
   // issueImportDedup and is swept at 24h. What survives is who imported how
   // much, when — including `unmapped_assignees`, so "we quietly dropped 40
   // assignees" outlives the report that first said so.
-  app.get("/boards/:slug/imports", (c) =>
+  app.get(path("import.list"), (c) =>
     run(
       c,
       Effect.gen(function* () {

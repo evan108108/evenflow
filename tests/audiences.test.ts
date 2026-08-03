@@ -4,6 +4,7 @@
 // a full client-side decrypt round-trip against the recorded SSE event).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Layer } from "effect";
 import {
   Audience,
@@ -37,7 +38,7 @@ afterEach(() => {
 
 const registerKey = async (h: Harness, sessionPub: string, token?: string) => {
   const res = await h.app.request(
-    "/api/v0/session/register-key",
+    url("session.key.register"),
     jsonReq("POST", { session_pubkey: sessionPub }, token),
     {},
   );
@@ -45,7 +46,7 @@ const registerKey = async (h: Harness, sessionPub: string, token?: string) => {
 };
 
 const flipPrivate = (h: Harness, slug = "kb") =>
-  h.app.request(`/api/v0/boards/${slug}`, jsonReq("PATCH", { visibility: "private" }), {});
+  h.app.request(url("board.get", { slug: slug }), jsonReq("PATCH", { visibility: "private" }), {});
 
 interface BoardWire {
   visibility: "private" | "public";
@@ -68,7 +69,7 @@ describe("POST /api/v0/session/register-key", () => {
     expect(h.db.sessionKeys[0]!["session_pubkey"]).toBe(k2.pub);
 
     const bad = await h.app.request(
-      "/api/v0/session/register-key",
+      url("session.key.register"),
       jsonReq("POST", { session_pubkey: "not-hex" }),
       {},
     );
@@ -78,7 +79,7 @@ describe("POST /api/v0/session/register-key", () => {
   it("requires auth", async () => {
     const h = makeHarness();
     const res = await h.app.request(
-      "/api/v0/session/register-key",
+      url("session.key.register"),
       { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
       {},
     );
@@ -127,7 +128,7 @@ describe("privacy flip (PATCH visibility)", () => {
     const audiencePubkeyBefore = h.db.boards[0]!["audience_pubkey"];
     expect(audiencePubkeyBefore).toMatch(/^[0-9a-f]{64}$/);
 
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "public" }), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardWire };
     expect(board.visibility).toBe("public");
@@ -147,7 +148,7 @@ describe("privacy flip (PATCH visibility)", () => {
     const h = makeHarness();
     await createBoard(h);
     expect(h.db.boards[0]!["visibility"]).toBe("private");
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "public" }), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardWire };
     expect(board.visibility).toBe("public");
@@ -158,7 +159,7 @@ describe("privacy flip (PATCH visibility)", () => {
   it("public→private is the supported direction and mints the audience", async () => {
     const h = makeHarness();
     await createBoard(h, "kb2");
-    await h.app.request("/api/v0/boards/kb2", jsonReq("PATCH", { visibility: "public" }), {});
+    await h.app.request(url("board.get", { slug: "kb2" }), jsonReq("PATCH", { visibility: "public" }), {});
     const flip = await flipPrivate(h, "kb2");
     expect(flip.status).toBe(200);
     const { board } = (await flip.json()) as { board: BoardWire };
@@ -172,7 +173,7 @@ describe("privacy flip (PATCH visibility)", () => {
   it("patching an unrelated field on a born-private board does not mint keys", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { title: "Renamed" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { title: "Renamed" }), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardWire };
     expect(board.encryption_active).toBe(false);
@@ -184,7 +185,7 @@ describe("privacy flip (PATCH visibility)", () => {
     await createBoard(h);
     seedBoardMember(h, h.db.boards[0]!["id"] as string, pubkeyFor("adm"), "admin");
     const res = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "private" }, tokenFor("adm")),
       {},
     );
@@ -194,12 +195,12 @@ describe("privacy flip (PATCH visibility)", () => {
   it("rejects an unknown visibility; a lone legacy is_encrypted is not a patch", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const bad = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "sorta" }), {});
+    const bad = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "sorta" }), {});
     expect(bad.status).toBe(400);
 
     // Pre-0015 clients sent is_encrypted. It is no longer a settable field —
     // failing loudly beats silently no-op'ing a privacy request.
-    const legacy = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { is_encrypted: true }), {});
+    const legacy = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { is_encrypted: true }), {});
     expect(legacy.status).toBe(400);
     expect(await legacy.json()).toEqual({ error: "invalid-body", reason: "empty-patch" });
     expect(h.db.audienceKeys).toHaveLength(0);
@@ -254,7 +255,7 @@ describe("membership hooks", () => {
     await registerKey(h, bobSession.pub, tokenFor("bob"));
 
     const res = await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
       jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
       {},
     );
@@ -280,7 +281,7 @@ describe("membership hooks", () => {
     h.audience.calls.length = 0;
 
     const res = await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
       jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
       {},
     );
@@ -315,14 +316,14 @@ describe("membership hooks", () => {
     const bobSession = generateEpochKeypair();
     await registerKey(h, bobSession.pub, tokenFor("bob"));
     await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
       jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
       {},
     );
     expect(h.db.keyGrants.filter((g) => g["revoked_at_ms"] === null)).toHaveLength(2);
 
     const res = await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members/${encodeURIComponent(pubkeyFor("bob"))}`,
+      url("org.board.member.update", { org_slug: orgSlug, slug: "kb", pubkey: pubkeyFor("bob") }),
       jsonReq("DELETE"),
       {},
     );
@@ -352,7 +353,7 @@ describe("membership hooks", () => {
 
     const kick = (who: string) =>
       h.app.request(
-        `/api/v0/orgs/${org["slug"] as string}/members/${encodeURIComponent(pubkeyFor(who))}`,
+        url("org.member.update", { org_slug: org["slug"] as string, pubkey: pubkeyFor(who) }),
         jsonReq("DELETE"),
         {},
       );
@@ -372,12 +373,12 @@ describe("membership hooks", () => {
     await createBoard(h);
     const orgSlug = callerOrg(h)["slug"] as string;
     await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
       jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
       {},
     );
     await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members/${encodeURIComponent(pubkeyFor("bob"))}`,
+      url("org.board.member.update", { org_slug: orgSlug, slug: "kb", pubkey: pubkeyFor("bob") }),
       jsonReq("DELETE"),
       {},
     );
@@ -394,7 +395,7 @@ describe("key-grant fetch + regrant", () => {
     await registerKey(h, session.pub);
     await flipPrivate(h);
 
-    const res = await h.app.request("/api/v0/boards/kb/key-grant", { headers: bearer }, {});
+    const res = await h.app.request(url("audience.keyGrant.get", { slug: "kb" }), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const { grant } = (await res.json()) as {
       grant: { epoch: number; grant_ciphertext: string; grant_sender_pubkey: string; audience_pubkey: string };
@@ -408,18 +409,18 @@ describe("key-grant fetch + regrant", () => {
   it("404s: public board, missing session key, and no grant for a fresh key", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const notPrivate = await h.app.request("/api/v0/boards/kb/key-grant", { headers: bearer }, {});
+    const notPrivate = await h.app.request(url("audience.keyGrant.get", { slug: "kb" }), { headers: bearer }, {});
     expect(notPrivate.status).toBe(404);
 
     await flipPrivate(h); // flip with NO registered session key
-    const noSession = await h.app.request("/api/v0/boards/kb/key-grant", { headers: bearer }, {});
+    const noSession = await h.app.request(url("audience.keyGrant.get", { slug: "kb" }), { headers: bearer }, {});
     expect(noSession.status).toBe(404);
     expect(((await noSession.json()) as { reason: string }).reason).toBe("session-key");
 
     // Register a key AFTER the flip: registered but ungranted → 404 grant.
     const late = generateEpochKeypair();
     await registerKey(h, late.pub);
-    const noGrant = await h.app.request("/api/v0/boards/kb/key-grant", { headers: bearer }, {});
+    const noGrant = await h.app.request(url("audience.keyGrant.get", { slug: "kb" }), { headers: bearer }, {});
     expect(noGrant.status).toBe(404);
     expect(((await noGrant.json()) as { reason: string }).reason).toBe("grant");
   });
@@ -434,7 +435,7 @@ describe("key-grant fetch + regrant", () => {
     // "New login": same member, new session keypair replaces the old.
     const fresh = generateEpochKeypair();
     await registerKey(h, fresh.pub);
-    const res = await h.app.request("/api/v0/boards/kb/request-regrant", jsonReq("POST", {}), {});
+    const res = await h.app.request(url("audience.regrantRequest.create", { slug: "kb" }), jsonReq("POST", {}), {});
     expect(res.status).toBe(201);
     const { grant } = (await res.json()) as { grant: { session_pubkey: string; epoch: number } };
     expect(grant.session_pubkey).toBe(fresh.pub);
@@ -448,7 +449,7 @@ describe("key-grant fetch + regrant", () => {
     await registerKey(h, session.pub);
     await flipPrivate(h);
     const outsider = await h.app.request(
-      "/api/v0/boards/kb/key-grant",
+      url("audience.keyGrant.get", { slug: "kb" }),
       { headers: bearerFor(tokenFor("mallory")) },
       {},
     );
@@ -475,7 +476,7 @@ describe("encrypted emit path", () => {
     expect(JSON.stringify(payload)).not.toContain("Secret plan");
 
     // Client round-trip: grant → epoch priv → decrypt SSE ciphertext.
-    const grantRes = await h.app.request("/api/v0/boards/kb/key-grant", { headers: bearer }, {});
+    const grantRes = await h.app.request(url("audience.keyGrant.get", { slug: "kb" }), { headers: bearer }, {});
     const { grant } = (await grantRes.json()) as {
       grant: { grant_ciphertext: string; grant_sender_pubkey: string; audience_pubkey: string };
     };
@@ -513,7 +514,7 @@ describe("encrypted emit path", () => {
     const bobSession = generateEpochKeypair();
     await registerKey(h, bobSession.pub, tokenFor("bob"));
     await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+      url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
       jsonReq("POST", { pubkey: pubkeyFor("bob"), role: "contributor" }),
       {},
     );
@@ -524,7 +525,7 @@ describe("encrypted emit path", () => {
 
     // Kick bob → rotation to epoch 2.
     await h.app.request(
-      `/api/v0/orgs/${orgSlug}/boards/kb/members/${encodeURIComponent(pubkeyFor("bob"))}`,
+      url("org.board.member.update", { org_slug: orgSlug, slug: "kb", pubkey: pubkeyFor("bob") }),
       jsonReq("DELETE"),
       {},
     );

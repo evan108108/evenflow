@@ -11,6 +11,7 @@
 // group returned 200 and silently dropped the field.
 
 import { spawnSync } from "node:child_process";
+import { url } from "../src/routes-manifest";
 import { describe, expect, it } from "vitest";
 import { Effect, Schema } from "effect";
 import type { IssueShape } from "../src/shapes";
@@ -38,7 +39,7 @@ const patch = async (body: Record<string, unknown>) => {
   const boardId = h.db.boards[0]!["id"] as string;
   seedBoardMember(h, boardId, CANON, "contributor");
   const issue = await createIssue(h, { title: "Original" });
-  const res = await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", body), {});
+  const res = await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", body), {});
   const json = (await res.json()) as { reason?: string; issue?: IssueShape };
   return { status: res.status, reason: json.reason, issue: json.issue, h, id: issue.id };
 };

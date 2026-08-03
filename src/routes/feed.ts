@@ -10,6 +10,7 @@
 // with issue_title null.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Data, Effect, Exit, Option } from "effect";
 import { Db, DbError, bootstrap } from "../effects";
@@ -135,7 +136,7 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
   ) => Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
 
   // ── GET /boards/:slug/activity — newest-first feed with keyset ──────────
-  feed.get("/boards/:slug/activity", async (c) => {
+  feed.get(path("feed.board.activity"), async (c) => {
     const type = c.req.query("type");
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
@@ -210,7 +211,7 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /issues/:id/activity — one issue's recent audit rows ────────────
-  feed.get("/issues/:id/activity", async (c) => {
+  feed.get(path("feed.issue.activity"), async (c) => {
     const limitRaw = c.req.query("limit");
 
     const program = Effect.gen(function* () {
@@ -257,7 +258,7 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /boards/:slug/stream — SSE, proxied from the board's DO ─────────
-  feed.get("/boards/:slug/stream", async (c) => {
+  feed.get(path("feed.board.stream"), async (c) => {
     const exit = await runExit(
       c,
       resolveBoardScope(

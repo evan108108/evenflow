@@ -42,6 +42,7 @@
 // survives as an operator.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Data, Effect, Exit, Option, Schema } from "effect";
 import { Db, DbError, bootstrap } from "../effects";
@@ -165,7 +166,7 @@ export const makeSearchRouter = (layerFor: LayerFor = bootstrap) => {
   // search text routinely contains `/`, `#`, `?` and `&`, and a body keeps
   // the terms out of access logs and browser history. `parseRouteBody`
   // per Boundary Discipline (EFB-54).
-  search.post("/boards/:slug/search", async (c) => {
+  search.post(path("search.board"), async (c) => {
     const program = Effect.gen(function* () {
       // FIRST. Nothing below reads the FTS tables until this returns.
       const { board } = yield* resolveBoardScope(

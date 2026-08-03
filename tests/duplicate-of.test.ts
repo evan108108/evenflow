@@ -9,6 +9,7 @@
 // it works from the API response.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import type { IssueShape } from "../src/shapes";
 import {
   CALLER,
@@ -35,8 +36,8 @@ afterEach(() => {
 /** Fire the endpoint and hand back the raw response, for status assertions. */
 const markRaw = (h: Harness, issueId: string, target: string | null) =>
   h.app.request(
-    `/api/v0/issues/${issueId}/duplicate-of`,
-    jsonReq("POST", { duplicate_of_issue_id: target }),
+    url("issue.update", { id: issueId }),
+    jsonReq("PATCH", { duplicate_of_issue_id: target }),
     {},
   );
 
@@ -224,8 +225,8 @@ describe("POST /api/v0/issues/:id/duplicate-of", () => {
       const dupe = await createIssue(h, { title: "Filed twice" });
 
       const res = await h.app.request(
-        `/api/v0/issues/${dupe.id}/duplicate-of`,
-        jsonReq("POST", { duplicate_of_issue_id: 7 }),
+        url("issue.update", { id: dupe.id }),
+        jsonReq("PATCH", { duplicate_of_issue_id: 7 }),
         {},
       );
 
@@ -245,8 +246,8 @@ describe("POST /api/v0/issues/:id/duplicate-of", () => {
       const dupe = await createIssue(h, { title: "Filed twice" });
 
       const res = await h.app.request(
-        `/api/v0/issues/${dupe.id}/duplicate-of`,
-        jsonReq("POST", { duplicate_of_issue_id: null, titl: "typo" }),
+        url("issue.update", { id: dupe.id }),
+        jsonReq("PATCH", { duplicate_of_issue_id: null, titl: "typo" }),
         {},
       );
 
@@ -254,21 +255,28 @@ describe("POST /api/v0/issues/:id/duplicate-of", () => {
       expect(await reasonOf(res)).toBe("titl-unknown");
     });
 
-    it("400s a missing duplicate_of_issue_id, naming the field", async () => {
-      // `null` unmarks and absent is malformed — the two are different
-      // requests, so an empty body must not be read as "clear the pointer".
+    it("400s an empty patch rather than reading absence as a clear", async () => {
+      // `null` unmarks and absent leaves the pointer alone — the two are
+      // different requests, so an empty body must not be read as "clear the
+      // pointer". EFB-98 folded this into PATCH /issue/:id, which changes only
+      // WHICH refusal it earns: the dedicated route required the field and
+      // answered `duplicate_of_issue_id`, while a PATCH carrying no field at
+      // all is an `empty-patch`. The distinction this test exists to protect
+      // — that absent is not a clear — is unchanged, and the clear itself is
+      // covered by "clears the pointer without moving the issue back out of
+      // Done" above.
       const h = makeHarness();
       await createBoard(h);
       const dupe = await createIssue(h, { title: "Filed twice" });
 
       const res = await h.app.request(
-        `/api/v0/issues/${dupe.id}/duplicate-of`,
-        jsonReq("POST", {}),
+        url("issue.update", { id: dupe.id }),
+        jsonReq("PATCH", {}),
         {},
       );
 
       expect(res.status).toBe(400);
-      expect(await reasonOf(res)).toBe("duplicate_of_issue_id");
+      expect(await reasonOf(res)).toBe("empty-patch");
     });
 
     it("400s an empty-string target as a shape error, not a lookup miss", async () => {
@@ -292,9 +300,9 @@ describe("POST /api/v0/issues/:id/duplicate-of", () => {
       const dupe = await createIssue(h, { title: "Filed twice" });
 
       const res = await h.app.request(
-        `/api/v0/issues/${dupe.id}/duplicate-of`,
+        url("issue.update", { id: dupe.id }),
         {
-          method: "POST",
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ duplicate_of_issue_id: original.id }),
         },
@@ -334,8 +342,7 @@ describe("move-to-board and the duplicate pointer", () => {
 
     const target = h.db.boards.find((b) => b["slug"] === "other");
     const res = await h.app.request(
-      `/api/v0/issues/${dupe.id}/move-to-board`,
-      jsonReq("POST", { target_board_id: target?.["id"] }),
+      url("issue.board.set", { id: dupe.id }), jsonReq("PUT", { target_board_id: target?.["id"] }),
       {},
     );
     expect(res.status).toBe(200);
@@ -353,7 +360,7 @@ describe("move-to-board and the duplicate pointer", () => {
 describe("tide excludes duplicates", () => {
   const createSprint = async (h: Harness) => {
     const res = await h.app.request(
-      "/api/v0/boards/kb/sprints",
+      url("sprint.list", { slug: "kb" }),
       jsonReq("POST", { name: "Sprint 1" }),
       {},
     );
@@ -362,14 +369,14 @@ describe("tide excludes duplicates", () => {
   };
   const addIssue = async (h: Harness, sprintId: string, issueId: string) => {
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprintId}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprintId }),
       jsonReq("POST", { issue_id: issueId }),
       {},
     );
     expect(res.status).toBe(200);
   };
   const patchIssue = async (h: Harness, issueId: string, body: Record<string, unknown>) => {
-    const res = await h.app.request(`/api/v0/issues/${issueId}`, jsonReq("PATCH", body), {});
+    const res = await h.app.request(url("issue.get", { id: issueId }), jsonReq("PATCH", body), {});
     expect(res.status).toBe(200);
   };
   const getTide = async (h: Harness, path: string) => {
@@ -390,13 +397,13 @@ describe("tide excludes duplicates", () => {
     await patchIssue(h, dupe.id, { estimate: 3 });
 
     // Day 0: both count — 8 points committed.
-    const before = await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide?days=1`);
+    const before = await getTide(h, `${url("sprint.tide", { slug: "kb", id: sprint.id })}?days=1`);
     expect(before.days.map((d) => d.committed_pts)).toEqual([8]);
 
     vi.setSystemTime(at(1));
     await mark(h, dupe.id, keeper.id);
 
-    const after = await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide?days=2`);
+    const after = await getTide(h, `${url("sprint.tide", { slug: "kb", id: sprint.id })}?days=2`);
     // Day 0 is now 5, not 8: the duplicate's 3 points leave history too. It
     // also does NOT appear as 3 done_pts on day 1, which is the failure this
     // guards — a duplicate "delivering" points nobody worked for.
@@ -417,7 +424,7 @@ describe("tide excludes duplicates", () => {
     await mark(h, dupe.id, keeper.id);
     await mark(h, dupe.id, null);
 
-    const body = await getTide(h, `/api/v0/boards/kb/sprints/${sprint.id}/tide?days=1`);
+    const body = await getTide(h, `${url("sprint.tide", { slug: "kb", id: sprint.id })}?days=1`);
     // Back in scope — and now genuinely done, because un-marking left the
     // Done transition standing.
     expect(body.days.map((d) => d.committed_pts)).toEqual([8]);
@@ -432,12 +439,12 @@ describe("tide excludes duplicates", () => {
     await patchIssue(h, keeper.id, { estimate: 5 });
     await patchIssue(h, dupe.id, { estimate: 3 });
 
-    const before = await getTide(h, "/api/v0/boards/kb/tide?days=1");
+    const before = await getTide(h, `${url("board.tide", { slug: "kb" })}?days=1`);
     expect(before.days.map((d) => d.committed_pts)).toEqual([8]);
 
     await mark(h, dupe.id, keeper.id);
 
-    const after = await getTide(h, "/api/v0/boards/kb/tide?days=1");
+    const after = await getTide(h, `${url("board.tide", { slug: "kb" })}?days=1`);
     expect(after.days.map((d) => d.committed_pts)).toEqual([5]);
     expect(after.days.map((d) => d.done_pts)).toEqual([0]);
   });

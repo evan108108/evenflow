@@ -11,6 +11,7 @@
 // key-token guard is explicit below.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Db, DbError, bootstrap } from "../effects";
@@ -82,7 +83,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
       : Effect.void;
 
   // ── POST /keys — mint; the plaintext appears here and never again ───────
-  keys.post("/keys", async (c) => {
+  keys.post(path("key.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       yield* rejectKeyCallers(c);
@@ -124,7 +125,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /keys — the caller's keys, newest first, metadata only ──────────
-  keys.get("/keys", async (c) => {
+  keys.get(path("key.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       yield* rejectKeyCallers(c);
@@ -139,7 +140,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /keys/:id — soft revoke ──────────────────────────────────────
-  keys.delete("/keys/:id", async (c) => {
+  keys.delete(path("key.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       yield* rejectKeyCallers(c);

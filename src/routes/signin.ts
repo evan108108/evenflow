@@ -24,6 +24,7 @@
 // their own key, and only their own key decrypts.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Db, DbError, bootstrap, hashToken } from "../effects";
@@ -146,7 +147,7 @@ export const makeSigninRouter = (layerFor: LayerFor = bootstrap) => {
   const signin = new Hono<AppHonoEnv>();
 
   // ── GET /signin/nostr/challenge?pubkey=<hex64> ──────────────────────────
-  signin.get("/signin/nostr/challenge", async (c) => {
+  signin.get(path("signin.nostr.challenge"), async (c) => {
     const signingKey = c.env.JWT_SIGNING_KEY;
     if (signingKey === undefined || signingKey === "") {
       return c.json({ error: "internal", reason: "no-signing-key" }, 500);
@@ -165,7 +166,7 @@ export const makeSigninRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /signin/nostr — NIP-98 header OR {signed_event, challenge} ─────
-  signin.post("/signin/nostr", async (c) => {
+  signin.post(path("signin.nostr.verify"), async (c) => {
     const signingKey = c.env.JWT_SIGNING_KEY;
     if (signingKey === undefined || signingKey === "") {
       return c.json({ error: "internal", reason: "no-signing-key" }, 500);

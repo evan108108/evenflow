@@ -3,6 +3,7 @@
 // rate limiting, and the email send.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   CALLER,
   bearer,
@@ -29,7 +30,7 @@ const createInvite = async (
   token?: string,
 ): Promise<{ status: number; body: InviteCreateBody }> => {
   const res = await h.app.request(
-    "/api/v0/invites",
+    url("invite.create"),
     jsonReq(
       "POST",
       { org_slug: "tester", board_slug: "kb", role: "contributor", ...overrides },
@@ -87,7 +88,7 @@ describe("GET /api/v0/invites/:code", () => {
     h.db.profiles.push({ pubkey: CALLER, name: "tester", display_name: "The Tester", picture: null });
     const { body } = await createInvite(h);
 
-    const res = await h.app.request(`/api/v0/invites/${body.invite.code}`, {}, {});
+    const res = await h.app.request(url("invite.get", { code: body.invite.code }), {}, {});
     expect(res.status).toBe(200);
     const preview = (await res.json()) as Record<string, unknown>;
     expect(preview["valid"]).toBe(true);
@@ -100,11 +101,11 @@ describe("GET /api/v0/invites/:code", () => {
   it("404s unknown codes and flags expired ones", async () => {
     const h = makeHarness();
     await createBoard(h);
-    expect((await h.app.request("/api/v0/invites/inv-nope1234", {}, {})).status).toBe(404);
+    expect((await h.app.request(url("invite.get", { code: "inv-nope1234" }), {}, {})).status).toBe(404);
 
     const { body } = await createInvite(h, { expires_hours: 1 });
     vi.setSystemTime(1_000 + 2 * 60 * 60 * 1000);
-    const res = await h.app.request(`/api/v0/invites/${body.invite.code}`, {}, {});
+    const res = await h.app.request(url("invite.get", { code: body.invite.code }), {}, {});
     const preview = (await res.json()) as Record<string, unknown>;
     expect(preview["valid"]).toBe(false);
     expect(preview["reason"]).toBe("expired");
@@ -118,7 +119,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     const { body } = await createInvite(h);
 
     const res = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("guest")),
       {},
     );
@@ -135,7 +136,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     expect(row["used_by"]).toBe(pubkeyFor("guest"));
 
     // The guest can now read the private board.
-    const read = await h.app.request("/api/v0/boards/kb", { headers: bearerFor(tokenFor("guest")) }, {});
+    const read = await h.app.request(url("board.get", { slug: "kb" }), { headers: bearerFor(tokenFor("guest")) }, {});
     expect(read.status).toBe(200);
   });
 
@@ -144,13 +145,13 @@ describe("POST /api/v0/invites/:code/accept", () => {
     await createBoard(h);
     const { body } = await createInvite(h);
     const first = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("first")),
       {},
     );
     expect(first.status).toBe(200);
     const second = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("second")),
       {},
     );
@@ -164,7 +165,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     const { body } = await createInvite(h, { single_use: false });
     for (const who of ["a", "b"]) {
       const res = await h.app.request(
-        `/api/v0/invites/${body.invite.code}/accept`,
+        url("invite.accept", { code: body.invite.code }),
         jsonReq("POST", {}, tokenFor(who)),
         {},
       );
@@ -177,7 +178,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     await createBoard(h);
     const { body } = await createInvite(h, { board_slug: undefined, role: "member" });
     const res = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("joiner")),
       {},
     );
@@ -197,7 +198,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     const expired = await createInvite(h, { expires_hours: 1 });
     vi.setSystemTime(1_000 + 2 * 60 * 60 * 1000);
     const late = await h.app.request(
-      `/api/v0/invites/${expired.body.invite.code}/accept`,
+      url("invite.accept", { code: expired.body.invite.code }),
       jsonReq("POST", {}, tokenFor("late")),
       {},
     );
@@ -205,12 +206,12 @@ describe("POST /api/v0/invites/:code/accept", () => {
 
     const declined = await createInvite(h);
     await h.app.request(
-      `/api/v0/invites/${declined.body.invite.code}/decline`,
+      url("invite.decline", { code: declined.body.invite.code }),
       jsonReq("POST", {}, tokenFor("no")),
       {},
     );
     const afterDecline = await h.app.request(
-      `/api/v0/invites/${declined.body.invite.code}/accept`,
+      url("invite.accept", { code: declined.body.invite.code }),
       jsonReq("POST", {}, tokenFor("no")),
       {},
     );
@@ -219,20 +220,20 @@ describe("POST /api/v0/invites/:code/accept", () => {
 
     const revoked = await createInvite(h);
     const del = await h.app.request(
-      `/api/v0/invites/${revoked.body.invite.id}`,
+      url("invite.get", { code: revoked.body.invite.id }),
       { method: "DELETE", headers: bearer },
       {},
     );
     expect(del.status).toBe(200);
     const afterRevoke = await h.app.request(
-      `/api/v0/invites/${revoked.body.invite.code}/accept`,
+      url("invite.accept", { code: revoked.body.invite.code }),
       jsonReq("POST", {}, tokenFor("later")),
       {},
     );
     expect(afterRevoke.status).toBe(409);
 
     const anon = await h.app.request(
-      `/api/v0/invites/${revoked.body.invite.code}/accept`,
+      url("invite.accept", { code: revoked.body.invite.code }),
       { method: "POST" },
       {},
     );
@@ -249,7 +250,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     expect(body.invite.bind_to_pubkey).toBe(pubHex);
     // A random other identity (test harness maps token→pubkey) can't claim.
     const wrong = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("guest")),
       {},
     );
@@ -257,7 +258,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     // Rejects malformed bind_to_pubkey at creation time.
     expect(targetPub).not.toBe(pubHex);
     const bad = await h.app.request(
-      "/api/v0/invites",
+      url("invite.create"),
       jsonReq("POST", { org_slug: "evan", board_slug: "kb", role: "contributor", bind_to_pubkey: "not-hex" }),
       {},
     );
@@ -273,13 +274,13 @@ describe("POST /api/v0/invites/:code/accept", () => {
     });
     // tokenFor("wrong") carries login wrong@example.com.
     const wrong = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("wrong")),
       {},
     );
     expect(wrong.status).toBe(403);
     const right = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("right")),
       {},
     );
@@ -292,7 +293,7 @@ describe("POST /api/v0/invites/:code/accept", () => {
     const { body } = await createInvite(h);
     h.fourA.failPublishes = true;
     const res = await h.app.request(
-      `/api/v0/invites/${body.invite.code}/accept`,
+      url("invite.accept", { code: body.invite.code }),
       jsonReq("POST", {}, tokenFor("guest")),
       {},
     );
@@ -309,7 +310,7 @@ describe("invite email + pending lists", () => {
     h.db.profiles.push({ pubkey: CALLER, name: "tester", display_name: "The Tester", picture: null });
     const { body } = await createInvite(h, { invited_email: "friend@example.com" });
 
-    const res = await h.app.request(`/api/v0/invites/${body.invite.id}/email`, jsonReq("POST", {}), {});
+    const res = await h.app.request(url("invite.email.send", { id: body.invite.id }), jsonReq("POST", {}), {});
     expect(res.status).toBe(200);
     expect(h.email.sent).toHaveLength(1);
     expect(h.email.sent[0]!.to).toBe("friend@example.com");
@@ -321,7 +322,7 @@ describe("invite email + pending lists", () => {
     const h = makeHarness();
     await createBoard(h);
     const { body } = await createInvite(h);
-    const res = await h.app.request(`/api/v0/invites/${body.invite.id}/email`, jsonReq("POST", {}), {});
+    const res = await h.app.request(url("invite.email.send", { id: body.invite.id }), jsonReq("POST", {}), {});
     expect(res.status).toBe(400);
   });
 
@@ -331,12 +332,12 @@ describe("invite email + pending lists", () => {
     const a = await createInvite(h);
     const b = await createInvite(h);
 
-    const list = await h.app.request("/api/v0/orgs/tester/boards/kb/invites", { headers: bearer }, {});
+    const list = await h.app.request(url("invite.orgBoard.list", { org_slug: "tester", slug: "kb" }), { headers: bearer }, {});
     expect(list.status).toBe(200);
     expect(((await list.json()) as { invites: unknown[] }).invites).toHaveLength(2);
 
-    await h.app.request(`/api/v0/invites/${a.body.invite.id}`, { method: "DELETE", headers: bearer }, {});
-    const after = await h.app.request("/api/v0/orgs/tester/boards/kb/invites", { headers: bearer }, {});
+    await h.app.request(url("invite.get", { code: a.body.invite.id }), { method: "DELETE", headers: bearer }, {});
+    const after = await h.app.request(url("invite.orgBoard.list", { org_slug: "tester", slug: "kb" }), { headers: bearer }, {});
     const remaining = (await after.json()) as { invites: Array<{ id: string }> };
     expect(remaining.invites.map((i) => i.id)).toEqual([b.body.invite.id]);
   });

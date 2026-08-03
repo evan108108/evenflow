@@ -12,6 +12,7 @@
 // "contributor".
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { parseRouteBody } from "../lib/route-body";
@@ -176,7 +177,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── POST /issues/:id/comments ───────────────────────────────────────────
-  comments.post("/issues/:id/comments", async (c) => {
+  comments.post(path("comment.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -271,7 +272,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /issues/:id/comments — chronological with forward keyset ────────
-  comments.get("/issues/:id/comments", async (c) => {
+  comments.get(path("comment.list"), async (c) => {
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
     const program = Effect.gen(function* () {
@@ -323,7 +324,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /comments/:id — author-only, atop the contributor floor ──────
-  comments.delete("/comments/:id", async (c) => {
+  comments.delete(path("comment.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);

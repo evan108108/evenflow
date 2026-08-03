@@ -16,6 +16,7 @@
 // delete, and set-cover require "contributor".
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import {
@@ -327,7 +328,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── POST /boards/:slug/issues/:issue_ref/attachments — upload ───────────
-  attachments.post("/boards/:slug/issues/:issue_ref/attachments", async (c) => {
+  attachments.post(path("attachment.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -452,7 +453,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /boards/:slug/issues/:issue_ref/attachments — list ──────────────
   // Anonymous works when the board is public (viewer floor).
-  attachments.get("/boards/:slug/issues/:issue_ref/attachments", async (c) => {
+  attachments.get(path("attachment.list"), async (c) => {
     const program = Effect.gen(function* () {
       const { issue } = yield* fetchScopedIssue(c, callerPubkeyOrNull(c.get("claims")), "viewer");
       const attachments_ = yield* listLiveAttachments(issue.id, true);
@@ -462,7 +463,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /attachments/:id — {is_cover} ─────────────────────────────────
-  attachments.patch("/attachments/:id", async (c) => {
+  attachments.patch(path("attachment.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -512,7 +513,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /attachments/:id — soft delete; the blob stays on Blossom ────
-  attachments.delete("/attachments/:id", async (c) => {
+  attachments.delete(path("attachment.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { attachment, issue } = yield* fetchAttachment(

@@ -6,6 +6,7 @@
 // so GET never 404s and PATCH upserts.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Clock, Effect, Exit } from "effect";
 import { AuditLog, Db, bootstrap } from "../effects";
@@ -67,7 +68,7 @@ export const makeNotificationsRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── GET /notifications/config ───────────────────────────────────────────
-  notifications.get("/notifications/config", async (c) => {
+  notifications.get(path("notifications.config.get"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const config = yield* fetchConfig(callerPubkey(claims));
@@ -77,7 +78,7 @@ export const makeNotificationsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /notifications/config — partial update, upserts ───────────────
-  notifications.patch("/notifications/config", async (c) => {
+  notifications.patch(path("notifications.config.set"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);

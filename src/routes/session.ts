@@ -8,6 +8,7 @@
 // the client can populate the org switcher without a second round-trip.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { Clock, Effect, Exit } from "effect";
 import { Db, bootstrap, hashToken } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -20,7 +21,7 @@ const SESSION_PUBKEY_RE = /^[0-9a-f]{64}$/i;
 export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
   const session = new Hono<AppHonoEnv>();
 
-  session.post("/session/bootstrap", async (c) => {
+  session.post(path("session.bootstrap"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -71,7 +72,7 @@ export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
   // generates one and registers the pub here. Private-board key grants are
   // issued to these session pubs. Keyed by jwt_hash (one key per session,
   // re-registering replaces); expiry rides the JWT's own exp.
-  session.post("/session/register-key", async (c) => {
+  session.post(path("session.key.register"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";

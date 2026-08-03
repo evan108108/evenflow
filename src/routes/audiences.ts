@@ -14,6 +14,7 @@
 // member stand-in string can't fetch another device's ciphertext.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { Effect, Exit } from "effect";
 import { Db, bootstrap, hashToken } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -53,7 +54,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
       return row?.session_pubkey ?? null;
     });
 
-  audiences.get("/boards/:slug/key-grant", async (c) => {
+  audiences.get(path("audience.keyGrant.get"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -78,7 +79,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  audiences.post("/boards/:slug/request-regrant", async (c) => {
+  audiences.post(path("audience.regrantRequest.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);

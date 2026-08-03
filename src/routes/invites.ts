@@ -10,6 +10,7 @@
 // code the caller already possesses — the code IS the capability.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { Clock, Effect, Exit } from "effect";
 import { AuditLog, Db, Email, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -105,7 +106,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
     });
 
   // ── POST /invites — create ──────────────────────────────────────────────
-  invites.post("/invites", async (c) => {
+  invites.post(path("invite.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -217,7 +218,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /invites/:code — anonymous preview resolve ──────────────────────
-  invites.get("/invites/:code", async (c) => {
+  invites.get(path("invite.get"), async (c) => {
     const program = Effect.gen(function* () {
       const db = yield* Db;
       const row = yield* db.queryFirst<Record<string, unknown>>(
@@ -280,7 +281,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /invites/:code/accept ──────────────────────────────────────────
-  invites.post("/invites/:code/accept", async (c) => {
+  invites.post(path("invite.accept"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -399,7 +400,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /invites/:code/decline ─────────────────────────────────────────
-  invites.post("/invites/:code/decline", async (c) => {
+  invites.post(path("invite.decline"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const db = yield* Db;
@@ -427,7 +428,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /invites/:id/email — send the invite by mail ───────────────────
-  invites.post("/invites/:id/email", async (c) => {
+  invites.post(path("invite.email.send"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -483,7 +484,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /invites/:id — revoke ────────────────────────────────────────
-  invites.delete("/invites/:id", async (c) => {
+  invites.delete(path("invite.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { invite } = yield* loadInviteForAdmin({ id: c.req.param("id") }, callerPubkey(claims));
@@ -517,10 +518,14 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       return rows.map(parseInviteRow);
     });
 
-  invites.get("/orgs/:slug/invites", async (c) => {
+  invites.get(path("invite.org.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("slug"), callerPubkey(claims), "admin");
+      const { org } = yield* authorizeOrgAccess(
+        c.req.param("org_slug"),
+        callerPubkey(claims),
+        "admin",
+      );
       return { invites: yield* pendingInvites(org.id, null) };
     });
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
@@ -528,7 +533,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  invites.get("/orgs/:org_slug/boards/:slug/invites", async (c) => {
+  invites.get(path("invite.orgBoard.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board, org } = yield* resolveBoardScope(

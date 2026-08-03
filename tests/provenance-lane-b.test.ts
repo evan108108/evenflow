@@ -34,6 +34,7 @@
 // every read site, which means every read site can lie.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   createIssue,
   createPublicBoard,
@@ -167,7 +168,7 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to: "In Progress" }),
       {},
     );
@@ -200,7 +201,7 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "hello" }),
       {},
     );
@@ -225,14 +226,14 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     const created = await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "delete me" }),
       {},
     );
     const { comment } = (await created.json()) as { comment: { id: string } };
     await settle();
 
-    await h.app.request(`/api/v0/comments/${comment.id}`, jsonReq("DELETE", {}), {});
+    await h.app.request(url("comment.delete", { id: comment.id }), jsonReq("DELETE", {}), {});
     await settle();
 
     const tombstone = plaintextEvents(h).find(

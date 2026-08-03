@@ -98,11 +98,6 @@ const check = (entries) => {
     if (entry.stateAction !== true) {
       for (const segment of segments) {
         if (isParam(segment)) continue;
-        // A segment ending in "-of" names a RELATION, not an action:
-        // "duplicate-of" is the noun "the thing this duplicates", addressable
-        // with PUT and DELETE. Without this carve-out the verb rule reads the
-        // "duplicate" prefix and rejects a correctly-shaped sub-resource.
-        if (segment.endsWith("-of")) continue;
         const verb = CRUD_VERBS.find((v) => segment === v || segment.startsWith(`${v}-`));
         if (verb !== undefined) {
           fail(

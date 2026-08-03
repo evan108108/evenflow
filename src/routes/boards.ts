@@ -16,6 +16,7 @@
 // public boards; every mutation calls requireCaller first.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { ImmutableField, parseRouteBody, requireAnyOf } from "../lib/route-body";
@@ -256,7 +257,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   const boards = new Hono<AppHonoEnv>();
 
   // ── POST /boards — create (in :org_slug when present, else personal) ────
-  boards.post("/boards", async (c) => {
+  boards.post(path("board.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -389,7 +390,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /boards — every board the caller can see, newest-updated first ──
   // (Org-scoped listing lives on the orgs router: GET /orgs/:slug/boards.)
-  boards.get("/boards", async (c) => {
+  boards.get(path("board.list"), async (c) => {
     const limitRaw = c.req.query("limit");
     const after = c.req.query("after");
     const includeArchived = c.req.query("include_archived") === "1";
@@ -467,7 +468,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /boards/:slug — fetch one visible board ─────────────────────────
-  boards.get("/boards/:slug", async (c) => {
+  boards.get(path("board.get"), async (c) => {
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
       const { board, org, role } = yield* resolveBoardScope(
@@ -490,7 +491,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   // ~X pts every N days" without re-deriving. Works whether the board uses
   // sprints or not — completed_at_ms is stamped by the shared transition
   // handler regardless of sprint state.
-  boards.get("/boards/:slug/velocity", async (c) => {
+  boards.get(path("board.velocity"), async (c) => {
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
       const { board } = yield* resolveBoardScope(
@@ -532,7 +533,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /boards/:slug — partial update of mutable fields (admin) ──────
-  boards.patch("/boards/:slug", async (c) => {
+  boards.patch(path("board.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       // Immutable-field and empty-patch rejection are both PatchBoardBody's
@@ -779,13 +780,15 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
     return c.json(exit.value);
   };
-  boards.post("/boards/:slug/archive", setArchived(true));
-  boards.post("/boards/:slug/unarchive", setArchived(false));
+  // EFB-98: archiving is a state, so it gets the CRUD pair on one path rather
+  // than a second verb URL. POST sets it, DELETE clears it; `unarchive` is gone.
+  boards.post(path("board.archive.set"), setArchived(true));
+  boards.delete(path("board.archive.clear"), setArchived(false));
 
   // ── DELETE /boards/:slug — remove a board (admin) ───────────────────────
   // Deliberately does NOT cascade to issueCache (soft FKs): issues orphan;
   // a v2 cleanup path reaps them.
-  boards.delete("/boards/:slug", async (c) => {
+  boards.delete(path("board.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board: current } = yield* resolveBoardScope(

@@ -7,6 +7,7 @@
 // hide paths), and category-driven completed_at_ms.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   MAX_COLUMNS,
   coerceStringColumns,
@@ -134,7 +135,7 @@ describe("columnArrayProblem", () => {
 
 const createBoardWith = async (h: Harness, columns?: unknown, slug = "kb") => {
   const res = await h.app.request(
-    "/api/v0/boards",
+    url("board.create"),
     jsonReq("POST", { slug, title: "Board", ...(columns === undefined ? {} : { columns }) }),
     {},
   );
@@ -143,10 +144,10 @@ const createBoardWith = async (h: Harness, columns?: unknown, slug = "kb") => {
 };
 
 const patchBoard = (h: Harness, body: unknown, slug = "kb") =>
-  h.app.request(`/api/v0/boards/${slug}`, jsonReq("PATCH", body), {});
+  h.app.request(url("board.get", { slug: slug }), jsonReq("PATCH", body), {});
 
 const getIssue = async (h: Harness, id: string): Promise<IssueShape> => {
-  const res = await h.app.request(`/api/v0/issues/${id}`, { headers: jsonReq("GET").headers }, {});
+  const res = await h.app.request(url("issue.get", { id: id }), { headers: jsonReq("GET").headers }, {});
   expect(res.status).toBe(200);
   return ((await res.json()) as { issue: IssueShape }).issue;
 };
@@ -302,7 +303,7 @@ describe("issue types over the wire", () => {
       expect(issue.type).toBe(type);
     }
     const res = await h.app.request(
-      "/api/v0/boards/kb/issues",
+      url("issue.create", { slug: "kb" }),
       jsonReq("POST", { title: "Nope", type: "epic" }),
       {},
     );
@@ -315,7 +316,7 @@ describe("issue types over the wire", () => {
     await createBoardWith(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}`,
+      url("issue.get", { id: issue.id }),
       jsonReq("PATCH", { type: "bug" }),
       {},
     );
@@ -336,7 +337,7 @@ describe("transition addressing", () => {
     const { board, issue } = await setup(h);
     const done = board.columns.find((c) => c.category === "done")!;
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { column_id: done.id }),
       {},
     );
@@ -351,7 +352,7 @@ describe("transition addressing", () => {
     const { board, issue } = await setup(h);
     const review = board.columns.find((c) => c.name === "In Review")!;
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { column_id: review.id, to: "Done" }),
       {},
     );
@@ -363,7 +364,7 @@ describe("transition addressing", () => {
     const h = makeHarness();
     const { issue } = await setup(h);
     const viaTo = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to: "In Progress" }),
       {},
     );
@@ -371,7 +372,7 @@ describe("transition addressing", () => {
     expect(((await viaTo.json()) as { issue: IssueShape }).issue.status).toBe("In Progress");
 
     const viaToStatus = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to_status: "In Review" }),
       {},
     );
@@ -383,13 +384,13 @@ describe("transition addressing", () => {
     const h = makeHarness();
     const { issue } = await setup(h);
     const badId = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { column_id: "ghost" }),
       {},
     );
     expect(badId.status).toBe(400);
     const badName = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to: "Ghost" }),
       {},
     );
@@ -406,7 +407,7 @@ describe("transition addressing", () => {
     expect(issue.completed_at_ms).toBeNull();
 
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { column_id: "shipped" }),
       {},
     );
@@ -416,7 +417,7 @@ describe("transition addressing", () => {
 
     // And leaving the done-category column clears it again.
     const back = await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { column_id: "open" }),
       {},
     );

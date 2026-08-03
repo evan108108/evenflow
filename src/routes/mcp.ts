@@ -18,6 +18,7 @@
 // surfaces as -32001.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { requireAuth } from "../middleware/requireAuth";
 import { bootstrap } from "../effects";
@@ -434,7 +435,7 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
 
   const mcp = new Hono<AppHonoEnv>();
 
-  mcp.post("/mcp", async (c) => {
+  mcp.post(path("mcp.post"), async (c) => {
     let message: unknown;
     try {
       message = await c.req.json();
@@ -520,8 +521,8 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // The transport is POST-only here: no server-initiated stream is offered.
-  mcp.get("/mcp", (c) => c.json({ error: "method-not-allowed" }, 405));
-  mcp.delete("/mcp", (c) => c.json({ error: "method-not-allowed" }, 405));
+  mcp.get(path("mcp.get"), (c) => c.json({ error: "method-not-allowed" }, 405));
+  mcp.delete(path("mcp.delete"), (c) => c.json({ error: "method-not-allowed" }, 405));
 
   return mcp;
 };

@@ -17,6 +17,7 @@
 // first, then test.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Clock, Effect, Exit } from "effect";
 import {
@@ -185,7 +186,7 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── GET /server-pubkey — public, static, cacheable ──────────────────────
-  storage.get("/server-pubkey", (c) => {
+  storage.get(path("storage.serverPubkey"), (c) => {
     const keys = deriveServerStorageKeys(c.env.EVENFLOW_STORAGE_SECRET);
     if (keys === null) {
       return c.json({ error: "not-configured", reason: "storage-secret" }, 503);
@@ -195,10 +196,10 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /orgs/:handle/storage — current config, redacted ────────────────
-  storage.get("/orgs/:handle/storage", async (c) => {
+  storage.get(path("storage.get"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("handle"), callerPubkey(claims), "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), callerPubkey(claims), "owner");
       const cfg = yield* getOrgStorageConfig(org.id);
       return { config: redactedStorageView(cfg) };
     });
@@ -206,11 +207,11 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PUT /orgs/:handle/storage — upsert ──────────────────────────────────
-  storage.put("/orgs/:handle/storage", async (c) => {
+  storage.put(path("storage.set"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
-      const { org } = yield* authorizeOrgAccess(c.req.param("handle"), pubkey, "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), pubkey, "owner");
       const body = yield* readJsonBody(c);
       const upsert = yield* validateUpsert(body);
 
@@ -265,10 +266,10 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /orgs/:handle/storage/test — probe the SAVED config ────────────
-  storage.post("/orgs/:handle/storage/test", async (c) => {
+  storage.post(path("storage.test"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("handle"), callerPubkey(claims), "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), callerPubkey(claims), "owner");
       const cfg = yield* getOrgStorageConfig(org.id);
       const audit = yield* AuditLog;
 
@@ -335,10 +336,10 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /orgs/:handle/storage — back to default ──────────────────────
-  storage.delete("/orgs/:handle/storage", async (c) => {
+  storage.delete(path("storage.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("handle"), callerPubkey(claims), "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), callerPubkey(claims), "owner");
       const db = yield* Db;
       const audit = yield* AuditLog;
       yield* db.execute("DELETE FROM orgStorageConfig WHERE org_id = ?", [org.id]);

@@ -14,6 +14,7 @@
 // public boards), every mutation requires a caller at "contributor".
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
@@ -251,7 +252,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── GET /boards/:slug/sprints — every sprint on the board ───────────────
-  sprints.get("/boards/:slug/sprints", async (c) => {
+  sprints.get(path("sprint.list"), async (c) => {
     const program = Effect.gen(function* () {
       const { board } = yield* boardScope(c, callerPubkeyOrNull(c.get("claims")), "viewer");
       const db = yield* Db;
@@ -294,7 +295,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /boards/:slug/sprints — create, always planning-status ─────────
-  sprints.post("/boards/:slug/sprints", async (c) => {
+  sprints.post(path("sprint.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
@@ -351,7 +352,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /boards/:slug/sprints/:id — rename, set goal ──────────────────
-  sprints.patch("/boards/:slug/sprints/:id", async (c) => {
+  sprints.patch(path("sprint.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
@@ -410,7 +411,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   // moves to active (statusChangeCache row + board event per issue, same
   // vocabulary as the per-issue container endpoints), then the sprint
   // stamps started_at_ms and turns active.
-  sprints.post("/boards/:slug/sprints/:id/start", async (c) => {
+  sprints.post(path("sprint.start"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -584,7 +585,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   // "was_completed_in_sprint = true" — so the sprint archive can list them
   // forever. Points_completed / points_carried get snapshotted on the
   // sprint row here so the archive endpoint is a cheap read.
-  sprints.post("/boards/:slug/sprints/:id/complete", async (c) => {
+  sprints.post(path("sprint.complete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
@@ -742,7 +743,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   // trail), grouped by outcome. Works for any sprint status; a
   // planning/active sprint shows its members with removed_at_ms=null all
   // in the "open" bucket, since they haven't been completed or carried yet.
-  sprints.get("/boards/:slug/sprints/:id/archive", async (c) => {
+  sprints.get(path("sprint.archivedIssues.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = c.get("claims");
       const pubkey = callerPubkeyOrNull(claims);
@@ -847,7 +848,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       return parseBoardRow(row);
     });
 
-  sprints.get("/boards/:slug/sprints/:id/tide", async (c) => {
+  sprints.get(path("sprint.tide"), async (c) => {
     const program = Effect.gen(function* () {
       const { board } = yield* boardScope(c, callerPubkeyOrNull(c.get("claims")), "viewer");
       const sprint = yield* fetchSprint(board.id, c.req.param("id"));
@@ -869,7 +870,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program);
   });
 
-  sprints.get("/boards/:slug/tide", async (c) => {
+  sprints.get(path("board.tide"), async (c) => {
     const program = Effect.gen(function* () {
       const { board } = yield* boardScope(c, callerPubkeyOrNull(c.get("claims")), "viewer");
       const days = yield* requestedDays(c);
@@ -907,11 +908,21 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
    */
   const MembershipBody = Schema.Struct({ issue_id: Schema.String });
 
+  // EFB-98: THE ROUTE THIS TICKET EXISTS FOR.
+  //
+  // These were POST .../sprints/:id/add-issue and .../remove-issue. A caller
+  // guessing the RESTful spelling — POST .../sprint/:id/issues — got a 404,
+  // did not check the status, and reported tickets attached that were not.
+  //
+  // Now attaching is a POST to the membership COLLECTION and detaching is a
+  // DELETE on the addressable member, so the method carries the intent and the
+  // issue id sits where an addressable thing belongs: in the path for DELETE,
+  // in the body for POST (there is nothing to address until it is attached).
   const membershipEndpoint = (
-    verb: "add-issue" | "remove-issue",
+    attach: boolean,
     apply: (sprint: SprintShape, issueId: string) => { sprint_id: string | null },
   ) => {
-    sprints.post(`/boards/:slug/sprints/:id/${verb}`, async (c) => {
+    const handler = async (c: Context<AppHonoEnv>) => {
       const program = Effect.gen(function* () {
         const claims = yield* requireCaller(c.get("claims"));
         const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
@@ -925,8 +936,19 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         // writing that identifier in prose classifies this route as
         // half-migrated. It fails closed — a loud `mixed` error, not a silent
         // pass — but it is why this sentence is phrased around the name.)
-        const { issue_id } = yield* parseRouteBody(c, MembershipBody);
-        const current = yield* fetchSprint(board.id, c.req.param("id"));
+        //
+        // DELETE addresses the member in the path and carries no body, so only
+        // the attach side parses one.
+        //
+        // Both params are read defensively because this handler is registered
+        // against TWO paths, and Hono derives parameter types from a single
+        // literal — there is no type that says "whichever of these two matched".
+        // An empty id falls through to the same 404 a wrong id gets, which is
+        // the answer either way.
+        const issue_id = attach
+          ? (yield* parseRouteBody(c, MembershipBody)).issue_id
+          : (c.req.param("issue_id") ?? "");
+        const current = yield* fetchSprint(board.id, c.req.param("id") ?? "");
         if (current.status === "completed") {
           return yield* new ConflictError({ reason: "sprint-completed" });
         }
@@ -950,7 +972,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         // EFB-91: null unless the add promoted the issue out of the backlog —
         // the only branch here that appends a statusChangeCache row at all.
         let statusChangeId: string | null = null;
-        if (verb === "add-issue") {
+        if (attach) {
           yield* db.execute(
             "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
             [crypto.randomUUID(), current.id, issue.id, now],
@@ -995,7 +1017,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         }
         const audit = yield* AuditLog;
         yield* audit.record({
-          event_type: verb === "add-issue" ? "sprint_issue_added" : "sprint_issue_removed",
+          event_type: attach ? "sprint_issue_added" : "sprint_issue_removed",
           actor: claims.login,
           details: { board: board.slug, sprint: current.id, issue: issue.id },
         });
@@ -1030,10 +1052,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         return { issue: updated };
       });
       return runJson(c, program);
-    });
+    };
+    return handler;
   };
-  membershipEndpoint("add-issue", (sprint) => ({ sprint_id: sprint.id }));
-  membershipEndpoint("remove-issue", () => ({ sprint_id: null }));
+  sprints.post(
+    path("sprint.issues.attach"),
+    membershipEndpoint(true, (sprint) => ({ sprint_id: sprint.id })),
+  );
+  sprints.delete(
+    path("sprint.issue.detach"),
+    membershipEndpoint(false, () => ({ sprint_id: null })),
+  );
 
   // ── DELETE /boards/:slug/sprints/:id ─────────────────────────────────────
   // Planning sprints only. Clears sprint_id on every member issue, deletes
@@ -1041,7 +1070,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
   // worth keeping), then deletes the sprint. Active/completed sprints must
   // be completed first — deleting them would destroy the audit trail that
   // velocity and sprint archives depend on.
-  sprints.delete("/boards/:slug/sprints/:id", async (c) => {
+  sprints.delete(path("sprint.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");

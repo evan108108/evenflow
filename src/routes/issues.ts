@@ -13,6 +13,7 @@
 // writes require a caller at "contributor".
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option, Schema } from "effect";
 import { AuditLog, Audience, BoardEmitter, Db, DbError, bootstrap } from "../effects";
@@ -217,6 +218,10 @@ const PATCHABLE = [
   "priority",
   "estimate",
   "labels",
+  // EFB-98: folded in from POST /issues/:id/duplicate-of. Listed here as well
+  // as in the struct, or `{"duplicate_of_issue_id": …}` alone would answer
+  // `empty-patch` — a body that says something being told it says nothing.
+  "duplicate_of_issue_id",
 ] as const;
 
 const PatchIssueBody = Schema.Struct({
@@ -237,6 +242,18 @@ const PatchIssueBody = Schema.Struct({
   priority: Schema.optional(Schema.NullOr(Schema.Int)),
   estimate: Schema.optional(Schema.NullOr(Schema.Int)),
   labels: Schema.optional(Schema.Array(Schema.String)),
+  // EFB-98: was POST /issues/:id/duplicate-of, a verb-shaped route for what is
+  // a field on the issue with exactly the same authorization as every other
+  // field here (contributor on this board).
+  //
+  // `NonEmptyString`, carried over from the old route's body: "" is a shape
+  // error answering `duplicate_of_issue_id`, not a lookup that misses and
+  // answers `duplicate-target-not-found`. Optional here where it was required
+  // there, which is the one difference PATCH semantics demand — absent means
+  // "leave the link alone", `null` clears it. Everything else about the target
+  // (does it exist, is it on THIS board, would it close a cycle) needs the
+  // database and so stays in resolveDuplicateTarget as named steps.
+  duplicate_of_issue_id: Schema.optional(Schema.NullOr(NonEmptyString)),
   id: ImmutableField,
   board_id: ImmutableField,
   created_at_ms: ImmutableField,
@@ -365,26 +382,6 @@ const PatchReorderBody = Schema.Struct({
   after_issue_id: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
-/**
- * POST /issues/:id/duplicate-of.
- *
- * Shape only, and there is deliberately very little of it: `null` clears the
- * pointer, a non-empty string names the target. Everything that makes this
- * endpoint interesting — does the target exist, is it on THIS board, would the
- * pointer close a cycle — needs the database and the resolved issue, so it
- * stays in the handler as named authorization steps answering
- * `duplicate-target-not-found`, `duplicate-target-other-board`, and
- * `circular_duplicate`.
- *
- * Required, not optional: a missing key already answered
- * `duplicate_of_issue_id` before the migration (`body["…"]` was `undefined`,
- * which is neither `null` nor a string), and it still does. `null` and absent
- * are different requests here — one unmarks, the other is malformed — so
- * collapsing them into `Schema.optional` would accept a body that says nothing.
- */
-const PostDuplicateOfBody = Schema.Struct({
-  duplicate_of_issue_id: Schema.NullOr(NonEmptyString),
-});
 
 /**
  * The half of the old `validateAssignee` that a schema cannot do.
@@ -649,7 +646,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── POST /boards/:slug/issues — create ──────────────────────────────────
-  issues.post("/boards/:slug/issues", async (c) => {
+  issues.post(path("issue.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -844,7 +841,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // does not exist, mistaken for the real `column_id` — returned 200 and the
   // unfiltered list. The caller's wrong belief about the API was confirmed by
   // a successful response.
-  issues.get("/boards/:slug/issues", async (c) => {
+  issues.get(path("issue.list"), async (c) => {
     const program = Effect.gen(function* () {
       // The accepted key set, and therefore the whole of the fix: anything not
       // named here is a 400 that names it. Phase 22 wired column_id (one
@@ -991,7 +988,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // ── GET /issues/:id ─────────────────────────────────────────────────────
   // ?include=comments,attachments expands the response in one round-trip —
   // the shape MCP's kanban_issue_get always requests (phase 19).
-  issues.get("/issues/:id", async (c) => {
+  issues.get(path("issue.get"), async (c) => {
     const include = new Set(
       (c.req.query("include") ?? "")
         .split(",")
@@ -1028,7 +1025,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /issues/:id — partial update (container excluded) ─────────────
-  issues.patch("/issues/:id", async (c) => {
+  issues.patch(path("issue.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -1046,14 +1043,33 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const issueBody = body.body === undefined ? current.body : body.body;
       const body_format = body.body_format ?? current.body_format;
       const type = body.type ?? current.type;
-      // status and assignee are the two fields the schema deliberately does
-      // NOT finish. Both need board state the schema cannot see: which columns
-      // this board has, and who is on its roster. Shape is settled above;
-      // these are authorization and lookup, so they stay here, named.
+      // status, assignee and duplicate_of are the fields the schema
+      // deliberately does NOT finish. All three need board state the schema
+      // cannot see: which columns this board has, who is on its roster, and
+      // which issues live on it. Shape is settled above; these are
+      // authorization and lookup, so they stay here, named.
+      const duplicateOf =
+        body.duplicate_of_issue_id === undefined
+          ? current.duplicate_of_issue_id
+          : body.duplicate_of_issue_id === null
+            ? null
+            : yield* resolveDuplicateTarget(current, body.duplicate_of_issue_id);
+      // Newly pointing at a target, as opposed to clearing it or leaving an
+      // existing pointer alone. Only this case carries the move-to-Done.
+      const marksDuplicate =
+        duplicateOf !== null && duplicateOf !== current.duplicate_of_issue_id;
+      // Marking a duplicate moves the issue to Done — that was the old route's
+      // behavior and it survives the fold. An explicit `status` in the same
+      // request wins, because the caller said what they wanted. A board with no
+      // enabled done column records the pointer and leaves the column alone
+      // rather than inventing a destination.
+      const doneColumn = enabledColumns(board.columns).find((col) => col.category === "done");
       const toColumn =
-        body.status === undefined
-          ? issueColumn(board, current)
-          : yield* validateStatus(board.columns, body.status);
+        body.status !== undefined
+          ? yield* validateStatus(board.columns, body.status)
+          : marksDuplicate && doneColumn !== undefined
+            ? doneColumn
+            : issueColumn(board, current);
       const status = toColumn?.name ?? current.status;
       const column_id = toColumn?.id ?? current.column_id;
       const assignee =
@@ -1096,27 +1112,45 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         );
       }
       yield* db.execute(
-        "UPDATE issueCache SET title = ?, body = ?, body_format = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
-        [title, issueBody, body_format, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), now, completed, current.id],
+        "UPDATE issueCache SET title = ?, body = ?, body_format = ?, type = ?, status = ?, column_id = ?, assignee_pubkey = ?, priority = ?, estimate = ?, labels = ?, duplicate_of_issue_id = ?, updated_at_ms = ?, completed_at_ms = ? WHERE id = ?",
+        [title, issueBody, body_format, type, status, column_id, assignee, priority, estimate, JSON.stringify(labels), duplicateOf, now, completed, current.id],
       );
-      if (status !== current.status) {
-        yield* insertStatusChange({
-          issue_id: current.id,
-          board_id: current.board_id,
-          actor_pubkey: pubkey,
-          from_status: current.status,
-          to_status: status,
-          from_container: null,
-          to_container: null,
-          container_at_completion: toDone ? current.container : null,
-          occurred_at_ms: now,
-        });
-      }
+      const statusChangeId =
+        status === current.status
+          ? null
+          : yield* insertStatusChange({
+              issue_id: current.id,
+              board_id: current.board_id,
+              actor_pubkey: pubkey,
+              from_status: current.status,
+              to_status: status,
+              from_container: null,
+              to_container: null,
+              container_at_completion: toDone ? current.container : null,
+              occurred_at_ms: now,
+            });
       yield* audit.record({
         event_type: "issue_updated",
         actor: claims.login,
         details: { issue: current.id },
       });
+      // The duplicate link keeps its own audit events across the fold, so
+      // existing audit queries for marking and clearing still resolve.
+      if (duplicateOf !== current.duplicate_of_issue_id) {
+        yield* audit.record(
+          duplicateOf === null
+            ? {
+                event_type: "issue_duplicate_cleared",
+                actor: claims.login,
+                details: { issue: current.id, was_duplicate_of: current.duplicate_of_issue_id },
+              }
+            : {
+                event_type: "issue_marked_duplicate",
+                actor: claims.login,
+                details: { issue: current.id, duplicate_of: duplicateOf },
+              },
+        );
+      }
       const issue: IssueShape = {
         ...current,
         title,
@@ -1129,22 +1163,44 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
         priority,
         estimate,
         labels,
+        duplicate_of_issue_id: duplicateOf,
         updated_at_ms: now,
         completed_at_ms: completed,
       };
-      // `null`: buildKanbanIssue has no actor slot. The issue's only pubkey is
-      // `assignee_pubkey`, which is a REFERENCE — who owns the work, not who
-      // did this edit — and BOUNDARY_DISCIPLINE scopes Provenance to actors.
+      // A column move publishes issue.transitioned, carrying the status change
+      // id and the actor, so the 30553 goes out alongside the 30551; anything
+      // else publishes issue.updated.
+      //
+      // EFB-98 unified this. The old duplicate-of route did exactly the above,
+      // while PATCH published issue.updated for EVERY edit including a status
+      // change — so it wrote a statusChangeCache row and then never published
+      // the 30553 that row exists to accompany. Folding the routes together
+      // without unifying the publish would have silently dropped the duplicate
+      // route's 30553; unifying it also closes that gap on plain status edits.
+      //
+      // Provenance tracks the same branch: a move needs its actor, an in-place
+      // edit publishes only the 30551, which has no actor slot to fill. The
+      // issue's `assignee_pubkey` is a REFERENCE — who owns the work, not who
+      // made this edit — and BOUNDARY_DISCIPLINE scopes Provenance to actors.
+      const moved = status !== current.status || column_id !== current.column_id;
       yield* emitSecureBoardEvent(
         current.board_id,
         {
-          kind: "issue.updated",
+          kind: moved ? "issue.transitioned" : "issue.updated",
           board_id: current.board_id,
           issue_id: current.id,
           at_ms: now,
-          payload: { issue },
+          ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
+          payload: moved
+            ? {
+                issue,
+                actor_pubkey: pubkey,
+                from_status: current.status,
+                to_status: status,
+              }
+            : { issue },
         },
-        null,
+        moved ? ProvenanceFromCaller(claims) : null,
       );
       return { issue };
     });
@@ -1152,7 +1208,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /issues/:id — cascades comments in code; audit rows stay ─────
-  issues.delete("/issues/:id", async (c) => {
+  issues.delete(path("issue.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { issue } = yield* fetchIssue(c.req.param("id"), callerPubkey(claims), "contributor");
@@ -1190,7 +1246,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // column_id is the preferred addressing (stable across renames); `to` is
   // the legacy name-match, with `to_status` still accepted as its pre-17
   // spelling. When both arrive, column_id wins.
-  issues.post("/issues/:id/transition", async (c) => {
+  issues.post(path("issue.transition"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -1275,148 +1331,51 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // happened; unwinding it would put a lie in statusChangeCache, and every
   // tide day already replayed with the issue excluded. Linear behaves the
   // same way, for the same reason.
-  issues.post("/issues/:id/duplicate-of", async (c) => {
-    const program = Effect.gen(function* () {
-      const claims = yield* requireCaller(c.get("claims"));
-      const pubkey = callerPubkey(claims);
-      // EFB-60: the hand-rolled `typeof raw !== "string"` guard is now
-      // PostDuplicateOfBody, and rejecting a key we don't recognize comes free
-      // with it. Both still answer `duplicate_of_issue_id` for a bad value.
-      const { duplicate_of_issue_id: targetRef } = yield* parseRouteBody(c, PostDuplicateOfBody);
-      const { issue, board } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
+  /**
+   * Resolve a duplicate-of reference to a target issue id on THIS board.
+   *
+   * EFB-98 folded POST /issues/:id/duplicate-of into PATCH /issue/:id. The
+   * pointer is a field with the same authorization as every other field, so a
+   * dedicated route only bought it a verb in the URL. What was genuinely
+   * unique to that route is right here — everything else it did (write the
+   * row, transition to Done, audit, publish) PATCH already did, and now does
+   * once for both.
+   */
+  const resolveDuplicateTarget = (current: IssueShape, ref: string) =>
+    Effect.gen(function* () {
       const db = yield* Db;
-      const audit = yield* AuditLog;
-
-      // ── un-mark ──────────────────────────────────────────────────────────
-      if (targetRef === null) {
-        if (issue.duplicate_of_issue_id === null) return { issue };
-        const now = yield* Clock.currentTimeMillis;
-        yield* db.execute(
-          "UPDATE issueCache SET duplicate_of_issue_id = NULL, updated_at_ms = ? WHERE id = ?",
-          [now, issue.id],
-        );
-        yield* audit.record({
-          event_type: "issue_duplicate_cleared",
-          actor: claims.login,
-          details: { issue: issue.id, was_duplicate_of: issue.duplicate_of_issue_id },
-        });
-        const updated: IssueShape = {
-          ...issue,
-          duplicate_of_issue_id: null,
-          updated_at_ms: now,
-        };
-        yield* emitSecureBoardEvent(
-          issue.board_id,
-          {
-            kind: "issue.updated",
-            board_id: issue.board_id,
-            issue_id: issue.id,
-            at_ms: now,
-            payload: { issue: updated },
-          },
-          null,
-        );
-        return { issue: updated };
-      }
-
-      // ── resolve the target ───────────────────────────────────────────────
       // Same addressing as fetchIssue (short id or UUID) so the API accepts
       // whatever a caller has in hand, but deliberately NOT fetchIssue itself:
       // that authorizes the target's board, and the target is constrained to
-      // THIS board anyway. Short ids are per-board vocabulary (see
-      // /move-to-board, which mints a fresh one), so a cross-board pointer
-      // could not render as "→ EFB-7" without lying about which board's #7.
-      const targetShortId = asShortId(targetRef);
-      const targetRow =
-        targetShortId === null
-          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [targetRef])
-          : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [targetShortId]);
-      if (targetRow === null) {
+      // THIS board anyway. Short ids are per-board vocabulary (PUT
+      // /issue/:id/board mints a fresh one), so a cross-board pointer could not
+      // render as "→ EFB-7" without lying about which board's #7.
+      const shortId = asShortId(ref);
+      const row =
+        shortId === null
+          ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
+          : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
+      if (row === null) {
         return yield* new ValidationError({ reason: "duplicate-target-not-found" });
       }
-      const target = parseIssueRow(targetRow);
-      if (target.board_id !== issue.board_id) {
+      const target = parseIssueRow(row);
+      if (target.board_id !== current.board_id) {
         return yield* new ValidationError({ reason: "duplicate-target-other-board" });
       }
-
-      // ── cycle guard ──────────────────────────────────────────────────────
-      if (yield* closesDuplicateLoop(issue.id, target.id)) {
+      if (yield* closesDuplicateLoop(current.id, target.id)) {
         return yield* new ValidationError({ reason: "circular_duplicate" });
       }
-
-      // ── write ────────────────────────────────────────────────────────────
-      // Pointer BEFORE transition, and the order matters because there is no
-      // transaction here. Pointer-then-transition half-writes to "a duplicate
-      // sitting in its old column" — visible on the board, and re-running the
-      // action fixes it. Transition-then-pointer half-writes to "an issue
-      // silently in Done with nothing saying why", which nobody would think
-      // to look for. Same reasoning as the estimate-history ordering in PATCH.
-      const markedAt = yield* Clock.currentTimeMillis;
-      yield* db.execute(
-        "UPDATE issueCache SET duplicate_of_issue_id = ?, updated_at_ms = ? WHERE id = ?",
-        [target.id, markedAt, issue.id],
-      );
-      const pointed: IssueShape = {
-        ...issue,
-        duplicate_of_issue_id: target.id,
-        updated_at_ms: markedAt,
-      };
-
-      // A board with no enabled done column is a configuration problem, not a
-      // reason to refuse the mark: record the pointer and leave the column
-      // alone rather than inventing a destination.
-      const doneColumn = enabledColumns(board.columns).find((col) => col.category === "done");
-      const { issue: updated, statusChangeId } =
-        doneColumn === undefined
-          ? { issue: pointed, statusChangeId: null }
-          : yield* applyStatusChange(pointed, doneColumn, board, pubkey);
-
-      yield* audit.record({
-        event_type: "issue_marked_duplicate",
-        actor: claims.login,
-        details: { issue: issue.id, duplicate_of: target.id },
-      });
-
-      // issue.transitioned when a column actually moved, so the 30553 gets
-      // published alongside the 30551; issue.updated when the issue was
-      // already in Done and only the pointer changed. Both carry the whole
-      // issue, so either way the substrate 30551 picks up fa:duplicate_of.
-      const moved = updated.status !== issue.status || updated.column_id !== issue.column_id;
-      yield* emitSecureBoardEvent(
-        issue.board_id,
-        {
-          kind: moved ? "issue.transitioned" : "issue.updated",
-          board_id: issue.board_id,
-          issue_id: issue.id,
-          at_ms: updated.updated_at_ms,
-          ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
-          payload: moved
-            ? {
-                issue: updated,
-                actor_pubkey: pubkey,
-                from_status: issue.status,
-                to_status: updated.status,
-              }
-            : { issue: updated },
-        },
-        // Tracks the branch above: a move publishes a 30553 that needs its
-        // actor, an in-place pointer change publishes only the 30551, which has
-        // no actor slot to fill.
-        moved ? ProvenanceFromCaller(claims) : null,
-      );
-      return { issue: updated };
+      return target.id;
     });
-    return runJson(c, program);
-  });
 
-  // ── POST /issues/:id/move-to-board — cross-board move ───────────────────
+  // ── PUT /issue/:id/board — cross-board move ─────────────────────────────
   // Contributor on BOTH boards. The issue keeps its container but gets a
   // fresh short_id minted in the target's prefix (links to the old id keep
   // resolving nowhere — short ids are per-board vocabulary), lands in the
   // same-named enabled column when the target has one, else the first
   // enabled todo-category column, else the first enabled column. Sprint
   // assignment is per-board, so it resets.
-  issues.post("/issues/:id/move-to-board", async (c) => {
+  issues.put(path("issue.board.set"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -1538,7 +1497,9 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
   // the gap has degraded, or a legacy NULL-position row is involved, the
   // whole column rebalances to whole POSITION_STEPs in display order first,
   // with the dragged issue already in its new slot.
-  issues.patch("/issues/:id/reorder", async (c) => {
+  // EFB-98: "reorder" is a verb; the noun it edits is the issue's position,
+  // and PUT is the right method for setting one wholesale.
+  issues.put(path("issue.position.set"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const pubkey = callerPubkey(claims);
@@ -1669,12 +1630,43 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(c, program);
   });
 
-  // ── container moves: three verbs, all idempotent ────────────────────────
-  const containerEndpoint = (path: `/issues/:id/${string}`, to: Container, event: string) => {
-    issues.post(path, async (c) => {
+  // ── container move — POST /issue/:id/container, idempotent ──────────────
+  //
+  // EFB-98 collapsed three routes into this one. They were
+  // promote_to_backlog / promote_to_active / send_to_icebox: identical in
+  // authorization and in every line of their bodies, differing only in the
+  // destination, which is exactly the thing that belongs in a request body.
+  //
+  // They were also registered through a HELPER TAKING A COMPUTED PATH, which
+  // meant check:boundary — which scans route files as text — could not see
+  // them at all. They lived in scripts/boundary-allowlist.json as an
+  // audit-trail note saying the checker "cannot see this route", which is a
+  // declaration of debt rather than enforcement. Registering through the
+  // manifest makes that impossible: a route not declared is not served.
+  //
+  // The audit event names are preserved per destination rather than collapsed
+  // into one, so existing audit queries keep working across the rename.
+  const CONTAINER_AUDIT_EVENT: Record<Container, string> = {
+    backlog: "issue_promoted_to_backlog",
+    active: "issue_promoted_to_active",
+    icebox: "issue_sent_to_icebox",
+  };
+
+  /**
+   * `Schema.Literal` over the three containers, so an unknown destination is a
+   * 400 naming `container` rather than a silent no-op move.
+   */
+  const ContainerBody = Schema.Struct({
+    container: Schema.Literal("backlog", "active", "icebox"),
+  });
+
+  {
+    issues.post(path("issue.container.set"), async (c) => {
       const program = Effect.gen(function* () {
         const claims = yield* requireCaller(c.get("claims"));
         const pubkey = callerPubkey(claims);
+        const { container: to } = yield* parseRouteBody(c, ContainerBody);
+        const event = CONTAINER_AUDIT_EVENT[to];
         const { issue } = yield* fetchIssue(c.req.param("id"), pubkey, "contributor");
         const { issue: updated, statusChangeId } = yield* applyContainerMove(issue, to, pubkey);
         const audit = yield* AuditLog;
@@ -1706,10 +1698,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       });
       return runJson(c, program);
     });
-  };
-  containerEndpoint("/issues/:id/promote_to_backlog", "backlog", "issue_promoted_to_backlog");
-  containerEndpoint("/issues/:id/promote_to_active", "active", "issue_promoted_to_active");
-  containerEndpoint("/issues/:id/send_to_icebox", "icebox", "issue_sent_to_icebox");
+  }
 
   return issues;
 };

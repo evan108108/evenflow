@@ -9,6 +9,7 @@
 // kind-30521 events (membership.ts) — a 4a outage never blocks an org edit.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { Clock, Effect, Exit } from "effect";
 import { AuditLog, Db, bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
@@ -196,7 +197,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   const orgs = new Hono<AppHonoEnv>();
 
   // ── POST /orgs — create a team org ──────────────────────────────────────
-  orgs.post("/orgs", async (c) => {
+  orgs.post(path("org.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -243,11 +244,11 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /orgs/:slug — detail; public info for anyone, internal for members
-  orgs.get("/orgs/:slug", async (c) => {
+  orgs.get(path("org.get"), async (c) => {
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
       const { org, role, viaAlias } = yield* authorizeOrgAccess(
-        c.req.param("slug"),
+        c.req.param("org_slug"),
         pubkey,
         "viewer",
       );
@@ -260,13 +261,13 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /orgs/:slug — profile edits + slug rename (admin+) ────────────
-  orgs.patch("/orgs/:slug", async (c) => {
+  orgs.patch(path("org.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const body = yield* readJsonBody(c);
       const { org } = yield* authorizeOrgAccess(
-        c.req.param("slug"),
+        c.req.param("org_slug"),
         callerPubkey(claims),
         "admin",
       );
@@ -321,10 +322,10 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── DELETE /orgs/:slug — soft-delete (owner only; team orgs only) ───────
-  orgs.delete("/orgs/:slug", async (c) => {
+  orgs.delete(path("org.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("slug"), callerPubkey(claims), "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), callerPubkey(claims), "owner");
       if (org.kind === "personal") {
         // Deleting the personal org would orphan the caller's handle and
         // every legacy board route; not allowed.
@@ -353,13 +354,13 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /orgs/:slug/transfer — ownership transfer (owner only) ─────────
-  orgs.post("/orgs/:slug/transfer", async (c) => {
+  orgs.post(path("org.transfer"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      const { org } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "owner");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), pubkey, "owner");
 
       const to_pubkey = yield* validatePubkey(body["to_pubkey"]);
       if (body["confirmation_slug"] !== org.slug) {
@@ -409,11 +410,11 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /orgs/:slug/boards — org board list, visibility-filtered ────────
-  orgs.get("/orgs/:slug/boards", async (c) => {
+  orgs.get(path("org.boards.list"), async (c) => {
     const includeArchived = c.req.query("include_archived") === "1";
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
-      const resolved = yield* resolveOrgBySlug(c.req.param("slug"));
+      const resolved = yield* resolveOrgBySlug(c.req.param("org_slug"));
       if (resolved === null) return yield* new NotFoundError({ reason: "org" });
       const db = yield* Db;
       const rows = yield* db.queryAll<Record<string, unknown>>(
@@ -436,10 +437,10 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── GET /orgs/:slug/members — member list (org members only) ────────────
-  orgs.get("/orgs/:slug/members", async (c) => {
+  orgs.get(path("org.members.list"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const { org } = yield* authorizeOrgAccess(c.req.param("slug"), callerPubkey(claims), "member");
+      const { org } = yield* authorizeOrgAccess(c.req.param("org_slug"), callerPubkey(claims), "member");
       const db = yield* Db;
       const rows = yield* db.queryAll<Record<string, unknown>>(
         "SELECT * FROM orgMemberCache WHERE org_id = ? ORDER BY added_at_ms ASC",
@@ -453,13 +454,13 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── POST /orgs/:slug/members — direct add (admin+) ──────────────────────
-  orgs.post("/orgs/:slug/members", async (c) => {
+  orgs.post(path("org.member.add"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "admin");
+      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("org_slug"), pubkey, "admin");
 
       const memberPubkey = yield* validatePubkey(body["pubkey"]);
       const role = yield* validateOrgRole(body["role"]);
@@ -495,13 +496,13 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // ── PATCH /orgs/:slug/members/:pubkey — role change (admin+) ────────────
-  orgs.patch("/orgs/:slug/members/:pubkey", async (c) => {
+  orgs.patch(path("org.member.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
       const body = yield* readJsonBody(c);
-      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "admin");
+      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("org_slug"), pubkey, "admin");
       const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
       const role = yield* validateOrgRole(body["role"]);
 
@@ -541,12 +542,12 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
   // ── DELETE /orgs/:slug/members/:pubkey — kick (admin+) ──────────────────
   // Removing the org row removes org-projected board access automatically
   // (it's computed); explicit boardMemberCache grants deliberately survive.
-  orgs.delete("/orgs/:slug/members/:pubkey", async (c) => {
+  orgs.delete(path("org.member.remove"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
       const pubkey = callerPubkey(claims);
-      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("slug"), pubkey, "admin");
+      const { org, role: myRole } = yield* authorizeOrgAccess(c.req.param("org_slug"), pubkey, "admin");
       const targetPubkey = yield* validatePubkeyParam(c.req.param("pubkey"));
 
       const db = yield* Db;
@@ -597,7 +598,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── board members: /orgs/:org_slug/boards/:slug/members ─────────────────
 
-  orgs.get("/orgs/:org_slug/boards/:slug/members", async (c) => {
+  orgs.get(path("org.board.members.list"), async (c) => {
     const program = Effect.gen(function* () {
       const pubkey = callerPubkeyOrNull(c.get("claims"));
       const { board } = yield* resolveBoardScope(
@@ -638,7 +639,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  orgs.post("/orgs/:org_slug/boards/:slug/members", async (c) => {
+  orgs.post(path("org.board.member.add"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -669,7 +670,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value, 201);
   });
 
-  orgs.patch("/orgs/:org_slug/boards/:slug/members/:pubkey", async (c) => {
+  orgs.patch(path("org.board.member.update"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";
@@ -705,7 +706,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(exit.value);
   });
 
-  orgs.delete("/orgs/:org_slug/boards/:slug/members/:pubkey", async (c) => {
+  orgs.delete(path("org.board.member.remove"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const token = c.get("token") ?? "";

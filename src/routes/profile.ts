@@ -10,6 +10,7 @@
 // 200 with empty fields; bulk chip rendering depends on misses being data.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { AuditLog, Db, DbError, FourA, FourAError, bootstrap } from "../effects";
@@ -179,7 +180,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   };
 
   // ── GET /profile/me ─────────────────────────────────────────────────────
-  profile.get("/profile/me", async (c) => {
+  profile.get(path("profile.me.get"), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
@@ -222,7 +223,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // return the immutable URL. Deliberately does NOT publish a kind 0 — the
   // URL only reaches the substrate when the user Saves (PUT /profile/me),
   // so the UI can preview before anything goes public.
-  profile.post("/profile/picture", async (c) => {
+  profile.post(path("profile.picture.create"), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
@@ -295,7 +296,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // ── PUT /profile/me ─────────────────────────────────────────────────────
   // Full replacement of the four kind-0 fields: publish to 4a first (the
   // substrate is the source of truth), cache only what actually published.
-  profile.put("/profile/me", async (c) => {
+  profile.put(path("profile.me.set"), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
@@ -354,7 +355,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
 
   // ── GET /profile?pubkeys=a,b,c — bulk resolve for chip rendering ────────
   // Registered before /profile/:pubkey so the bare path wins the match.
-  profile.get("/profile", async (c) => {
+  profile.get(path("profile.list"), async (c) => {
     const raw = c.req.query("pubkeys");
     const program = Effect.gen(function* () {
       if (raw === undefined || raw.trim() === "") {
@@ -403,7 +404,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
   // Reading through the same canonicalizer the write paths use is what keeps
   // the cache single-keyed; a second normalization rule here would just be a
   // new way to drift.
-  profile.get("/profile/:pubkey", async (c) => {
+  profile.get(path("profile.get"), async (c) => {
     const program = Effect.gen(function* () {
       // 400 rather than 404: "that is not a pubkey" and "nobody by that
       // pubkey" are different answers, and collapsing them would report a

@@ -308,24 +308,6 @@ export const ROUTES = [
     stateAction: true,
   },
   {
-    // Was POST /issues/:id/duplicate-of. The duplicate link is a relation, so
-    // it keeps its noun but gains the CRUD pair: PUT sets it, DELETE clears it.
-    id: "issue.duplicateOf.set",
-    method: "PUT",
-    path: "/issue/:id/duplicate-of",
-    orgScoped: true,
-    file: "issues.ts",
-    auth: "contributor",
-  },
-  {
-    id: "issue.duplicateOf.clear",
-    method: "DELETE",
-    path: "/issue/:id/duplicate-of",
-    orgScoped: true,
-    file: "issues.ts",
-    auth: "contributor",
-  },
-  {
     // Was POST /issues/:id/move-to-board. Deliberately NOT folded into
     // PATCH /issue/:id: moving a board requires write authorization on BOTH
     // the source and destination boards, and burying that in a PATCH branch
@@ -572,6 +554,31 @@ export const route = (id: RouteId): RouteEntry => {
   if (entry === undefined) throw new Error(`Unknown route id: ${id}`);
   return entry;
 };
+
+/**
+ * The path a route file registers with Hono.
+ *
+ * Routers are mounted under a prefix, so what they register is the entry's own
+ * path — no `/api/v0`, no org prefix. This is the ONLY way a route file may
+ * spell a URL:
+ *
+ *   issues.get(path("issue.get"), handler)
+ *
+ * A string literal in a route file is the defect this ticket removes: it is
+ * how the manifest and the server drift, and drift is how a caller ends up
+ * POSTing to a URL that 404s.
+ *
+ * The return type is the specific literal path for `id`, not `string`. That
+ * matters more than it looks: Hono derives a handler's parameter types from
+ * the literal it is registered with, so a widened `string` would silently turn
+ * every `c.req.param("slug")` into `string | undefined` across the codebase.
+ * Keeping the literal type means routing moves into the manifest and nothing
+ * about handler typing changes.
+ */
+type EntryFor<Id extends RouteId> = Extract<(typeof ROUTES)[number], { id: Id }>;
+
+export const path = <Id extends RouteId>(id: Id): EntryFor<Id>["path"] =>
+  route(id).path as EntryFor<Id>["path"];
 
 /** The prefix an entry is mounted under, before its own path. */
 export const mountPrefix = (entry: RouteEntry): string =>

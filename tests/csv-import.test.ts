@@ -12,6 +12,7 @@
 // claim to a public relay. See the guard in src/lib/kanban/publish.ts.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
 import {
@@ -292,7 +293,7 @@ const importInto = async (
   slug = "kb",
 ): Promise<{ status: number; report: ImportReport }> => {
   const res = await h.app.request(
-    `/api/v0/boards/${slug}/issues/bulk`,
+    url("import.issues.bulk", { slug: slug }),
     jsonReq("POST", bulkBody(issues, importId)),
     {},
   );
@@ -562,7 +563,7 @@ describe("POST /api/v0/boards/:slug/issues/bulk", () => {
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(
-      "/api/v0/boards/kb/issues/bulk",
+      url("import.issues.bulk", { slug: "kb" }),
       jsonReq("POST", bulkBody([{ title: "fine" }, { title: "" }])),
       {},
     );
@@ -576,7 +577,7 @@ describe("POST /api/v0/boards/:slug/issues/bulk", () => {
   it("requires a caller", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb/issues/bulk", {
+    const res = await h.app.request(url("import.issues.bulk", { slug: "kb" }), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(bulkBody([{ title: "a" }])),
@@ -595,7 +596,7 @@ describe("GET /api/v0/boards/:slug/imports", () => {
       { title: "c", assignee_pubkey: "jane@acme.com" },
     ]);
 
-    const res = await h.app.request("/api/v0/boards/kb/imports", { headers: bearer });
+    const res = await h.app.request(url("import.list", { slug: "kb" }), { headers: bearer });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       imports: Array<Record<string, unknown>>;

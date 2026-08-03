@@ -16,6 +16,7 @@
 // us forever. Only signature failure and unreadable bodies are 4xx.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import type { Context } from "hono";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
 import { Audience, AuditLog, BoardEmitter, Db, DbError, bootstrap } from "../effects";
@@ -612,7 +613,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
     );
 
   // ── inbound webhook ─────────────────────────────────────────────────────
-  app.post("/webhooks/github/:board_id", async (c) => {
+  app.post(path("github.webhook.receive"), async (c) => {
     const boardId = c.req.param("board_id");
     const eventType = c.req.header("x-github-event") ?? "unknown";
     const deliveryId = c.req.header("x-github-delivery") ?? null;
@@ -662,7 +663,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
       return scope;
     });
 
-  app.get("/boards/:slug/github", (c) =>
+  app.get(path("github.config.get"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -676,7 +677,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
   );
 
   /** Connect or update: repo, preset, pill vocabulary. Never the secret. */
-  app.put("/boards/:slug/github", (c) =>
+  app.put(path("github.config.set"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -743,7 +744,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
    * ONLY and is never retrievable again — rotating invalidates the old one
    * immediately, which is the intended break-glass behaviour.
    */
-  app.post("/boards/:slug/github/secret", (c) =>
+  app.post(path("github.secret.set"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -771,7 +772,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
   );
 
   /** Disconnect: clears repo + secret, leaves rules and audit history intact. */
-  app.delete("/boards/:slug/github", (c) =>
+  app.delete(path("github.config.delete"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -796,7 +797,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
    * makes priority renumbering atomic instead of a sequence of conflicting
    * partial writes.
    */
-  app.put("/boards/:slug/github/rules", (c) =>
+  app.put(path("github.rules.set"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -881,7 +882,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
    * issue update, no audit row, no dedup claim. The only difference from a
    * real delivery is that the plan is rendered instead of executed.
    */
-  app.post("/boards/:slug/github/test", (c) =>
+  app.post(path("github.connection.test"), (c) =>
     run(
       c,
       Effect.gen(function* () {
@@ -955,7 +956,7 @@ export const makeGithubRouter = (layerFor?: LayerFor) => {
 
   // ── activity log ────────────────────────────────────────────────────────
 
-  app.get("/boards/:slug/github/audit", (c) =>
+  app.get(path("github.audit.list"), (c) =>
     run(
       c,
       Effect.gen(function* () {

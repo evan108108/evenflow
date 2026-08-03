@@ -8,6 +8,7 @@
 // JWT, only its sha256 hex (sessionCache.jwt_hash).
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { getCookie } from "hono/cookie";
 import { Cause, Clock, Effect, Exit, Option } from "effect";
 import {
@@ -57,7 +58,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // with). Resolution failure is audited, not fatal — pubkey null. On
   // success the sessionCache row is upgraded in place, closing out the
   // pubkey '' sentinel rows the KmsClient-stub era wrote.
-  auth.get("/whoami", requireAuth(layerFor), async (c) => {
+  auth.get(path("auth.whoami"), requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
@@ -92,7 +93,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // Exchange a 4a-minted JWT for a cached session row. Body: { jwt }.
-  auth.post("/session", async (c) => {
+  auth.post(path("auth.session.create"), async (c) => {
     let body: unknown;
     try {
       body = await c.req.json();
@@ -144,7 +145,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // Drop the caller's session row.
-  auth.delete("/session", requireAuth(layerFor), async (c) => {
+  auth.delete(path("auth.session.delete"), requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
@@ -172,7 +173,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // Entry into 4a's OAuth AS as a registered client (authorization-code +
   // PKCE). Without client_id/redirect_uri 4a would run its "direct" flow and
   // strand the user on a raw-JSON JWT page at api.4a4.ai.
-  auth.get("/oauth/start", async (c) => {
+  auth.get(path("auth.oauth.start"), async (c) => {
     const provider = c.req.query("provider") ?? "google";
     if (!(PROVIDERS as ReadonlyArray<string>).includes(provider)) {
       return c.json({ error: "invalid-provider", reason: `expected one of: ${PROVIDERS.join(", ")}` }, 400);
@@ -199,7 +200,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // 4a redirects back here with ?code=&state=. Exchange the code for the JWT
   // server-side (client_secret + PKCE verifier), then hand the JWT to the SPA
   // via the fragment — /signin parses #jwt= and persists it.
-  auth.get("/callback", async (c) => {
+  auth.get(path("auth.oauth.callback"), async (c) => {
     const code = c.req.query("code");
     if (code === undefined || code === "") {
       return c.json({ error: "invalid-callback", reason: "missing-code" }, 400);
