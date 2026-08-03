@@ -12,7 +12,7 @@
 // asserts the mount table. A behaviour test does not need to re-assert any of
 // it.
 
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,7 +24,13 @@ import {
   makeBoardEmitterTest,
   type AppServices,
 } from "../../src/effects";
-import { createComment, deleteComment, listComments } from "../../src/actions/comments";
+import {
+  PostCommentBody,
+  ValidationError,
+  createComment,
+  deleteComment,
+  listComments,
+} from "../../src/actions/comments";
 import { actionInput } from "../../src/actions/types";
 import { makeDbMock } from "../dbMock";
 import { CALLER } from "../harness";
@@ -48,6 +54,27 @@ const makeDeps = () => {
 const run = <A, E>(deps: ReturnType<typeof makeDeps>, program: Effect.Effect<A, E, never>) =>
   Effect.runPromiseExit(Effect.provide(program as never, deps.layer));
 
+/**
+ * createComment takes its body UNPARSED — a lazy Effect the action yields after
+ * the issue lookup (rule 10) — so a test hands it the same shape the route
+ * does: an Effect, not a value.
+ */
+const bodyOf = (value: typeof PostCommentBody.Type) => Effect.succeed(value);
+
+/**
+ * A body whose parse FAILS. Lazy, so it only fails if something yields it —
+ * which is the whole point: if the parse still ran first, this reason would be
+ * the one that surfaced.
+ */
+const unparseableBody = Effect.fail(new ValidationError({ reason: "nope-unknown" }));
+
+/** The `reason` a failed action carried, whatever tagged class it used. */
+const failureReasonOf = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
+  if (Exit.isSuccess(exit)) return undefined;
+  const f = Cause.failureOption(exit.cause);
+  return Option.isSome(f) ? (f.value as { reason?: string }).reason : undefined;
+};
+
 /** Seed a board the caller owns, plus one issue on it. */
 const seedBoardAndIssue = (deps: ReturnType<typeof makeDeps>) => {
   deps.db.boards.push({
@@ -70,7 +97,7 @@ describe("comment actions", () => {
     const exit = await run(
       deps,
       createComment(
-        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { body: "first" }),
+        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, bodyOf({ body: "first" })),
       ),
     );
 
@@ -86,11 +113,40 @@ describe("comment actions", () => {
 
     const exit = await run(
       deps,
-      createComment(actionInput(JWT_TEST_CLAIMS, { id: "nope" }, { body: "x" })),
+      createComment(actionInput(JWT_TEST_CLAIMS, { id: "nope" }, bodyOf({ body: "x" }))),
     );
 
     expect(exit._tag).toBe("Failure");
     expect(deps.db.comments).toHaveLength(0);
+  });
+
+  it("answers the missing issue, not the malformed body, when both are wrong", async () => {
+    // RULE 10 / BOUNDARY_DISCIPLINE.md:244. The pre-split handler looked the
+    // issue up BEFORE parsing, so a bad body aimed at an issue you cannot see
+    // is a 404 about the issue — it does not leak that the body was also
+    // wrong, and more importantly it does not silently become a 400 because a
+    // refactor moved the parse earlier.
+    //
+    // Nothing pinned this before; the flip was introduced by the action split
+    // and caught only because worker B hit the same shape in another family.
+    const deps = makeDeps();
+    seedBoardAndIssue(deps);
+
+    const exit = await run(
+      deps,
+      createComment(
+        actionInput(
+          JWT_TEST_CLAIMS,
+          { id: "no-such-issue" },
+          unparseableBody,
+        ),
+      ),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    const reason = failureReasonOf(exit);
+    expect(reason).toBe("issue");
+    expect(reason).not.toBe("nope-unknown");
   });
 
   it("refuses to delete someone else's comment", async () => {

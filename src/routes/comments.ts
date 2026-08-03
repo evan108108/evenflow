@@ -58,9 +58,15 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
   comments.post(path("comment.create"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      const body = yield* parseRouteBody(c, PostCommentBody);
+      // The parse is NOT yielded here. Effects are lazy, so handing the
+      // unexecuted `parseRouteBody` to the action lets it run at the point the
+      // pre-split handler ran it — after the issue lookup — which keeps a
+      // malformed body on a missing issue answering 404 rather than 400.
+      // parseRouteBody still appears in this file, so check:boundary sees it.
       return yield* createComment(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, PostCommentBody), {
+          orgSlug: c.req.param("org_slug") ?? null,
+        }),
       );
     });
     return runJson(c, program, 201);

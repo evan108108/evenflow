@@ -155,12 +155,19 @@ export type CommentServices = Db | AuditLog | BoardEmitter | Audience;
 
 /** POST /issue/:id/comments — create a comment, claiming any attachments. */
 export const createComment = (
-  input: ActionInput<typeof PostCommentBody.Type>,
+  // RULE 10 — the body arrives UNPARSED, as a lazy Effect, because this
+  // handler gates before it parses. See the yield below.
+  input: ActionInput<Effect.Effect<typeof PostCommentBody.Type, ValidationError>>,
 ): Effect.Effect<{ comment: CommentShape & { attachments: AttachmentShape[] } }, CommentsFailure, CommentServices> =>
   Effect.gen(function* () {
     const pubkey = callerPubkey(input.claims);
   const issue = yield* fetchIssueForRole(input.params["id"] ?? "", pubkey, "contributor");
-  const body = input.body;
+  // Parsed HERE, after fetchIssueForRole, holding the pre-split order: a
+  // malformed body aimed at an issue that does not exist (or that the caller
+  // cannot see) is a 404 about the issue, not a 400 about the body. Flatten
+  // this to a parse-at-the-route and that 404 silently becomes a 400 —
+  // BOUNDARY_DISCIPLINE.md:244 says a status-code change needs its own ticket.
+  const body = yield* input.body;
 
   const text = body.body;
   const db = yield* Db;
