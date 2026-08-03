@@ -43,10 +43,19 @@
 // import in src/ was the alternative and was rejected: it requires
 // `allowImportingTsExtensions` project-wide to serve one script.
 //
-// Requires Node >= 22.15 (module.registerHooks) with type stripping
-// (>= 22.6, on by default from 23). Checked explicitly below.
+// Requires module.registerHooks — Node >= 22.15, or >= 23.5 on the 23.x line —
+// with type stripping (>= 22.6, on by default from 23). Checked explicitly
+// below.
 
-import { registerHooks } from "node:module";
+// Namespace import, not `import { registerHooks }`. A named import of an
+// export the module does not have is a LINK-time SyntaxError: it fires before
+// any statement in this file runs, so the capability gate below could never
+// have reported it. Node 23.0–23.4 is exactly that hole — past the 22.15 the
+// gate names, but registerHooks did not reach the 23.x line until 23.5 — and
+// there the whole suite died on a raw `does not provide an export named`
+// stack. Through the namespace the export is merely `undefined`, which is
+// what the gate was written to catch. (EFB-90, found running the suite.)
+import * as nodeModule from "node:module";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve as resolvePath } from "node:path";
@@ -94,12 +103,13 @@ const die = (code, msg) => {
 };
 
 // ── Node capability gate ────────────────────────────────────────────────────
-// A missing registerHooks otherwise surfaces as an import-time TypeError with
-// a stack trace, which tells an operator nothing actionable.
+// A missing registerHooks otherwise surfaces as an import-time error with a
+// stack trace, which tells an operator nothing actionable.
+const { registerHooks } = nodeModule;
 if (typeof registerHooks !== "function") {
   die(
     EXIT_USAGE,
-    `[verify-wrap] this tool needs Node >= 22.15 for module.registerHooks; running ${process.version}.`,
+    `[verify-wrap] this tool needs module.registerHooks (Node >= 22.15, or >= 23.5 on the 23.x line); running ${process.version}.`,
   );
 }
 

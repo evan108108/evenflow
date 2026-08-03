@@ -6,11 +6,23 @@
 // wouldn't", and that is a property of the whole script — the fetch, the git
 // plumbing, and the exit code together.
 //
-// The non-ancestor case uses `git commit-tree` to mint a DANGLING commit: a
-// real object, reachable from no ref, therefore genuinely not an ancestor of
-// HEAD. It mutates nothing — no branch moves, and the object is unreferenced.
-// That is what the live sha looks like when someone deploys an unmerged
-// branch, which is the exact state that killed EFB-14's search for 34 hours.
+// The non-ancestor cases use `git commit-tree` to mint DANGLING commits: real
+// objects, reachable from no ref, therefore genuinely not ancestors of HEAD.
+// They mutate nothing — no branch moves, no index touched, and the objects are
+// unreferenced. That is what the live sha looks like when someone deploys a
+// branch, which is the state that killed EFB-14's search for 34 hours.
+//
+// EFB-90 split that shape in two, because "not an ancestor" turned out to
+// cover both the disaster and an entirely ordinary squash-merge:
+//
+//   orphaned  — live's content DID land on main under a rewritten sha. The
+//               deploy is safe and must be cleared, or the check false-blocks
+//               every ship in a squash-merging repo (it did, on PR #54).
+//   divergent — live carries work that exists nowhere in HEAD. Refuse.
+//
+// A fixture is only evidence if it exhibits the property it is named for, so
+// each is built to differ from the other in exactly that respect and nothing
+// else: same construction, different content relationship to HEAD.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
@@ -22,6 +34,20 @@ const SCRIPT = resolve(REPO, "scripts/predeploy-ancestry-check.mjs");
 
 const git = (...args: string[]) =>
   execFileSync("git", args, { cwd: REPO, encoding: "utf8" }).trim();
+
+const gitIn = (input: string, ...args: string[]) =>
+  execFileSync("git", args, { cwd: REPO, encoding: "utf8", input }).trim();
+
+/**
+ * A tree that is HEAD's plus one file nobody has ever committed — the content
+ * signature of an unmerged branch. Written straight to the object store with
+ * plumbing: `hash-object -w` and `mktree` never consult the index or the
+ * working tree, so this cannot disturb the repo the suite is running inside.
+ */
+const treeWithNovelFile = (name: string, body: string) => {
+  const blob = gitIn(body, "hash-object", "-w", "--stdin");
+  return gitIn(`${git("ls-tree", "HEAD")}\n100644 blob ${blob}\t${name}\n`, "mktree");
+};
 
 /** Serves whatever body the current test assigns, standing in for /healthz. */
 let server: Server;
@@ -90,9 +116,19 @@ describe("predeploy ancestry check", () => {
     expect(r.stdout).toContain("live sha == HEAD");
   });
 
-  it("REFUSES when the live sha is not an ancestor — the EFB-14 state", async () => {
-    // A real commit, parented one back from HEAD, reachable from no ref.
-    const dangling = git("commit-tree", `${git("rev-parse", "HEAD^{tree}")}`, "-p", "HEAD~1", "-m", "someone's unmerged branch");
+  it("REFUSES when the live sha is not an ancestor AND carries work HEAD lacks — the EFB-14 state", async () => {
+    // A real commit, parented one back from HEAD, reachable from no ref, and
+    // holding a file that exists in no commit anywhere. Content-wise this is
+    // unambiguously someone's unmerged branch: no fallback can find its work
+    // in HEAD, because its work is not there.
+    const dangling = git(
+      "commit-tree",
+      treeWithNovelFile("efb-90-unmerged-fixture.txt", "work that only exists in prod\n"),
+      "-p",
+      "HEAD~1",
+      "-m",
+      "someone's unmerged branch",
+    );
     serve({ ok: true, git_sha: dangling });
     const r = await run();
     expect(r.code).toBe(1);
@@ -102,6 +138,90 @@ describe("predeploy ancestry check", () => {
     expect(r.stderr).toMatch(/silently\s+revert/);
     // The message has to say what to DO, not just that something is wrong.
     expect(r.stderr).toContain("Identify whose branch");
+    // Both verdicts on the record. A refusal that only reports the proxy is
+    // the thing EFB-90 had to unpick — the reader needs to see that the
+    // content question was asked too, and also said no.
+    expect(r.stderr).toMatch(/ancestry:\s+✘/);
+    expect(r.stderr).toMatch(/content:\s+✘ 1 live commit\(s\)/);
+    expect(r.stderr).toContain("someone's unmerged branch");
+  });
+
+  // EFB-90. GitHub squash-merges rewrite the branch into a new commit, so the
+  // sha that was deployed survives nowhere in main's history even though every
+  // line it carried did. Ancestry cannot tell that apart from the case above;
+  // content can. Without this the check false-blocks every deploy in a
+  // squash-merging repo, which is what it did to PR #54's dc148f28 in prod.
+  //
+  // The fixture is the real shape: HEAD~1's tree re-committed onto HEAD~2 is
+  // patch-identical to HEAD~1 under a sha that is an ancestor of nothing.
+  it("clears a squash-merge orphan whose content already landed in HEAD", async () => {
+    const orphan = git(
+      "commit-tree",
+      git("rev-parse", "HEAD~1^{tree}"),
+      "-p",
+      "HEAD~2",
+      "-m",
+      "branch tip as deployed, before the squash rewrote it",
+    );
+    serve({ ok: true, git_sha: orphan });
+    const r = await run();
+    expect(r.code).toBe(0);
+    // Names which check cleared it, so the audit trail says WHY this deploy
+    // went out over a refusing proxy rather than just that it did.
+    expect(r.stdout).toContain("predeploy: squash");
+    expect(r.stdout).toContain("NOT an ancestor");
+    expect(r.stdout).toMatch(/already landed in HEAD's history/);
+  });
+
+  // The cheapest fallback, and the strongest: if the trees match there is no
+  // diff for a deploy to revert, whatever the shas say. (This was EFB-82's
+  // refusal fixture — it asserted "unmerged branch" while holding HEAD's exact
+  // content, so under a content check it is now, correctly, an allow.)
+  it("clears a non-ancestor whose tree is identical to HEAD's", async () => {
+    const twin = git("commit-tree", git("rev-parse", "HEAD^{tree}"), "-p", "HEAD~1", "-m", "same content, different sha");
+    serve({ ok: true, git_sha: twin });
+    const r = await run();
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("predeploy: tree");
+    expect(r.stdout).toContain("live tree == HEAD tree");
+  });
+
+  // Rebase-merge replays each commit under a new sha instead of collapsing
+  // them, so the cumulative-diff test misses and the per-commit one catches
+  // it. Covered now rather than after it bites: it is one `gh pr merge` flag
+  // away from being this repo's default, and the failure it would produce is
+  // the same false refusal.
+  it("clears a rebase-merge replay, where each commit landed separately", async () => {
+    // Two commits' worth of work, re-parented onto their own base: no single
+    // commit in HEAD carries the whole diff, but each half is in there.
+    const replayed = git(
+      "commit-tree",
+      git("rev-parse", "HEAD~1^{tree}"),
+      "-p",
+      git("commit-tree", git("rev-parse", "HEAD~2^{tree}"), "-p", "HEAD~3", "-m", "replayed 1/2"),
+      "-m",
+      "replayed 2/2",
+    );
+    serve({ ok: true, git_sha: replayed });
+    const r = await run();
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/predeploy: (replay|squash)/);
+  });
+
+  // Fail-safe. The fallback exists to overturn a refusal, so its own failure
+  // must never read as permission: an unanswered question is not an answer.
+  it("REFUSES when live shares no history with HEAD and content cannot be compared", async () => {
+    const unrelated = git(
+      "commit-tree",
+      treeWithNovelFile("efb-90-unrelated-fixture.txt", "from another repository entirely\n"),
+      "-m",
+      "parentless root commit",
+    );
+    serve({ ok: true, git_sha: unrelated });
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("content fallback could not run");
+    expect(r.stderr).toContain("the refusal stands");
   });
 
   it("REFUSES an unstamped prod by default, and says how to proceed", async () => {
