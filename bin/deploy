@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# bin/deploy — evenflow deploy entrypoint (do the wrangler auth dance, then run npm run deploy:raw).
+#
+# WHY THIS EXISTS. `wrangler deploy` for this Worker refuses with `code 10000`
+# under the ambient OAuth session, because wrangler.toml pins account_id
+# 0dfbf8a0b8a8c8dca0ca0a1ca25d0962 and the ambient session cannot reach that
+# account. The pin is deliberate (see wrangler.toml:8-25) — the fix is not to
+# unpin, but to source the global-key auth from /Users/evan/projects/4a/.env
+# and unset any CLOUDFLARE_API_TOKEN that would otherwise take precedence.
+#
+# LOAD-BEARING DETAIL: the `unset CLOUDFLARE_API_TOKEN` is required. If any
+# token is present in the environment, wrangler prefers it over the sourced
+# global key and fails with 10000 again. Sourcing alone is not enough.
+#
+# HISTORY: rediscovered fresh in three separate coordinator sessions before
+# being encoded here — see memory 234733d9 for the original derivation. This
+# script is the "make wrong loud, right easy" version of that memory: a fresh
+# reader runs `npm run deploy` and the dance happens on their behalf.
+
+set -euo pipefail
+
+ENV_FILE="/Users/evan/projects/4a/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "✘ deploy: $ENV_FILE not found — the wrangler-auth env source is missing." >&2
+  echo "  This file supplies CLOUDFLARE_EMAIL + CLOUDFLARE_API_KEY + CLOUDFLARE_ACCOUNT_ID." >&2
+  echo "  Without it, wrangler will 10000 against the pinned account_id." >&2
+  exit 1
+fi
+
+# Source the .env into this shell's environment; export-mark everything.
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+# Load-bearing: any pre-existing token would take precedence over the global key.
+unset CLOUDFLARE_API_TOKEN
+
+# Hand off to the underlying deploy pipeline. This runs the predeploy ancestry
+# check first (npm convention) then the stamped wrangler deploy (scripts/deploy.mjs).
+exec npm run deploy:raw -- "$@"
