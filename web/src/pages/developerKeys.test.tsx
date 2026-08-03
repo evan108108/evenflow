@@ -7,7 +7,7 @@ import { render } from "solid-js/web";
 import { MemoryRouter, Route, createMemoryHistory } from "@solidjs/router";
 import { DeveloperKeys } from "./DeveloperKeys";
 import { Docs } from "./Docs";
-import { REST_SECTIONS, MCP_TOOLS } from "./docs/rest-spec";
+import { pathOf, REST_SECTIONS, MCP_TOOLS } from "./docs/rest-spec";
 
 const KEYS = [
   { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null },
@@ -124,7 +124,7 @@ describe("Docs", () => {
     const text = container.textContent!;
     for (const section of REST_SECTIONS) {
       expect(text).toContain(section.title);
-      for (const e of section.endpoints) expect(text).toContain(e.path);
+      for (const e of section.endpoints) expect(text).toContain(pathOf(e));
     }
     for (const tool of MCP_TOOLS) expect(text).toContain(tool.name);
     expect(text).toContain("https://evenflow.work/mcp");

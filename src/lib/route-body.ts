@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { callerPubkey } from "../authz";
 import type { Claims } from "../effects";
 import type { AppHonoEnv } from "../http";
-import { QueryValidationError, ValidationError } from "../routes/errors";
+import { QueryValidationError, ValidationError } from "./errors";
 import { canonicalizeIdentityRef } from "./identity";
 
 /**

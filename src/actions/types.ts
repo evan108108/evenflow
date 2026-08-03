@@ -53,6 +53,18 @@ export type ActionInput<Body = undefined> = {
    * already happened by the time it runs.
    */
   readonly claims: Claims;
+  /**
+   * The caller's raw bearer token, or "" when the route does not need it.
+   *
+   * A field rather than an extra positional argument on the handful of actions
+   * that use it. `ensurePersonalOrg` and `upsertMembership` publish signed
+   * kind-30521 grants ON THE CALLER'S BEHALF, which is business logic that
+   * happens to need the credential — and a token threaded through a second
+   * parameter would be spelled differently by every family that hit the need.
+   * It travels with `claims` because it belongs to the same caller and the
+   * same trust domain.
+   */
+  readonly token: string;
   /** The org this request is scoped to, or null on the bare mount. */
   readonly orgSlug: string | null;
   /** Path parameters, already extracted. */
@@ -89,9 +101,11 @@ export const actionInput = <Body = undefined, C extends Claims | null = Claims>(
   options: {
     readonly query?: Readonly<Record<string, string | undefined>>;
     readonly orgSlug?: string | null;
+    readonly token?: string;
   } = {},
 ): Omit<ActionInput<Body>, "claims"> & { readonly claims: C } => ({
   claims,
+  token: options.token ?? "",
   orgSlug: options.orgSlug ?? null,
   params,
   query: options.query ?? {},

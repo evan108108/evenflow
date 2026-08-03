@@ -3,34 +3,22 @@
 // the switch below matches on _tag, so either class works.
 
 import type { Context } from "hono";
-import { Cause, Data, Effect, Option } from "effect";
+import { Cause, Effect, Option } from "effect";
 import type { AppHonoEnv } from "../http";
+import { ValidationError } from "../lib/errors";
 
-export class ValidationError extends Data.TaggedError("ValidationError")<{
-  readonly reason: string;
-}> {}
-/**
- * EFB-71 — a request's QUERY STRING was malformed, as opposed to its body.
- *
- * Separate from `ValidationError` for one reason: the envelope. Every 400 in
- * this app answered `{"error":"invalid-body"}`, which on a GET that carries no
- * body at all is a small lie of exactly the kind this ticket exists to delete —
- * a caller who sent a bad query param was told to go look at a body they never
- * wrote. The `reason` grammar is unchanged (`<key>-unknown`, `<key>`), because
- * callers already parse it; only the envelope tells the truth now.
- */
-export class QueryValidationError extends Data.TaggedError("QueryValidationError")<{
-  readonly reason: string;
-}> {}
-export class ConflictError extends Data.TaggedError("ConflictError")<{
-  readonly reason: string;
-}> {}
-export class NotFoundError extends Data.TaggedError("NotFoundError")<{
-  readonly reason: string;
-}> {}
-export class RateLimitError extends Data.TaggedError("RateLimitError")<{
-  readonly reason: string;
-}> {}
+// The failure vocabulary lives in src/lib/errors.ts now, so an action can
+// raise it without importing from the route layer. Re-exported here because
+// every existing route imports these from this module; the routes repoint at
+// the library directly during integration, once the per-family migrations have
+// landed and that edit stops colliding with five in-flight branches.
+export {
+  ValidationError,
+  QueryValidationError,
+  ConflictError,
+  NotFoundError,
+  RateLimitError,
+} from "../lib/errors";
 
 interface TaggedFailure {
   readonly _tag: string;
