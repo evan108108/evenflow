@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:src": "tsc --noEmit -p tsconfig.src.json",
     "typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
+    "typecheck:web": "npm --prefix web run typecheck",
     "cf-typegen": "wrangler types",
     "d1:migrate:local": "wrangler d1 migrations apply evenflow --local",
     "d1:migrate:remote": "wrangler d1 migrations apply evenflow --remote",
@@ -26,7 +27,7 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "check:rest-conventions": "node scripts/check-rest-conventions.mjs",
-    "check": "npm run typecheck:src && npm run check:boundary && npm run check:boundary-query && npm run check:rest-conventions"
+    "check": "npm run typecheck:src && npm run typecheck:web && npm run check:boundary && npm run check:boundary-query && npm run check:rest-conventions"
   },
   "dependencies": {
     "@noble/ciphers": "2.1.1",
