@@ -36,6 +36,7 @@ import {
   type CommentShape,
 } from "../shapes";
 import { asShortId } from "../slug";
+import { ProvenanceFromCaller, ProvenanceFromSystem } from "../lib/route-body";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -247,14 +248,23 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
         actor: claims.login,
         details: { issue: issue.id, comment: comment.id },
       });
-      yield* emitSecureBoardEvent(issue.board_id, {
-        kind: "comment.created",
-        board_id: issue.board_id,
-        issue_id: issue.id,
-        comment_id: comment.id,
-        at_ms: now,
-        payload: { comment },
-      });
+      // The caller IS the author here — `author_pubkey` above is
+      // `callerPubkey(claims)`, the same derivation `ProvenanceFromCaller`
+      // uses — so the 30552's `author_pubkey` is byte-identical to what the
+      // stored-actor read produced before EFB-63, and now says so at the one
+      // frame that can prove it (EFB-63).
+      yield* emitSecureBoardEvent(
+        issue.board_id,
+        {
+          kind: "comment.created",
+          board_id: issue.board_id,
+          issue_id: issue.id,
+          comment_id: comment.id,
+          at_ms: now,
+          payload: { comment },
+        },
+        ProvenanceFromCaller(claims),
+      );
       return { comment: { ...comment, attachments } };
     });
     return runJson(c, program, 201);
@@ -358,14 +368,26 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       if (issueRow !== null) {
         const issue = parseIssueRow(issueRow);
         const now = yield* Clock.currentTimeMillis;
-        yield* emitSecureBoardEvent(issue.board_id, {
-          kind: "comment.deleted",
-          board_id: issue.board_id,
-          issue_id: issue.id,
-          comment_id: comment.id,
-          at_ms: now,
-          payload: { comment_id: comment.id, issue_id: issue.id },
-        });
+        // NOT the caller, though the caller is in scope and deleting is
+        // certainly an act. The 30552's actor slot is the comment's AUTHOR,
+        // and a tombstone that named the deleter would publish a signed,
+        // unretractable claim that they wrote someone else's comment — EFB-33's
+        // failure at a new callsite. A tombstone is administrative: nobody to
+        // attribute, which is what `ProvenanceFromSystem` means. This is also
+        // what keeps the wire byte-identical — the pre-EFB-63 publisher found
+        // no comment row on this payload and emitted the empty pubkey too.
+        yield* emitSecureBoardEvent(
+          issue.board_id,
+          {
+            kind: "comment.deleted",
+            board_id: issue.board_id,
+            issue_id: issue.id,
+            comment_id: comment.id,
+            at_ms: now,
+            payload: { comment_id: comment.id, issue_id: issue.id },
+          },
+          ProvenanceFromSystem(),
+        );
       }
       return { deleted: true };
     });

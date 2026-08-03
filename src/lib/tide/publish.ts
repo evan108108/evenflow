@@ -62,21 +62,25 @@ export const publishTide = (
 ): Effect.Effect<string | null, DbError, Db | Audience | BoardEmitter> =>
   Effect.gen(function* () {
     const { subject, reading } = input;
-    const eventId = yield* emitSecureBoardEvent(subject.board_id, {
-      kind: TIDE_EVENT_KIND,
-      board_id: subject.board_id,
-      ...(subject.sprint_id === null ? {} : { sprint_id: subject.sprint_id }),
-      entity_id: tideEntityId(subject, reading.day),
-      at_ms: input.at_ms,
-      payload: {
-        day: reading.day,
-        committed_pts: reading.committed_pts,
-        done_pts: reading.done_pts,
-        remaining_pts: reading.remaining_pts,
-        adds_today: reading.adds_today,
-        drops_today: reading.drops_today,
+    const eventId = yield* emitSecureBoardEvent(
+      subject.board_id,
+      {
+        kind: TIDE_EVENT_KIND,
+        board_id: subject.board_id,
+        ...(subject.sprint_id === null ? {} : { sprint_id: subject.sprint_id }),
+        entity_id: tideEntityId(subject, reading.day),
+        at_ms: input.at_ms,
+        payload: {
+          day: reading.day,
+          committed_pts: reading.committed_pts,
+          done_pts: reading.done_pts,
+          remaining_pts: reading.remaining_pts,
+          adds_today: reading.adds_today,
+          drops_today: reading.drops_today,
+        },
       },
-    });
+      null,
+    );
     // A private board is done here: emitSecureBoardEvent already gift-wrapped
     // and published the 30565, and gave us its rumor id.
     if (eventId !== null) {

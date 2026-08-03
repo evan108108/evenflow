@@ -55,6 +55,7 @@ import {
 import { evaluateDelivery, parseDelivery, type TargetIssue } from "../github/engine";
 import { WEBHOOK_ACTOR_FALLBACK, executePlan, type AppliedAction } from "../github/execute";
 import { emitSecureBoardEvent } from "../audiences";
+import { ProvenanceFromStoredActor } from "../lib/route-body";
 
 /**
  * EFB-66 — turn the transitions a webhook applied into BoardEvents.
@@ -128,22 +129,39 @@ const emitTransitionEvents = (
         continue;
       }
       const isColumn = t.kind === "set_column";
-      yield* emitSecureBoardEvent(boardId, {
-        kind: isColumn ? "issue.transitioned" : "issue.container_changed",
-        board_id: boardId,
-        issue_id: t.issue_id,
-        at_ms: now,
-        status_change_id: t.statusChangeId,
-        payload: {
-          issue,
-          // Same reason the UI path carries it: nothing on the issue row records
-          // WHO moved the card, and the 30553 attributes the change.
-          actor_pubkey: actor,
-          ...(isColumn
-            ? { from_status: t.fromStatus ?? null, to_status: t.toStatus ?? null }
-            : { from_container: t.fromContainer ?? null, to_container: t.toContainer ?? null }),
+      yield* emitSecureBoardEvent(
+        boardId,
+        {
+          kind: isColumn ? "issue.transitioned" : "issue.container_changed",
+          board_id: boardId,
+          issue_id: t.issue_id,
+          at_ms: now,
+          status_change_id: t.statusChangeId,
+          payload: {
+            issue,
+            // Same reason the UI path carries it: nothing on the issue row records
+            // WHO moved the card, and the 30553 attributes the change. Kept for
+            // SSE consumers; the publisher reads the Provenance below (EFB-63).
+            actor_pubkey: actor,
+            ...(isColumn
+              ? { from_status: t.fromStatus ?? null, to_status: t.toStatus ?? null }
+              : { from_container: t.fromContainer ?? null, to_container: t.toContainer ?? null }),
+          },
         },
-      });
+        // NOT `route.caller`: this request's authenticated caller is GitHub's
+        // webhook delivery, not the person who moved the card. `actor` is
+        // `github:<login>` resolved from the PR author, or the fallback when
+        // the delivery named none — a stored/derived identity the server is
+        // re-attesting, which is exactly `ProvenanceFromStoredActor`.
+        //
+        // There IS a real external human here, and none of the three sources
+        // says so; `webhook.external` would. Deliberately not minted in EFB-63 —
+        // ProvenanceSource is a closed union (BOUNDARY_DISCIPLINE) and widening
+        // it is a documented architectural claim, not a side effect of a
+        // plumbing ticket. Filed as a follow-up. `audit.system` is honest in the
+        // meantime: no live caller acted, and the pubkey is one we looked up.
+        ProvenanceFromStoredActor(actor),
+      );
     }
   });
 

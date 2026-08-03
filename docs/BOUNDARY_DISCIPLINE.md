@@ -119,6 +119,26 @@ Over-migration widens the type without adding safety and dilutes what `Provenanc
 
 Only `.pubkey` reaches the wire. `source` exists to make the callsite name the role, and adding it to the event as a tag would be an on-wire compatibility change requiring a mirrored update in the gateway's validators. Events built through `Provenance` are byte-identical to the ones built before it — which is a property worth *proving* by diffing builder output against the previous implementation, not asserting.
 
+### Carry it in the signature, never in a payload
+
+EFB-63 had to move Provenance from the route (where the caller is in scope) to the publisher (where the builders are), and the obvious carrier — a field on `BoardEvent.payload` — is the wrong one. The general rule it produced:
+
+> **A compile-time-only invariant belongs in the function signature. Put it in a payload and the type has to be rebuilt at every read site, which means every read site can lie.**
+
+Three specific reasons, in descending order of how badly they bite:
+
+1. **A bag read reopens the hole the type closed.** `payload` is `unknown`, so a reader must rebuild the struct with an unchecked cast — and a `route.caller` that survives a cast is one asserted with *no Claims in scope*. `ProvenanceFromCaller` takes `Claims` and not a string precisely so that cannot be spelled; a payload round-trip hands the spelling back.
+2. **`BoardEvent` is a wire.** `BoardDO.emit` JSON-stringifies it to every SSE subscriber, and `web/src/effects/SseStream.ts` mirrors the type under a compile-time equality assert (EFB-34). Putting a compile-time-only device on the event puts it on a wire — just not the substrate one the byte-identical rule guards.
+3. **It usually isn't necessary.** The publish is awaited inline inside the request, so the value the route constructed reaches the builder untouched.
+
+Make the parameter **required and positional**, with `null` as the explicit "this kind has no actor slot" value. Optional would let a callsite reach the silent state by forgetting rather than by deciding; `null` is a statement, absence is not.
+
+### Who may assert `route.caller`
+
+`source` names the semantic role **at the frame that constructs it**, not at the frame that consumes it. The route asserts `route.caller` because it holds the Claims; the publisher forwards that value and asserts nothing. Those are different acts, and only the first needs Claims.
+
+EFB-58 read the same situation the other way and wrote a postmortem comment in `publish.ts` saying `route.caller` could never be honest there. That was right about the *function* — it has no Claims — and wrong about the *pipeline*, which does. If you find yourself unable to name a source honestly, the fix is usually to construct the value one frame earlier, not to widen the union.
+
 ### Assert the substitution is impossible
 
 Guard the near-miss with `@ts-expect-error`, which fails the build if the line below it *does* compile:

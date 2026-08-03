@@ -222,7 +222,7 @@ describe("issues.imported — substrate publish", () => {
       at_ms: 1_000,
       payload: { import_id: IMPORT_ID, count: 3, created: 3, skipped: 0, unassigned: 0 },
     };
-    expect(templatesFor(board, event)).toEqual([]);
+    expect(templatesFor(board, event, null)).toEqual([]);
   });
 });
 
