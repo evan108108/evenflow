@@ -251,21 +251,17 @@ export const ImportSection = (props: { apiBase: string }) => {
   );
 
   return (
-    <section class="space-y-4">
-      <header>
-        <h2 class="text-lg font-medium">Import from CSV</h2>
-        <p class="text-sm opacity-70">
-          Paste a canonical Evenflow CSV, or upload one. Coming from Linear, Jira
-          or GitHub? Export to CSV and ask your AI assistant to convert it —{" "}
-          <a class="underline" href="/docs#import">
-            the docs page
-          </a>{" "}
-          has a ready-made prompt for each.
-        </p>
-      </header>
+    <section class="settings-section">
+      <h2>Import from CSV</h2>
+      <p class="muted">
+        Paste a canonical Evenflow CSV, or upload one. Coming from Linear, Jira
+        or GitHub? Export to CSV and ask your AI assistant to convert it —{" "}
+        <a href="/docs#import">the docs page</a> has a ready-made prompt for
+        each.
+      </p>
 
       <Show when={error() !== null}>
-        <p class="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">{error()}</p>
+        <p class="muted" role="alert">{error()}</p>
       </Show>
 
       {/* ── the report from a completed import ─────────────────────────── */}
@@ -276,11 +272,11 @@ export const ImportSection = (props: { apiBase: string }) => {
       */}
       <Show when={report()}>
         {(r) => (
-          <div class="rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-            <p class="font-medium">
-              Imported {r().counts.created} of {r().counts.total} rows.
+          <div class="callout">
+            <p>
+              <strong>Imported {r().counts.created} of {r().counts.total} rows.</strong>
             </p>
-            <ul class="mt-1 space-y-0.5 opacity-80">
+            <ul>
               <Show when={r().counts.skipped > 0}>
                 <li>{r().counts.skipped} skipped — already imported, or a value this board has no column for.</li>
               </Show>
@@ -300,9 +296,9 @@ export const ImportSection = (props: { apiBase: string }) => {
               </Show>
             </ul>
             <Show when={r().rows.some((row) => row.status !== "created")}>
-              <details class="mt-2">
-                <summary class="cursor-pointer">Row detail</summary>
-                <ul class="mt-1 space-y-0.5 text-xs opacity-80">
+              <details>
+                <summary>Row detail</summary>
+                <ul>
                   <For each={r().rows.filter((row) => row.status !== "created")}>
                     {(row) => (
                       <li>
@@ -321,7 +317,7 @@ export const ImportSection = (props: { apiBase: string }) => {
             </Show>
             <button
               type="button"
-              class="mt-2 rounded border px-2 py-1 hover:bg-white/10"
+              class="btn btn-small"
               onClick={reset}
             >
               Import another
@@ -332,24 +328,23 @@ export const ImportSection = (props: { apiBase: string }) => {
 
       {/* ── input ──────────────────────────────────────────────────────── */}
       <Show when={report() === null}>
-        <div class="space-y-2">
+        <div class="form-stack">
           <textarea
-            class="h-40 w-full rounded border bg-transparent p-2 font-mono text-xs"
+            rows={10}
             placeholder={example()}
             value={text()}
             onInput={(e) => setText(e.currentTarget.value)}
             onBlur={parse}
           />
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="button-row">
             <input
               type="file"
               accept=".csv,text/csv"
-              class="text-sm"
               onChange={(e) => void onFile(e.currentTarget.files?.[0])}
             />
             <button
               type="button"
-              class="rounded border px-2 py-1 text-sm hover:bg-white/10"
+              class="btn"
               onClick={parse}
             >
               Preview
@@ -359,9 +354,9 @@ export const ImportSection = (props: { apiBase: string }) => {
 
         <Show when={parsed()}>
           {(p) => (
-            <div class="space-y-2">
+            <div class="form-stack">
               <Show when={p().unknownColumns.length > 0}>
-                <p class="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">
+                <p class="muted" role="alert">
                   Unrecognised column{p().unknownColumns.length > 1 ? "s" : ""}:{" "}
                   <code>{p().unknownColumns.join(", ")}</code>. The canonical
                   columns are <code>{CANONICAL_COLUMNS.join(", ")}</code>. Rename
@@ -370,19 +365,21 @@ export const ImportSection = (props: { apiBase: string }) => {
               </Show>
 
               <Show when={p().rows.length > MAX_IMPORT_ROWS}>
-                <p class="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">
+                <p class="muted" role="alert">
                   {p().rows.length} rows — the limit is {MAX_IMPORT_ROWS} per
                   import. Split the file and import it in batches.
                 </p>
               </Show>
 
               <Show when={badRows().length > 0}>
-                <div class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-                  <p class="font-medium">
-                    {badRows().length} row{badRows().length > 1 ? "s" : ""} can't
-                    be imported yet:
+                <div class="callout">
+                  <p>
+                    <strong>
+                      {badRows().length} row{badRows().length > 1 ? "s" : ""} can't
+                      be imported yet:
+                    </strong>
                   </p>
-                  <ul class="mt-1 space-y-0.5 text-xs">
+                  <ul>
                     <For each={badRows().slice(0, PREVIEW_ROWS)}>
                       {(r) => (
                         <li>
@@ -392,40 +389,40 @@ export const ImportSection = (props: { apiBase: string }) => {
                     </For>
                   </ul>
                   <Show when={badRows().length > PREVIEW_ROWS}>
-                    <p class="mt-1 text-xs opacity-70">
+                    <p class="muted">
                       …and {badRows().length - PREVIEW_ROWS} more.
                     </p>
                   </Show>
                 </div>
               </Show>
 
-              <p class="text-sm opacity-70">
+              <p class="muted">
                 {p().rows.length} row{p().rows.length === 1 ? "" : "s"} parsed,{" "}
                 {validRows().length} ready to import.
               </p>
 
-              <div class="overflow-x-auto rounded border">
-                <table class="w-full text-left text-xs">
-                  <thead class="opacity-60">
+              <div class="table-scroll">
+                <table class="rules-table">
+                  <thead>
                     <tr>
-                      <th class="p-2">#</th>
-                      <th class="p-2">Title</th>
-                      <th class="p-2">Type</th>
-                      <th class="p-2">Status</th>
-                      <th class="p-2">Container</th>
-                      <th class="p-2">Labels</th>
+                      <th>#</th>
+                      <th>Title</th>
+                      <th>Type</th>
+                      <th>Status</th>
+                      <th>Container</th>
+                      <th>Labels</th>
                     </tr>
                   </thead>
                   <tbody>
                     <For each={p().rows.slice(0, PREVIEW_ROWS)}>
                       {(r) => (
                         <tr class={r.error === null ? "" : "bg-red-500/10"}>
-                          <td class="p-2 opacity-60">{r.index + 1}</td>
-                          <td class="p-2">{String(r.canonical["title"] ?? "—")}</td>
-                          <td class="p-2">{String(r.canonical["type"] ?? "task")}</td>
-                          <td class="p-2">{String(r.canonical["status"] ?? "—")}</td>
-                          <td class="p-2">{String(r.canonical["container"] ?? "backlog")}</td>
-                          <td class="p-2">
+                          <td>{r.index + 1}</td>
+                          <td>{String(r.canonical["title"] ?? "—")}</td>
+                          <td>{String(r.canonical["type"] ?? "task")}</td>
+                          <td>{String(r.canonical["status"] ?? "—")}</td>
+                          <td>{String(r.canonical["container"] ?? "backlog")}</td>
+                          <td>
                             {((r.canonical["labels"] as string[] | undefined) ?? []).join(", ")}
                           </td>
                         </tr>
@@ -435,15 +432,15 @@ export const ImportSection = (props: { apiBase: string }) => {
                 </table>
               </div>
               <Show when={p().rows.length > PREVIEW_ROWS}>
-                <p class="text-xs opacity-60">
+                <p class="muted">
                   Showing the first {PREVIEW_ROWS} of {p().rows.length} rows.
                 </p>
               </Show>
 
-              <div class="flex gap-2">
+              <div class="button-row">
                 <button
                   type="button"
-                  class="rounded border px-3 py-1 text-sm hover:bg-white/10 disabled:opacity-40"
+                  class="btn btn-solid"
                   disabled={busy() || blocked()}
                   onClick={() => void submit()}
                 >
@@ -451,13 +448,13 @@ export const ImportSection = (props: { apiBase: string }) => {
                 </button>
                 <button
                   type="button"
-                  class="rounded border px-3 py-1 text-sm hover:bg-white/10"
+                  class="btn"
                   onClick={reset}
                 >
                   Cancel
                 </button>
               </div>
-              <p class="text-xs opacity-60">
+              <p class="muted">
                 Re-importing the same file is safe: rows already imported (matched
                 by <code>external_url</code>) are skipped rather than duplicated.
               </p>

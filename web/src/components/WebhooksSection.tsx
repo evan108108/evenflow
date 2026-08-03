@@ -156,14 +156,12 @@ export const WebhooksSection = (props: { apiBase: string }) => {
     guard(() => api((c) => c.delete(`${url()}/${s.id}`)));
 
   return (
-    <section class="space-y-4">
-      <header>
-        <h2 class="text-lg font-medium">Webhook subscriptions</h2>
-        <p class="text-sm opacity-70">
+    <section class="settings-section">
+      <h2>Webhook subscriptions</h2>
+      <p class="muted">
           POST board events to a URL you control. Each delivery is signed with
           HMAC-SHA256 in the <code>x-evenflow-signature</code> header.
-        </p>
-      </header>
+      </p>
 
       {/*
         EFB-62 replaced a hard block here with an explanation. The old copy said
@@ -174,7 +172,7 @@ export const WebhooksSection = (props: { apiBase: string }) => {
         against the subscription owner's board membership at send time.
       */}
       <Show when={isPrivate()}>
-        <p class="rounded border border-sky-500/40 bg-sky-500/10 p-3 text-sm">
+        <p class="callout">
           This board is private. Webhooks work, with one difference: each
           delivery is checked against the subscribing member's access at send
           time, so a subscription stops delivering if its owner leaves the
@@ -185,20 +183,19 @@ export const WebhooksSection = (props: { apiBase: string }) => {
 
       <Show when={true}>
         <Show when={error() !== null}>
-          <p class="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">{error()}</p>
+          <p class="muted" role="alert">{error()}</p>
         </Show>
 
         <Show when={freshSecret() !== null}>
-          <div class="rounded border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm">
-            <p class="font-medium">Signing secret — copy it now.</p>
-            <p class="opacity-80">
+          <div class="callout">
+            <p><strong>Signing secret — copy it now.</strong></p>
+            <p class="muted">
               This is the only time it's shown. If you lose it, delete the
               subscription and create a new one.
             </p>
-            <code class="mt-2 block break-all rounded bg-black/20 p-2">{freshSecret()}</code>
+            <code class="secret-once">{freshSecret()}</code>
             <button
               type="button"
-              class="mt-2 rounded border px-2 py-1 hover:bg-white/10"
               onClick={() => {
                 void navigator.clipboard?.writeText(freshSecret() ?? "");
                 setFreshSecret(null);
@@ -212,18 +209,18 @@ export const WebhooksSection = (props: { apiBase: string }) => {
         {/* ── list ─────────────────────────────────────────────────────── */}
         <Show
           when={subscriptions().length > 0}
-          fallback={<p class="text-sm opacity-70">No subscriptions yet.</p>}
+          fallback={<p class="muted">No subscriptions yet.</p>}
         >
-          <ul class="space-y-2">
+          <ul class="form-stack">
             <For each={subscriptions()}>
               {(s) => (
-                <li class="rounded border p-3">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <p class="font-medium">
+                <li class="callout">
+                  <div class="stack-row">
+                    <div class="grow-min">
+                      <p>
                         {s.name}
                         <Show when={!s.enabled}>
-                          <span class="ml-2 text-xs opacity-60">(disabled)</span>
+                          <span class="muted">(disabled)</span>
                         </Show>
                         {/*
                           EFB-62 — the whole reason `member_ok` is on the wire.
@@ -235,7 +232,7 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                         */}
                         <Show when={s.enabled && !s.member_ok}>
                           <span
-                            class="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-200"
+                            class="badge-warn"
                             title={
                               "Deliveries are paused: this subscription's owner" +
                               " is no longer a member of this board. Re-add them" +
@@ -246,8 +243,8 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                           </span>
                         </Show>
                       </p>
-                      <p class="truncate text-sm opacity-70">{s.url}</p>
-                      <p class="mt-1 text-xs opacity-60">
+                      <p class="muted">{s.url}</p>
+                      <p class="muted">
                         {s.event_kinds.join(", ")}
                         <Show when={s.predicate?.assignee !== undefined}>
                           {" · assignee="}
@@ -255,10 +252,10 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                         </Show>
                       </p>
                     </div>
-                    <div class="flex shrink-0 gap-2">
+                    <div class="button-row">
                       <button
                         type="button"
-                        class="rounded border px-2 py-1 text-sm hover:bg-white/10"
+                        class="btn btn-small"
                         disabled={busy()}
                         onClick={() => void setEnabled(s, !s.enabled)}
                       >
@@ -266,7 +263,7 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                       </button>
                       <button
                         type="button"
-                        class="rounded border px-2 py-1 text-sm hover:bg-white/10"
+                        class="btn btn-small"
                         onClick={() => {
                           setOpenLog(openLog() === s.id ? null : s.id);
                           void refetchLog();
@@ -276,7 +273,7 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                       </button>
                       <button
                         type="button"
-                        class="rounded border border-red-500/40 px-2 py-1 text-sm hover:bg-red-500/10"
+                        class="btn btn-small btn-danger"
                         disabled={busy()}
                         onClick={() => void remove(s)}
                       >
@@ -286,15 +283,15 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                   </div>
 
                   <Show when={openLog() === s.id}>
-                    <div class="mt-3 border-t pt-3">
+                    <div class="callout">
                       <Show
                         when={(log() ?? []).length > 0}
-                        fallback={<p class="text-sm opacity-70">No deliveries yet.</p>}
+                        fallback={<p class="muted">No deliveries yet.</p>}
                       >
-                        <table class="w-full text-left text-xs">
-                          <thead class="opacity-60">
+                        <table class="rules-table">
+                          <thead>
                             <tr>
-                              <th class="py-1">Event</th>
+                              <th>Event</th>
                               <th>Queued</th>
                               <th>Attempted</th>
                               <th>Tries</th>
@@ -304,8 +301,8 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                           <tbody>
                             <For each={log() ?? []}>
                               {(d) => (
-                                <tr class="border-t border-white/10">
-                                  <td class="py-1">{d.event_kind}</td>
+                                <tr>
+                                  <td>{d.event_kind}</td>
                                   <td>{when(d.created_at_ms)}</td>
                                   <td>{when(d.attempted_at_ms)}</td>
                                   <td>{d.attempt_count}</td>
@@ -319,11 +316,11 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                                     */}
                                     <Show
                                       when={!d.pending}
-                                      fallback={<span class="opacity-60">pending</span>}
+                                      fallback={<span class="muted">pending</span>}
                                     >
                                       {d.status_code ?? "network error"}
                                       <Show when={!d.terminal}>
-                                        <span class="ml-1 opacity-60">(retrying)</span>
+                                        <span class="muted">(retrying)</span>
                                       </Show>
                                     </Show>
                                   </td>
@@ -342,24 +339,24 @@ export const WebhooksSection = (props: { apiBase: string }) => {
         </Show>
 
         {/* ── add ──────────────────────────────────────────────────────── */}
-        <div class="space-y-2 rounded border p-3">
-          <p class="font-medium">Add a subscription</p>
+        <div class="form-stack">
+          <h3>Add a subscription</h3>
           <input
-            class="w-full rounded border bg-transparent px-2 py-1"
+            type="text"
             placeholder="Name (e.g. Slack bridge)"
             value={name()}
             onInput={(e) => setName(e.currentTarget.value)}
           />
           <input
-            class="w-full rounded border bg-transparent px-2 py-1"
+            type="text"
             placeholder="https://example.com/hook"
             value={target()}
             onInput={(e) => setTarget(e.currentTarget.value)}
           />
-          <div class="flex flex-wrap gap-2">
+          <div class="checkbox-grid">
             <For each={EVENT_KINDS}>
               {(k) => (
-                <label class="flex items-center gap-1 text-xs">
+                <label>
                   <input
                     type="checkbox"
                     checked={kinds().includes(k)}
@@ -371,19 +368,24 @@ export const WebhooksSection = (props: { apiBase: string }) => {
             </For>
           </div>
           <input
-            class="w-full rounded border bg-transparent px-2 py-1"
+            type="text"
             placeholder="Only issues assigned to (optional pubkey — yours, unless you're an admin)"
             value={assignee()}
             onInput={(e) => setAssignee(e.currentTarget.value)}
           />
-          <button
-            type="button"
-            class="rounded border px-3 py-1 hover:bg-white/10 disabled:opacity-50"
-            disabled={busy() || name().trim() === "" || target().trim() === "" || kinds().length === 0}
-            onClick={() => void create()}
-          >
-            Add subscription
-          </button>
+          {/* In a .button-row rather than bare in the .form-stack: the stack is
+              a flex column, so a bare button would stretch to the full width of
+              the fields above it. */}
+          <div class="button-row">
+            <button
+              type="button"
+              class="btn btn-solid"
+              disabled={busy() || name().trim() === "" || target().trim() === "" || kinds().length === 0}
+              onClick={() => void create()}
+            >
+              Add subscription
+            </button>
+          </div>
         </div>
       </Show>
     </section>
