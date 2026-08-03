@@ -2,6 +2,7 @@
 // REST and MCP, hash-only storage, the last_used throttle, and the
 // keys-can't-manage-keys guard.
 
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { url } from "../src/routes-manifest";
 import { API_KEY_DISPLAY_PREFIX_LEN, API_KEY_PREFIX } from "../src/apikeys";
@@ -213,5 +214,242 @@ describe("GET /issues/:id?include=", () => {
 
     const bad = await h.app.request(`${url("issue.get", { id: issue.id })}?include=secrets`, { headers: jsonReq("GET").headers }, {});
     expect(bad.status).toBe(400);
+  });
+});
+
+// ── EFB-99: rotation ──────────────────────────────────────────────────────
+//
+// Rotation replaces a key's SECRET without changing who it authenticates as.
+// The interesting properties are all about what stays the same (owner, claims,
+// name, audit actor) and what stops (the old secret, eventually) — so these
+// assert equivalence and expiry, not just that a new string came back.
+
+interface RotatedKeyView extends KeyView {
+  rotated_at_ms: number | null;
+  rotated_to_id: string | null;
+}
+
+/** Default caller is the JWT session; pass a token to rotate AS that bearer. */
+const rotateKeyReq = (h: Harness, id: string, token?: string) =>
+  h.app.request(url("key.rotate", { id }), jsonReq("POST", undefined, token), {});
+
+const listKeys = async (h: Harness) => {
+  const res = await h.app.request(url("key.list"), { headers: jsonReq("GET").headers }, {});
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { keys: RotatedKeyView[] }).keys;
+};
+
+const GRACE_MS = 24 * 60 * 60 * 1000;
+
+describe("POST /api/v0/key/:id/rotate", () => {
+  it("mints a new secret for the same owner, inheriting the name", async () => {
+    const h = makeHarness();
+    const first = await mintKey(h, "deploy-bot");
+
+    const res = await rotateKeyReq(h, first.key.id);
+    expect(res.status).toBe(201);
+    const second = (await res.json()) as { key: RotatedKeyView; plaintext: string };
+
+    // A genuinely different secret, not a re-issue of the same one.
+    expect(second.plaintext).not.toBe(first.plaintext);
+    expect(second.key.prefix).not.toBe(first.key.prefix);
+    expect(second.key.id).not.toBe(first.key.id);
+    // The name is INHERITED, not re-supplied. Asserted against the STORED
+    // row, not just the response: the response echoes `row.name` and would
+    // keep reading "deploy-bot" even if a different string were written to
+    // the table. The stored value is the one that matters, because
+    // claimsForApiKey reads it back to synthesize `login`.
+    expect(second.key.name).toBe("deploy-bot");
+    const storedSuccessor = h.db.apiKeys.find((r) => r["id"] === second.key.id)!;
+    expect(storedSuccessor["name"]).toBe("deploy-bot");
+    // Same owner — the property that makes this a rotation rather than a
+    // new key that happens to exist.
+    expect(h.db.apiKeys.every((r) => r["pubkey"] === CALLER)).toBe(true);
+    // Storage still never holds a plaintext.
+    expect(JSON.stringify(h.db.apiKeys)).not.toContain(
+      second.plaintext.slice(API_KEY_DISPLAY_PREFIX_LEN),
+    );
+
+    // The predecessor is marked, and points at its successor.
+    const keys = await listKeys(h);
+    const old = keys.find((k) => k.id === first.key.id)!;
+    expect(old.rotated_at_ms).toBe(1_000_000);
+    expect(old.rotated_to_id).toBe(second.key.id);
+    // The successor is not itself rotated.
+    expect(keys.find((k) => k.id === second.key.id)!.rotated_at_ms).toBeNull();
+    expect(h.audit.events.some((e) => e.event_type === "api_key_rotated")).toBe(true);
+  });
+
+  it("keeps the audit actor identical across the rotation boundary", async () => {
+    // The consequence of name-inheritance, stated as behaviour rather than as
+    // a field comparison. claimsForApiKey synthesizes `login` as `key:<name>`,
+    // so if a rotation renamed the key, every audit row written after it would
+    // attribute to a different actor than every row before it — the trail
+    // would silently fork mid-incident, which is exactly when someone is
+    // reading it.
+    const h = makeHarness();
+    await createBoard(h);
+    const first = await mintKey(h, "automation");
+    const res = await rotateKeyReq(h, first.key.id);
+    const second = (await res.json()) as { key: RotatedKeyView; plaintext: string };
+
+    const write = await h.app.request(
+      url("issue.create", { slug: "kb" }),
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${second.plaintext}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: "Via the rotated key" }),
+      },
+      {},
+    );
+    expect(write.status).toBe(201);
+    expect(
+      h.audit.events.some((e) => e.event_type === "issue_created" && e.actor === "key:automation"),
+    ).toBe(true);
+    // And nothing attributed to a renamed variant.
+    expect(h.audit.events.every((e) => !String(e.actor ?? "").includes("rotated"))).toBe(true);
+  });
+
+  it("keeps BOTH keys authenticating during the grace window", async () => {
+    const h = makeHarness();
+    const first = await mintKey(h);
+    const res = await rotateKeyReq(h, first.key.id);
+    const second = (await res.json()) as { key: RotatedKeyView; plaintext: string };
+
+    // Immediately after rotation.
+    expect((await h.app.request(url("board.list"), evkReq(first.plaintext), {})).status).toBe(200);
+    expect((await h.app.request(url("board.list"), evkReq(second.plaintext), {})).status).toBe(200);
+
+    // One minute inside the window's far edge — still both.
+    vi.setSystemTime(1_000_000 + GRACE_MS - 60_000);
+    expect((await h.app.request(url("board.list"), evkReq(first.plaintext), {})).status).toBe(200);
+    expect((await h.app.request(url("board.list"), evkReq(second.plaintext), {})).status).toBe(200);
+  });
+
+  it("refuses the rotated key past the grace window, and revokes it on the way", async () => {
+    const h = makeHarness();
+    const first = await mintKey(h);
+    const res = await rotateKeyReq(h, first.key.id);
+    const second = (await res.json()) as { key: RotatedKeyView; plaintext: string };
+
+    vi.setSystemTime(1_000_000 + GRACE_MS + 1);
+    const stale = await h.app.request(url("board.list"), evkReq(first.plaintext), {});
+    expect(stale.status).toBe(401);
+    // The successor is unaffected — expiry is a property of the ROTATED row,
+    // not of the prefix or the owner.
+    expect((await h.app.request(url("board.list"), evkReq(second.plaintext), {})).status).toBe(200);
+
+    // The revoke is bookkeeping DOWNSTREAM of the refusal: the request was
+    // already rejected on the grace predicate, and the write records it.
+    const old = h.db.apiKeys.find((r) => r["id"] === first.key.id)!;
+    expect(old["revoked_at_ms"]).not.toBeNull();
+  });
+
+  it("answers a past-grace key the SAME 401 reason as a key that never existed", async () => {
+    // Probing must not distinguish "rotated" / "revoked" / "never existed" —
+    // a truer message would confirm the prefix once existed AND that its
+    // owner is actively managing it.
+    const h = makeHarness();
+    const first = await mintKey(h);
+    await rotateKeyReq(h, first.key.id);
+    vi.setSystemTime(1_000_000 + GRACE_MS + 1);
+
+    const stale = await h.app.request(url("board.list"), evkReq(first.plaintext), {});
+    const garbage = await h.app.request(
+      url("board.list"),
+      evkReq(`${API_KEY_PREFIX}${"z".repeat(43)}`),
+      {},
+    );
+    expect(stale.status).toBe(garbage.status);
+    expect(((await stale.json()) as { reason: string }).reason).toBe("invalid-api-key");
+    expect(((await garbage.json()) as { reason: string }).reason).toBe("invalid-api-key");
+  });
+
+  it("is JWT-only — an evk_ caller cannot rotate, not even its own key", async () => {
+    // THE load-bearing guard. Rotation MINTS, so a key-callable rotate would
+    // make a leaked key permanent: rotate, take the fresh plaintext, and the
+    // owner revoking the key they know about leaves the child alive.
+    const h = makeHarness();
+    const { key, plaintext } = await mintKey(h);
+
+    const res = await rotateKeyReq(h, key.id, plaintext);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { reason: string }).reason).toBe("jwt-required");
+    // Nothing was minted.
+    expect(h.db.apiKeys).toHaveLength(1);
+  });
+
+  it("refuses to rotate a key that is already rotated, or revoked", async () => {
+    const h = makeHarness();
+    const first = await mintKey(h);
+    await rotateKeyReq(h, first.key.id);
+
+    // Already rotated — a second successor would fork the chain and make
+    // "replaced by" a two-valued answer.
+    const again = await rotateKeyReq(h, first.key.id);
+    expect(again.status).toBe(400);
+    expect(((await again.json()) as { reason: string }).reason).toBe("already-rotated");
+
+    const revoked = await mintKey(h, "doomed");
+    await h.app.request(url("key.delete", { id: revoked.key.id }), jsonReq("DELETE"), {});
+    const dead = await rotateKeyReq(h, revoked.key.id);
+    expect(dead.status).toBe(400);
+    expect(((await dead.json()) as { reason: string }).reason).toBe("already-revoked");
+  });
+
+  it("404s a key belonging to somebody else, indistinguishably from a missing one", async () => {
+    const h = makeHarness();
+    const { key } = await mintKey(h);
+    // Re-owned behind the caller's back; the lookup is scoped by pubkey.
+    h.db.apiKeys.find((r) => r["id"] === key.id)!["pubkey"] = "github:999999";
+
+    const res = await rotateKeyReq(h, key.id);
+    expect(res.status).toBe(404);
+    const missing = await rotateKeyReq(h, "no-such-key-id");
+    expect(missing.status).toBe(404);
+  });
+});
+
+// ── EFB-99: the migration cannot quietly revoke every existing key ────────
+//
+// migration 0029 adds rotated_at_ms as NULLABLE WITH NO DEFAULT, so every row
+// already in the table reads "never rotated" by construction and no backfill
+// is needed. The tempting alternative — `INTEGER NOT NULL DEFAULT 0` — is a
+// production incident with a plausible-looking diff: every pre-existing key
+// would read rotated_at_ms = 0, the grace check would compute
+// `now - 0 > 24h` as true for all of them, and the first authenticated
+// request each one made after deploy would revoke it. A whole customer base
+// re-keying at once, from a migration that ran without error.
+//
+// The file assertion is here because that failure is unreachable through the
+// db mock: the mock never executes DDL, so nothing else in this suite reads
+// the migration at all.
+
+describe("EFB-99 migration 0029", () => {
+  const sql = readFileSync("migrations/0029_apikey_rotation.sql", "utf8");
+  const statements = sql
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("--"))
+    .join(" ");
+
+  it("adds both columns nullable, with no NOT NULL and no DEFAULT", () => {
+    expect(statements).toMatch(/ALTER TABLE apiKeys ADD COLUMN rotated_at_ms INTEGER\s*;/);
+    expect(statements).toMatch(/ALTER TABLE apiKeys ADD COLUMN rotated_to_id TEXT\s*;/);
+    // The two words that would turn this migration into a mass revocation.
+    expect(statements).not.toMatch(/NOT NULL/i);
+    expect(statements).not.toMatch(/DEFAULT/i);
+  });
+
+  it("leaves a pre-migration key authenticating untouched", async () => {
+    // The behavioural half: a row carrying the post-migration default for an
+    // untouched key (rotated_at_ms NULL) authenticates exactly as before.
+    const h = makeHarness();
+    const { plaintext } = await mintKey(h);
+    expect(h.db.apiKeys[0]!["rotated_at_ms"]).toBeNull();
+    vi.setSystemTime(1_000_000 + GRACE_MS * 10);
+    expect((await h.app.request(url("board.list"), evkReq(plaintext), {})).status).toBe(200);
   });
 });

@@ -14,8 +14,22 @@ export default defineConfig({
   // EFB-98: the SPA builds its URLs from the same manifest the server routes
   // from. The manifest is deliberately dependency-free — no hono, no effect —
   // so it crosses this boundary without dragging the server runtime with it.
+  // EFB-99: same reasoning, second file. The rotation grace window is a
+  // security-relevant number the UI states in prose ("keeps working for 24
+  // hours"), and a hardcoded copy of it would keep saying 24 after someone
+  // changed the constant — telling users something false about how long a
+  // compromised key stays live. It points at src/apikey-policy.ts and NOT at
+  // src/apikeys.ts, which is where that constant would naturally have lived:
+  // apikeys.ts carries `import type { Claims } from "./effects"`, and while
+  // esbuild erases a type import, tsc still RESOLVES it — aliasing that file
+  // pulls D1Database, DurableObjectState and Fetcher into a browser program
+  // that has no lib for them. Dependency-free has to mean dependency-free at
+  // typecheck too, which is why the policy module has no imports at all.
   resolve: {
-    alias: { "@routes-manifest": path.resolve(__dirname, "../src/routes-manifest.ts") },
+    alias: {
+      "@routes-manifest": path.resolve(__dirname, "../src/routes-manifest.ts"),
+      "@apikey-policy": path.resolve(__dirname, "../src/apikey-policy.ts"),
+    },
   },
   build: {
     outDir: "../dist/web",

@@ -23,6 +23,12 @@ export const API_KEY_NAME_MAX = 60;
 /** last_used_at_ms write throttle — at most one bump per key per minute. */
 export const API_KEY_LAST_USED_THROTTLE_MS = 60_000;
 
+// The rotation grace window lives in src/apikey-policy.ts, not here. The web
+// app states it in prose and must read the same number the auth path enforces,
+// and this file cannot cross that boundary — its `import type { Claims }` is
+// erased by esbuild but still resolved by tsc, which drags the Workers type
+// graph into the browser program.
+
 export const isApiKeyToken = (token: string): boolean => token.startsWith(API_KEY_PREFIX);
 
 const b64url = (bytes: Uint8Array): string =>

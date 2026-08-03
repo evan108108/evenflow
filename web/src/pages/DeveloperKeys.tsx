@@ -7,6 +7,7 @@
 
 import { For, Show, createResource, createSignal } from "solid-js";
 import { url } from "@routes-manifest";
+import { API_KEY_ROTATION_GRACE_MS } from "@apikey-policy";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { TopBar } from "../components/TopBar";
@@ -20,7 +21,17 @@ interface KeyView {
   created_at_ms: number;
   last_used_at_ms: number | null;
   revoked_at_ms: number | null;
+  /** EFB-99 — when this key was rotated away from. Null = never rotated. */
+  rotated_at_ms: number | null;
+  /** The successor's id, resolved to a prefix against this same list. */
+  rotated_to_id: string | null;
 }
+
+/**
+ * Read from the server's own constant rather than written as prose, so the
+ * page cannot go on promising 24 hours after someone changes the window.
+ */
+const GRACE_HOURS = Math.round(API_KEY_ROTATION_GRACE_MS / 3_600_000);
 
 const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promise<T> =>
   appRuntime.runPromise(Effect.flatMap(ApiClient, f));
@@ -42,7 +53,9 @@ export const DeveloperKeys = () => {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // The one-time plaintext reveal; null once dismissed, gone forever.
-  const [minted, setMinted] = createSignal<{ plaintext: string; name: string } | null>(null);
+  const [minted, setMinted] = createSignal<
+    { plaintext: string; name: string; rotated: boolean } | null
+  >(null);
   const [copied, setCopied] = createSignal(false);
 
   const createKey = async () => {
@@ -54,7 +67,7 @@ export const DeveloperKeys = () => {
       const res = await api<{ key: KeyView; plaintext: string }>((c) =>
         c.post(url("key.create"), { name: keyName }),
       );
-      setMinted({ plaintext: res.plaintext, name: keyName });
+      setMinted({ plaintext: res.plaintext, name: keyName, rotated: false });
       setCopied(false);
       setName("");
       void refetch();
@@ -64,6 +77,39 @@ export const DeveloperKeys = () => {
       setBusy(false);
     }
   };
+
+  /**
+   * Rotation is destructive-adjacent rather than destructive: the old key
+   * keeps working for the grace window, so the confirm names the window and
+   * the see-it-once semantics instead of the this-cannot-be-undone language
+   * revoke uses. Same window.confirm shape the rest of the app uses.
+   */
+  const rotate = (key: KeyView) => {
+    if (
+      !window.confirm(
+        `Rotate “${key.name}”? The current key keeps working for ${GRACE_HOURS} hours, then stops. You'll see the new key once.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    api<{ key: KeyView; plaintext: string }>((c) => c.post(url("key.rotate", { id: key.id }), {}))
+      .then((res) => {
+        setMinted({ plaintext: res.plaintext, name: res.key.name, rotated: true });
+        setCopied(false);
+        void refetch();
+      })
+      .catch(() => setError("The current pushed back — the key was not rotated."));
+  };
+
+  /**
+   * The successor's display prefix. The successor is always one of the
+   * caller's own keys, so it is already in the list this page holds — no
+   * lookup, and it keeps rendering even after the successor is itself
+   * revoked, because a revoked row is still listed.
+   */
+  const successorPrefix = (key: KeyView): string | null =>
+    (keys() ?? []).find((k) => k.id === key.rotated_to_id)?.prefix ?? null;
 
   const revoke = (key: KeyView) => {
     // Destructive and one-way: there is no un-revoke route, and anything
@@ -99,8 +145,9 @@ export const DeveloperKeys = () => {
         <UserNav />
       </header>
       <p class="muted" style={{ "margin-bottom": "1.8rem" }}>
-        Keys authenticate the REST API and the MCP endpoint as you. Docs live at{" "}
-        <a href="/docs">/docs</a>.
+        Keys authenticate the REST API and the MCP endpoint as you. Rotating a key mints a
+        replacement and leaves the old one working for {GRACE_HOURS} hours, so you can swap
+        it over without downtime. Docs live at <a href="/docs">/docs</a>.
       </p>
 
       <Show when={error()}>
@@ -125,13 +172,32 @@ export const DeveloperKeys = () => {
                     created {when(key.created_at_ms)} · last used {when(key.last_used_at_ms)}
                   </span>
                   <span class="grow" />
+                  {/* Three states, most-final first: revoked wins over
+                      rotated, because a rotated key that was then revoked is
+                      dead, not waiting. Only a key that is neither can be
+                      acted on. */}
                   <Show
                     when={key.revoked_at_ms === null}
                     fallback={<span class="chip">revoked {when(key.revoked_at_ms)}</span>}
                   >
-                    <button type="button" class="btn btn-danger" onClick={() => revoke(key)}>
-                      Revoke
-                    </button>
+                    <Show
+                      when={key.rotated_at_ms === null}
+                      fallback={
+                        <span class="chip">
+                          rotated {when(key.rotated_at_ms)}
+                          <Show when={successorPrefix(key)}>
+                            {(prefix) => <>, replaced by {prefix()}…</>}
+                          </Show>
+                        </span>
+                      }
+                    >
+                      <button type="button" class="btn" onClick={() => rotate(key)}>
+                        Rotate
+                      </button>
+                      <button type="button" class="btn btn-danger" onClick={() => revoke(key)}>
+                        Revoke
+                      </button>
+                    </Show>
                   </Show>
                 </li>
               )}
@@ -163,11 +229,19 @@ export const DeveloperKeys = () => {
         {(m) => (
           <div class="modal-overlay">
             <div class="modal" role="dialog" aria-label="API key created">
-              <h2>“{m().name}” is ready</h2>
+              <h2>
+                “{m().name}” is {m().rotated ? "rotated" : "ready"}
+              </h2>
               <p class="key-warning">
                 This is the only time the full key is shown. Copy it now — Evenflow keeps
                 only a hash.
               </p>
+              <Show when={m().rotated}>
+                <p class="muted">
+                  The previous key keeps working for {GRACE_HOURS} hours so you can swap it
+                  over, then stops for good.
+                </p>
+              </Show>
               <div class="key-reveal">
                 <code>{m().plaintext}</code>
                 <button type="button" class="btn" onClick={copyPlaintext}>

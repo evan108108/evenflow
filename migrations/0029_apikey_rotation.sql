@@ -1,0 +1,31 @@
+-- Evenflow D1 schema — migration 0029: API key rotation (EFB-99).
+--
+-- Rotation replaces a key's SECRET without changing who it authenticates as.
+-- The old row stays: it is the audit trail, and during the grace window it is
+-- still a live credential, so deleting it would defeat the whole point of
+-- rotating rather than revoke-then-create.
+--
+--   rotated_at_ms  — when rotation happened. NULL = never rotated. The auth
+--                    path measures the grace window from this, which is why it
+--                    is a timestamp and not a boolean: "is it expired" is a
+--                    question about elapsed time, and a flag could not answer
+--                    it without a second column.
+--   rotated_to_id  — the successor row's id. Single-valued on purpose; the
+--                    rotate action refuses a key that already has one, so a
+--                    key can never fork into two live successors.
+--
+-- Both nullable with NO DEFAULT, so every existing row reads "never rotated"
+-- by construction. That is what makes this migration rollout-only: no backfill,
+-- and the auth predicate is unchanged for every key already in the table.
+--
+-- Two ADD COLUMNs rather than a table rebuild. D1 cannot drop and recreate a
+-- populated table that anything references, and there is no reason to reach for
+-- it here — neither column participates in a constraint.
+--
+-- No index. rotated_at_ms is only ever read off a row already located by
+-- idx_apiKeys_prefix during authentication, and rotated_to_id is only read by
+-- the owner's own key list. Indexing either would cost writes to serve no
+-- lookup that exists.
+
+ALTER TABLE apiKeys ADD COLUMN rotated_at_ms INTEGER;
+ALTER TABLE apiKeys ADD COLUMN rotated_to_id TEXT;
