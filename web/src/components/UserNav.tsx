@@ -6,6 +6,7 @@
 // on screen; folding here removes it.
 
 import { useNavigate } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime } from "../effects";
@@ -50,7 +51,7 @@ export const UserNav = () => {
         .runPromise(
           Effect.gen(function* () {
             const client = yield* ApiClient;
-            return yield* client.get<MeResponse>("/api/v0/profile/me");
+            return yield* client.get<MeResponse>(url("profile.me.get"));
           }),
         )
         .then((r) => {

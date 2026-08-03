@@ -724,10 +724,16 @@ export const makeDbMock = (): DbMock => {
           if (row) Object.assign(row, { substrate_event_id });
           return;
         }
+        // EFB-98 added duplicate_of_issue_id to this UPDATE, between labels and
+        // updated_at_ms. Positional params and a mock that matches on a PREFIX
+        // mean a column added mid-statement shifts every later value by one and
+        // the row lookup then misses — so the write silently does nothing and
+        // the failure surfaces as an unrelated assertion three layers away.
+        // Keep this destructure in the same order as the SQL.
         if (sql.startsWith("UPDATE issueCache SET title = ?")) {
-          const [title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms, id] = params;
+          const [title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, duplicate_of_issue_id, updated_at_ms, completed_at_ms, id] = params;
           const row = issues.find((r) => r["id"] === id);
-          if (row) Object.assign(row, { title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, updated_at_ms, completed_at_ms });
+          if (row) Object.assign(row, { title, body, body_format, type, status, column_id, assignee_pubkey, priority, estimate, labels, duplicate_of_issue_id, updated_at_ms, completed_at_ms });
           return;
         }
         // Phase-16.5 boardCache updates — must precede the bare

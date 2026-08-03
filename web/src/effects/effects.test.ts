@@ -3,6 +3,7 @@
 // parser against realistic BoardDO output.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "@routes-manifest";
 import { Effect, Layer } from "effect";
 import {
   ApiClient,
@@ -56,14 +57,14 @@ describe("ApiClient", () => {
       clientLayer("tok-123"),
       Effect.gen(function* () {
         const client = yield* ApiClient;
-        return yield* client.get<{ boards: unknown[]; total: number }>("/api/v0/boards");
+        return yield* client.get<{ boards: unknown[]; total: number }>(url("board.create"));
       }),
     );
 
     expect(result).toEqual({ boards: [], total: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("/api/v0/boards");
+    const [calledUrl, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(calledUrl).toBe(url("board.create"));
     expect((init.headers as Record<string, string>)["Authorization"]).toBe("Bearer tok-123");
   });
 
@@ -77,7 +78,7 @@ describe("ApiClient", () => {
       Effect.provide(
         Effect.gen(function* () {
           const client = yield* ApiClient;
-          return yield* client.get("/api/v0/boards");
+          return yield* client.get(url("board.create"));
         }),
         clientLayer(null),
       ) as Effect.Effect<unknown, ApiError>,
@@ -118,7 +119,7 @@ describe("ApiClient", () => {
       Effect.provide(
         Effect.gen(function* () {
           const client = yield* ApiClient;
-          return yield* client.get("/api/v0/session/bootstrap");
+          return yield* client.get(url("session.bootstrap"));
         }),
         Layer.provide(ApiClientLive, Layer.mergeAll(ApiConfigLive, auth.layer)),
       ),
@@ -160,7 +161,7 @@ describe("ApiClient", () => {
       Effect.provide(
         Effect.gen(function* () {
           const client = yield* ApiClient;
-          return yield* client.get("/api/v0/boards");
+          return yield* client.get(url("board.create"));
         }),
         clientLayer(null),
       ),
@@ -182,7 +183,7 @@ describe("ApiClient", () => {
       clientLayer("tok-123"),
       Effect.gen(function* () {
         const client = yield* ApiClient;
-        return yield* client.post("/api/v0/boards", { slug: "kb", title: "Board" });
+        return yield* client.post(url("board.create"), { slug: "kb", title: "Board" });
       }),
     );
 

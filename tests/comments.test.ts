@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
-import { PostCommentBody } from "../src/routes/comments";
+import { PostCommentBody } from "../src/actions/comments";
 import type { CommentShape } from "../src/shapes";
 import {
   CALLER,
@@ -25,7 +26,7 @@ const postComment = async (
   h: ReturnType<typeof makeHarness>,
   issueId: string,
   body: Record<string, unknown>,
-) => h.app.request(`/api/v0/issues/${issueId}/comments`, jsonReq("POST", body), {});
+) => h.app.request(url("comment.create", { id: issueId }), jsonReq("POST", body), {});
 
 describe("POST /api/v0/issues/:id/comments", () => {
   it("creates a comment authored by the caller", async () => {
@@ -95,7 +96,7 @@ describe("GET /api/v0/issues/:id/comments", () => {
       ids.push(((await res.json()) as { comment: CommentShape }).comment.id);
     }
 
-    const all = await h.app.request(`/api/v0/issues/${issue.id}/comments`, { headers: bearer }, {});
+    const all = await h.app.request(url("comment.create", { id: issue.id }), { headers: bearer }, {});
     expect(all.status).toBe(200);
     const page = (await all.json()) as { comments: CommentShape[]; total: number; has_more: boolean };
     expect(page.comments.map((c) => c.body)).toEqual(["one", "two", "three"]);
@@ -103,7 +104,7 @@ describe("GET /api/v0/issues/:id/comments", () => {
     expect(page.has_more).toBe(false);
 
     const rest = await h.app.request(
-      `/api/v0/issues/${issue.id}/comments?after=${ids[0]}&limit=1`,
+      `${url("comment.create", { id: issue.id })}?after=${ids[0]}&limit=1`,
       { headers: bearer },
       {},
     );
@@ -127,24 +128,24 @@ describe("DELETE /api/v0/comments/:id", () => {
       body: "not yours", in_reply_to: null, created_at_ms: 1_500,
     });
 
-    const forbidden = await h.app.request("/api/v0/comments/other", { method: "DELETE", headers: bearer }, {});
+    const forbidden = await h.app.request(url("comment.delete", { id: "other" }), { method: "DELETE", headers: bearer }, {});
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "forbidden", reason: "not-author" });
 
-    const ok = await h.app.request(`/api/v0/comments/${mine.id}`, { method: "DELETE", headers: bearer }, {});
+    const ok = await h.app.request(url("comment.delete", { id: mine.id }), { method: "DELETE", headers: bearer }, {});
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ deleted: true });
     expect(h.db.comments.map((c) => c["id"])).toEqual(["other"]);
 
-    const missing = await h.app.request(`/api/v0/comments/${mine.id}`, { method: "DELETE", headers: bearer }, {});
+    const missing = await h.app.request(url("comment.delete", { id: mine.id }), { method: "DELETE", headers: bearer }, {});
     expect(missing.status).toBe(404);
   });
 });
 
 describe("auth gating", () => {
   it.each([
-    ["POST", "/api/v0/issues/x/comments"],
-    ["DELETE", "/api/v0/comments/x"],
+    ["POST", url("comment.create", { id: "x" })],
+    ["DELETE", url("comment.delete", { id: "x" })],
   ])("%s %s rejects unauthenticated mutations with 401", async (method, path) => {
     const h = makeHarness();
     const res = await h.app.request(path, { method }, {});
@@ -155,7 +156,7 @@ describe("auth gating", () => {
   // rather than 404, uniformly for private and nonexistent alike.
   it("GET /api/v0/issues/x/comments answers 401 to anonymous callers", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/issues/x/comments", {}, {});
+    const res = await h.app.request(url("comment.create", { id: "x" }), {}, {});
     expect(res.status).toBe(401);
   });
 });
@@ -164,7 +165,7 @@ describe("auth gating", () => {
 
 const uploadTo = async (h: ReturnType<typeof makeHarness>, issueId: string) => {
   const res = await h.app.request(
-    `/api/v0/boards/kb/issues/${issueId}/attachments`,
+    url("attachment.create", { slug: "kb", issue_ref: issueId }),
     jsonReq("POST", {
       file_b64: btoa("png-bytes"),
       filename: "shot.png",
@@ -202,7 +203,7 @@ describe("comment attachments (phase 18c)", () => {
     expect(comment.attachments.every((x) => x.comment_id === comment.id)).toBe(true);
 
     // GET comments carries the enrichment.
-    const list = await h.app.request(`/api/v0/issues/${issue.id}/comments`, { headers: bearer }, {});
+    const list = await h.app.request(url("comment.create", { id: issue.id }), { headers: bearer }, {});
     const listed = (await list.json()) as {
       comments: Array<{ id: string; attachments: Array<{ id: string }> }>;
     };
@@ -210,7 +211,7 @@ describe("comment attachments (phase 18c)", () => {
 
     // The issue's Files panel no longer lists claimed attachments.
     const files = await h.app.request(
-      `/api/v0/boards/kb/issues/${issue.id}/attachments`,
+      url("attachment.create", { slug: "kb", issue_ref: issue.id }),
       { headers: bearer },
       {},
     );
@@ -248,7 +249,7 @@ describe("comment attachments (phase 18c)", () => {
     const res = await postComment(h, issue.id, { body: "x", attachment_ids: [a.id] });
     const { comment } = (await res.json()) as { comment: CommentShape };
 
-    const del = await h.app.request(`/api/v0/comments/${comment.id}`, jsonReq("DELETE"), {});
+    const del = await h.app.request(url("comment.delete", { id: comment.id }), jsonReq("DELETE"), {});
     expect(del.status).toBe(200);
     const row = h.db.attachments.find((r) => r["id"] === a.id);
     expect(row?.["deleted_at_ms"]).not.toBeNull();

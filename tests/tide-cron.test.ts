@@ -7,6 +7,7 @@
 // not strand every other board.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Layer } from "effect";
 import { rollForwardAllTides } from "../src/scheduled";
 import { DAY_MS } from "../src/lib/tide/compute";
@@ -43,7 +44,7 @@ const runCron = (h: Harness, nowMs: number) =>
 
 const createSprint = async (h: Harness): Promise<SprintShape> => {
   const res = await h.app.request(
-    "/api/v0/boards/kb/sprints",
+    url("sprint.list", { slug: "kb" }),
     jsonReq("POST", { name: "Sprint 1" }),
     {},
   );
@@ -53,7 +54,7 @@ const createSprint = async (h: Harness): Promise<SprintShape> => {
 
 const startSprint = async (h: Harness, sprintId: string) => {
   const res = await h.app.request(
-    `/api/v0/boards/kb/sprints/${sprintId}/start`,
+    url("sprint.start", { slug: "kb", id: sprintId }),
     jsonReq("POST", {}),
     {},
   );
@@ -67,11 +68,11 @@ describe("rollForwardAllTides", () => {
     const sprint = await createSprint(h);
     const issue = await createIssue(h, { title: "A" });
     await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: issue.id }),
       {},
     );
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { estimate: 5 }), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { estimate: 5 }), {});
     await startSprint(h, sprint.id);
 
     // No /tide read at all — the cron is the only thing that runs.
@@ -105,7 +106,7 @@ describe("rollForwardAllTides", () => {
     // And a visit later the same day must not duplicate the row either.
     vi.setSystemTime(at(1, 9));
     const read = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/tide`,
+      url("sprint.tide", { slug: "kb", id: sprint.id }),
       { headers: bearer },
       {},
     );

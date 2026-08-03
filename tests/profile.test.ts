@@ -4,6 +4,7 @@
 // log is the assertion surface for "cache hit avoids the substrate".
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Hono } from "hono";
 import { Effect, Layer } from "effect";
 import {
@@ -114,7 +115,7 @@ describe("PUT + GET /api/v0/profile/me round-trip", () => {
   it("publishes kind 0, caches, and serves the update back", async () => {
     const h = makeHarness();
     const put = await h.app.request(
-      "/api/v0/profile/me",
+      url("profile.me.get"),
       jsonReq("PUT", { display_name: "Evan", name: "evan108108", about: "hi" }),
       {},
     );
@@ -130,7 +131,7 @@ describe("PUT + GET /api/v0/profile/me round-trip", () => {
       about: "hi",
     });
 
-    const get = await h.app.request("/api/v0/profile/me", { headers: bearer }, {});
+    const get = await h.app.request(url("profile.me.get"), { headers: bearer }, {});
     expect(get.status).toBe(200);
     const got = ((await get.json()) as { profile: Record<string, unknown> }).profile;
     expect(got["display_name"]).toBe("Evan");
@@ -142,13 +143,13 @@ describe("PUT + GET /api/v0/profile/me round-trip", () => {
   it("rejects over-cap and non-https fields with 400, never publishing", async () => {
     const h = makeHarness();
     const tooLong = await h.app.request(
-      "/api/v0/profile/me",
+      url("profile.me.get"),
       jsonReq("PUT", { display_name: "x".repeat(129) }),
       {},
     );
     expect(tooLong.status).toBe(400);
     const badPicture = await h.app.request(
-      "/api/v0/profile/me",
+      url("profile.me.get"),
       jsonReq("PUT", { picture: "http://not-tls.example/p.png" }),
       {},
     );
@@ -160,7 +161,7 @@ describe("PUT + GET /api/v0/profile/me round-trip", () => {
 describe("GET /api/v0/profile/me seed fallback", () => {
   it("shows the login prefix for a fresh user without caching it", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/profile/me", { headers: bearer }, {});
+    const res = await h.app.request(url("profile.me.get"), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const { profile } = (await res.json()) as { profile: Record<string, unknown> };
     expect(profile["display_name"]).toBe("tester"); // login.split("@")[0]
@@ -181,12 +182,12 @@ describe("GET /api/v0/profile/:pubkey cache policy", () => {
       updated_at_ms: 500,
     });
 
-    const first = await h.app.request("/api/v0/profile/github:42", { headers: bearer }, {});
+    const first = await h.app.request(url("profile.get", { pubkey: "github:42" }), { headers: bearer }, {});
     expect(first.status).toBe(200);
     expect(((await first.json()) as { profile: Row }).profile["display_name"]).toBe("Someone");
     expect(fetchCalls(h)).toHaveLength(1);
 
-    const second = await h.app.request("/api/v0/profile/github:42", { headers: bearer }, {});
+    const second = await h.app.request(url("profile.get", { pubkey: "github:42" }), { headers: bearer }, {});
     expect(second.status).toBe(200);
     expect(fetchCalls(h)).toHaveLength(1); // cache hit — no second 4a call
   });
@@ -198,23 +199,23 @@ describe("GET /api/v0/profile/:pubkey cache policy", () => {
       fields: { display_name: "Someone" },
       updated_at_ms: 500,
     });
-    await h.app.request("/api/v0/profile/github:42", { headers: bearer }, {});
+    await h.app.request(url("profile.get", { pubkey: "github:42" }), { headers: bearer }, {});
     expect(fetchCalls(h)).toHaveLength(1);
 
     vi.setSystemTime(1_000_000 + PROFILE_CACHE_TTL_MS + 1);
-    await h.app.request("/api/v0/profile/github:42", { headers: bearer }, {});
+    await h.app.request(url("profile.get", { pubkey: "github:42" }), { headers: bearer }, {});
     expect(fetchCalls(h)).toHaveLength(2); // stale → refreshed
 
     vi.setSystemTime(1_000_000 + 2 * (PROFILE_CACHE_TTL_MS + 1));
     h.fourA.failFetches = true;
-    const degraded = await h.app.request("/api/v0/profile/github:42", { headers: bearer }, {});
+    const degraded = await h.app.request(url("profile.get", { pubkey: "github:42" }), { headers: bearer }, {});
     expect(degraded.status).toBe(200);
     expect(((await degraded.json()) as { profile: Row }).profile["display_name"]).toBe("Someone");
   });
 
   it("returns 200 with empty fields for a pubkey with no kind 0", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/profile/github:999", { headers: bearer }, {});
+    const res = await h.app.request(url("profile.get", { pubkey: "github:999" }), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const { profile } = (await res.json()) as { profile: Row };
     expect(profile["pubkey"]).toBe("github:999");
@@ -228,7 +229,7 @@ describe("GET /api/v0/profile?pubkeys= bulk", () => {
     const h = makeHarness();
     h.fourA.profiles.set("a:1", { event_id: "e1", fields: { name: "ay" }, updated_at_ms: 1 });
     const res = await h.app.request(
-      "/api/v0/profile?pubkeys=a:1,b:2,a:1",
+      `${url("profile.list")}?pubkeys=a:1,b:2,a:1`,
       { headers: bearer },
       {},
     );
@@ -242,7 +243,7 @@ describe("GET /api/v0/profile?pubkeys= bulk", () => {
   it(`rejects more than ${BULK_MAX} pubkeys`, async () => {
     const h = makeHarness();
     const many = Array.from({ length: BULK_MAX + 1 }, (_, i) => `p:${i}`).join(",");
-    const res = await h.app.request(`/api/v0/profile?pubkeys=${many}`, { headers: bearer }, {});
+    const res = await h.app.request(`${url("profile.list")}?pubkeys=${many}`, { headers: bearer }, {});
     expect(res.status).toBe(400);
     expect(fetchCalls(h)).toHaveLength(0);
   });
@@ -253,7 +254,7 @@ describe("GET /api/v0/profile/me OAuth picture seed", () => {
 
   it("seeds picture from the JWT claim with seeded_from=oauth AND persists to profileCache", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/profile/me", { headers: pictureBearer }, {});
+    const res = await h.app.request(url("profile.me.get"), { headers: pictureBearer }, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { profile: Record<string, unknown>; seeded_from: string | null };
     expect(body.profile["picture"]).toBe("https://avatars.example/me.png");
@@ -274,7 +275,7 @@ describe("GET /api/v0/profile/me OAuth picture seed", () => {
       fields: { picture: "https://chosen.example/pic.png" },
       updated_at_ms: 999,
     });
-    const res = await h.app.request("/api/v0/profile/me", { headers: pictureBearer }, {});
+    const res = await h.app.request(url("profile.me.get"), { headers: pictureBearer }, {});
     const body = (await res.json()) as { profile: Record<string, unknown>; seeded_from: string | null };
     expect(body.profile["picture"]).toBe("https://chosen.example/pic.png");
     expect(body.seeded_from).toBeNull();
@@ -282,7 +283,7 @@ describe("GET /api/v0/profile/me OAuth picture seed", () => {
 
   it("seeded_from is null for tokens without a picture claim", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/profile/me", { headers: bearer }, {});
+    const res = await h.app.request(url("profile.me.get"), { headers: bearer }, {});
     const body = (await res.json()) as { seeded_from: string | null };
     expect(body.seeded_from).toBeNull();
   });
@@ -293,7 +294,7 @@ describe("POST /api/v0/profile/picture", () => {
     const h = makeHarness();
     const bytes = "hello"; // 5 bytes
     const res = await h.app.request(
-      "/api/v0/profile/picture",
+      url("profile.picture.create"),
       jsonReq("POST", { image_b64: btoa(bytes), content_type: "image/png" }),
       {},
     );
@@ -312,7 +313,7 @@ describe("POST /api/v0/profile/picture", () => {
     const form = new FormData();
     form.set("file", new File([new Uint8Array(7)], "me.webp", { type: "image/webp" }));
     const res = await h.app.request(
-      "/api/v0/profile/picture",
+      url("profile.picture.create"),
       { method: "POST", headers: bearer, body: form },
       {},
     );
@@ -324,7 +325,7 @@ describe("POST /api/v0/profile/picture", () => {
   it("rejects disallowed content types with 400", async () => {
     const h = makeHarness();
     const res = await h.app.request(
-      "/api/v0/profile/picture",
+      url("profile.picture.create"),
       jsonReq("POST", { image_b64: btoa("x"), content_type: "image/gif" }),
       {},
     );
@@ -337,7 +338,7 @@ describe("POST /api/v0/profile/picture", () => {
     const h = makeHarness();
     const big = btoa("a".repeat(256 * 1024 + 1));
     const res = await h.app.request(
-      "/api/v0/profile/picture",
+      url("profile.picture.create"),
       jsonReq("POST", { image_b64: big, content_type: "image/jpeg" }),
       {},
     );
@@ -349,7 +350,7 @@ describe("POST /api/v0/profile/picture", () => {
   it("rejects malformed base64 with 400", async () => {
     const h = makeHarness();
     const res = await h.app.request(
-      "/api/v0/profile/picture",
+      url("profile.picture.create"),
       jsonReq("POST", { image_b64: "not!!valid@@b64", content_type: "image/png" }),
       {},
     );
@@ -386,7 +387,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
     it("resolves the canonical ref", async () => {
       const h = makeHarness();
       seed(h);
-      const res = await h.app.request(`/api/v0/profile/${CANON}`, { headers: bearer }, {});
+      const res = await h.app.request(url("profile.get", { pubkey: CANON }), { headers: bearer }, {});
       expect(res.status).toBe(200);
       expect(await nameFrom(res)).toBe("Sona");
     });
@@ -397,7 +398,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
     ])("resolves the %s spelling onto the same profile", async (_label, spelling) => {
       const h = makeHarness();
       seed(h);
-      const res = await h.app.request(`/api/v0/profile/${spelling}`, { headers: bearer }, {});
+      const res = await h.app.request(url("profile.get", { pubkey: spelling }), { headers: bearer }, {});
       expect(res.status).toBe(200);
       expect(await nameFrom(res)).toBe("Sona");
     });
@@ -415,7 +416,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
     ])("400s reason=pubkey on %s", async (_label, bad) => {
       const h = makeHarness();
       seed(h);
-      const res = await h.app.request(`/api/v0/profile/${bad}`, { headers: bearer }, {});
+      const res = await h.app.request(url("profile.get", { pubkey: bad }), { headers: bearer }, {});
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ reason: "pubkey" });
     });
@@ -427,7 +428,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
       seed(h);
       for (const spelling of [HEX, NPUB]) {
         const res = await h.app.request(
-          `/api/v0/profile?pubkeys=${spelling}`,
+          `${url("profile.list")}?pubkeys=${spelling}`,
           { headers: bearer },
           {},
         );
@@ -444,7 +445,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
       const h = makeHarness();
       seed(h);
       const res = await h.app.request(
-        `/api/v0/profile?pubkeys=${HEX},${NPUB},${CANON}`,
+        `${url("profile.list")}?pubkeys=${HEX},${NPUB},${CANON}`,
         { headers: bearer },
         {},
       );
@@ -463,7 +464,7 @@ describe("EFB-51 :pubkey normalization on profile reads", () => {
       const h = makeHarness();
       seed(h);
       const res = await h.app.request(
-        `/api/v0/profile?pubkeys=${HEX},not-a-pubkey`,
+        `${url("profile.list")}?pubkeys=${HEX},not-a-pubkey`,
         { headers: bearer },
         {},
       );

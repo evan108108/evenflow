@@ -1,10 +1,13 @@
 // Phase 20: sprint lifecycle + membership over the /api/v0 sprint routes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import type { SprintShape } from "../src/shapes";
 import { decodeBody } from "../src/lib/route-body";
-import { CompleteSprintBody, PatchSprintBody, PostSprintBody } from "../src/routes/sprints";
+// EFB-98: the request schemas live with the logic that consumes them. The
+// route imports them back for parseRouteBody; a schema test reads them here.
+import { CompleteSprintBody, PatchSprintBody, PostSprintBody } from "../src/actions/sprints";
 import { KANBAN_PLAINTEXT_PATH } from "../src/lib/kanban/publish";
 import {
   bearer,
@@ -31,7 +34,7 @@ const createSprint = async (
   slug = "kb",
 ): Promise<SprintShape> => {
   const res = await h.app.request(
-    `/api/v0/boards/${slug}/sprints`,
+    url("sprint.list", { slug: slug }),
     jsonReq("POST", { name: "Sprint 1", ...overrides }),
     {},
   );
@@ -41,7 +44,7 @@ const createSprint = async (
 
 const addIssue = async (h: Harness, sprintId: string, issueId: string, slug = "kb") => {
   const res = await h.app.request(
-    `/api/v0/boards/${slug}/sprints/${sprintId}/add-issue`,
+    url("sprint.issues.attach", { slug: slug, id: sprintId }),
     jsonReq("POST", { issue_id: issueId }),
     {},
   );
@@ -68,9 +71,9 @@ describe("POST /api/v0/boards/:slug/sprints", () => {
   it("rejects an empty name and anonymous callers", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const bad = await h.app.request("/api/v0/boards/kb/sprints", jsonReq("POST", { name: "  " }), {});
+    const bad = await h.app.request(url("sprint.list", { slug: "kb" }), jsonReq("POST", { name: "  " }), {});
     expect(bad.status).toBe(400);
-    const anon = await h.app.request("/api/v0/boards/kb/sprints", {
+    const anon = await h.app.request(url("sprint.list", { slug: "kb" }), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Sprint 1" }),
@@ -86,7 +89,7 @@ describe("GET /api/v0/boards/:slug/sprints", () => {
     await createSprint(h);
     vi.setSystemTime(2_000);
     await createSprint(h, { name: "Sprint 2" });
-    const res = await h.app.request("/api/v0/boards/kb/sprints", jsonReq("GET"), {});
+    const res = await h.app.request(url("sprint.list", { slug: "kb" }), jsonReq("GET"), {});
     expect(res.status).toBe(200);
     const { sprints } = (await res.json()) as { sprints: SprintShape[] };
     expect(sprints.map((s) => s.name)).toEqual(["Sprint 1", "Sprint 2"]);
@@ -99,7 +102,7 @@ describe("PATCH /api/v0/boards/:slug/sprints/:id", () => {
     await createBoard(h);
     const sprint = await createSprint(h);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", { name: "Sprint One", goal: "Focus" }),
       {},
     );
@@ -112,13 +115,13 @@ describe("PATCH /api/v0/boards/:slug/sprints/:id", () => {
     await createBoard(h);
     const sprint = await createSprint(h);
     const empty = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", {}),
       {},
     );
     expect(empty.status).toBe(400);
     const missing = await h.app.request(
-      "/api/v0/boards/kb/sprints/nope",
+      url("sprint.update", { slug: "kb", id: "nope" }),
       jsonReq("PATCH", { name: "X" }),
       {},
     );
@@ -135,8 +138,8 @@ describe("sprint membership", () => {
     const { issue: added } = await addIssue(h, sprint.id, issue.id);
     expect(added.sprint_id).toBe(sprint.id);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: issue.id }),
+      jsonReq("DELETE"),
       {},
     );
     expect(res.status).toBe(200);
@@ -150,7 +153,7 @@ describe("sprint membership", () => {
     const sprint = await createSprint(h);
     const foreign = await createIssue(h, {}, "other");
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: foreign.id }),
       {},
     );
@@ -162,7 +165,7 @@ describe("sprint membership", () => {
     await createBoard(h);
     const issue = await createIssue(h);
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}`,
+      url("issue.get", { id: issue.id }),
       jsonReq("PATCH", { sprint_id: "anything" }),
       {},
     );
@@ -185,7 +188,7 @@ describe("sprint lifecycle", () => {
 
     vi.setSystemTime(5_000);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      url("sprint.start", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -209,15 +212,15 @@ describe("sprint lifecycle", () => {
     await addIssue(h, sprint.id, issue.id);
 
     const completeEarly = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+      url("sprint.complete", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
     expect(completeEarly.status).toBe(409);
 
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     const restart = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      url("sprint.start", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -225,7 +228,7 @@ describe("sprint lifecycle", () => {
 
     vi.setSystemTime(9_000);
     const complete = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+      url("sprint.complete", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -238,7 +241,7 @@ describe("sprint lifecycle", () => {
     expect(h.db.issues[0]).toMatchObject({ container: "active", sprint_id: null });
 
     const addLate = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: issue.id }),
       {},
     );
@@ -262,7 +265,7 @@ describe("sprint length (migration 0011)", () => {
     await createBoard(h);
     for (const bad of [0, 91, 1.5, "7"]) {
       const res = await h.app.request(
-        "/api/v0/boards/kb/sprints",
+        url("sprint.list", { slug: "kb" }),
         jsonReq("POST", { name: "S", planned_days: bad }),
         {},
       );
@@ -275,7 +278,7 @@ describe("sprint length (migration 0011)", () => {
     await createBoard(h);
     const sprint = await createSprint(h);
     const patch = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", { planned_days: 5 }),
       {},
     );
@@ -283,23 +286,23 @@ describe("sprint length (migration 0011)", () => {
     expect(h.db.sprints[0]!["planned_days"]).toBe(5);
     // Clearing back to the board default is also a planning-time edit.
     const clear = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", { planned_days: null }),
       {},
     );
     expect(clear.status).toBe(200);
     expect(h.db.sprints[0]!["planned_days"]).toBeNull();
 
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     const late = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", { planned_days: 21 }),
       {},
     );
     expect(late.status).toBe(409);
     // Name/goal stay editable on an active sprint.
     const rename = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       jsonReq("PATCH", { name: "Renamed" }),
       {},
     );
@@ -309,13 +312,13 @@ describe("sprint length (migration 0011)", () => {
   it("board PATCH round-trips default_sprint_days and validates the range", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const ok = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { default_sprint_days: 7 }), {});
+    const ok = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { default_sprint_days: 7 }), {});
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as { board: { default_sprint_days: number } }).board.default_sprint_days).toBe(7);
     expect(h.db.boards[0]!["default_sprint_days"]).toBe(7);
     for (const bad of [0, 91, 2.5, "7"]) {
       const res = await h.app.request(
-        "/api/v0/boards/kb",
+        url("board.get", { slug: "kb" }),
         jsonReq("PATCH", { default_sprint_days: bad }),
         {},
       );
@@ -343,8 +346,8 @@ describe("phase 21a — sprint membership audit + delete", () => {
 
     vi.setSystemTime(3_000);
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: issue.id }),
+      jsonReq("DELETE"),
       {},
     );
     expect(res.status).toBe(200);
@@ -357,7 +360,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const sprint = await createSprint(h);
     const seed = await createIssue(h, { title: "seed" });
     await addIssue(h, sprint.id, seed.id);
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     expect(h.db.sprints[0]!["adds_mid_sprint"] ?? 0).toBe(0);
 
     const late = await createIssue(h, { title: "late" });
@@ -385,7 +388,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
   };
 
   const startSprint = (h: Harness, sprintId: string) =>
-    h.app.request(`/api/v0/boards/kb/sprints/${sprintId}/start`, jsonReq("POST", {}), {});
+    h.app.request(url("sprint.start", { slug: "kb", id: sprintId }), jsonReq("POST", {}), {});
 
   it("add-issue to an ACTIVE sprint promotes a backlog issue and emits container_changed", async () => {
     const h = makeHarness();
@@ -449,7 +452,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, issue.id);
 
     const events = await emittedBy(h, () =>
-      h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { title: "renamed" }), {}),
+      h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { title: "renamed" }), {}),
     );
 
     expect(events.map((e) => e.kind)).toContain("issue.updated");
@@ -464,8 +467,8 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await startSprint(h, sprint.id);
     const issue = await createIssue(h, { title: "not now" });
     const iced = await h.app.request(
-      `/api/v0/issues/${issue.id}/send_to_icebox`,
-      jsonReq("POST", {}),
+      url("issue.container.set", { id: issue.id }),
+      jsonReq("POST", { container: "icebox" }),
       {},
     );
     expect(iced.status).toBe(200);
@@ -491,7 +494,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const issue = await createIssue(h, { title: "A" });
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: issue.id, issue: "typo" }),
       {},
     );
@@ -509,7 +512,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const sprint = await createSprint(h);
 
     const missing = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -517,7 +520,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(((await missing.json()) as { reason: string }).reason).toBe("issue_id");
 
     const wrongType = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: 7 }),
       {},
     );
@@ -525,14 +528,21 @@ describe("phase 21a — sprint membership audit + delete", () => {
     expect(((await wrongType.json()) as { reason: string }).reason).toBe("issue_id");
 
     const empty = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: "" }),
       {},
     );
     expect(empty.status).toBe(404);
   });
 
-  it("remove-issue is migrated too — same factory, same guarantees", async () => {
+  // EFB-98: detach used to be a POST carrying `{issue_id}`, so it shared the
+  // unknown-key guarantee asserted for attach above. It is a DELETE on an
+  // addressable member now and reads no body at all, which means there is no
+  // body to reject a key from — the guarantee did not weaken, it stopped
+  // applying. What replaces it is that the target genuinely comes from the
+  // PATH: an id that names nothing has to 404 rather than silently detach
+  // whatever the sprint happened to hold.
+  it("remove-issue takes its target from the path, and 404s an id that names nothing", async () => {
     const h = makeHarness();
     await createBoard(h);
     const sprint = await createSprint(h);
@@ -540,13 +550,15 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, issue.id);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/remove-issue`,
-      jsonReq("POST", { issue_id: issue.id, nope: 1 }),
+      url("sprint.issue.detach", { slug: "kb", id: sprint.id, issue_id: "no-such-issue" }),
+      jsonReq("DELETE"),
       {},
     );
 
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { reason: string }).reason).toBe("nope-unknown");
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { reason: string }).reason).toBe("issue");
+    // The real member is untouched by the failed detach.
+    expect(h.db.issues.find((i) => i["id"] === issue.id)?.["sprint_id"]).toBe(sprint.id);
   });
 
   it("add-issue to a PLANNING sprint leaves the container at backlog", async () => {
@@ -574,7 +586,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, b.id);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       { method: "DELETE", headers: { ...bearer } },
       {},
     );
@@ -595,20 +607,20 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const undone = await createIssue(h, { title: "wip", estimate: 5 });
     await addIssue(h, s1.id, done.id);
     await addIssue(h, s1.id, undone.id);
-    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: s1.id }), jsonReq("POST", {}), {});
     // Mark "done" issue as actually done (column category=done) via transition.
     const doneColumn = h.db.boards[0]!["columns"] as unknown as string;
     const cols = JSON.parse(doneColumn) as Array<{ id: string; name: string; category: string }>;
     const doneCol = cols.find((c) => c.category === "done")!;
     await h.app.request(
-      `/api/v0/issues/${done.id}/transition`,
+      url("issue.transition", { id: done.id }),
       jsonReq("POST", { column_id: doneCol.id }),
       {},
     );
 
     vi.setSystemTime(9_000);
     const complete = await h.app.request(
-      `/api/v0/boards/kb/sprints/${s1.id}/complete`,
+      url("sprint.complete", { slug: "kb", id: s1.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -656,9 +668,9 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const s2 = await createSprint(h, { name: "Sprint 2" });
     const issue = await createIssue(h, { estimate: 2 });
     await addIssue(h, s1.id, issue.id);
-    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: s1.id }), jsonReq("POST", {}), {});
     const complete = await h.app.request(
-      `/api/v0/boards/kb/sprints/${s1.id}/complete`,
+      url("sprint.complete", { slug: "kb", id: s1.id }),
       jsonReq("POST", { carryOver: "drop" }),
       {},
     );
@@ -682,7 +694,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     }>;
     const doneCol = cols.find((c) => c.category === "done")!;
     await h.app.request(
-      `/api/v0/issues/${done.id}/transition`,
+      url("issue.transition", { id: done.id }),
       jsonReq("POST", { column_id: doneCol.id }),
       {},
     );
@@ -691,7 +703,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, planned.id);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      url("sprint.start", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -725,7 +737,7 @@ describe("phase 21a — sprint membership audit + delete", () => {
     await addIssue(h, sprint.id, b.id);
     await addIssue(h, sprint.id, c.id);
     const start = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/start`,
+      url("sprint.start", { slug: "kb", id: sprint.id }),
       jsonReq("POST", {}),
       {},
     );
@@ -742,21 +754,21 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const carried = await createIssue(h, { title: "wip", estimate: 3 });
     await addIssue(h, s1.id, done.id);
     await addIssue(h, s1.id, carried.id);
-    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: s1.id }), jsonReq("POST", {}), {});
     const cols = JSON.parse(h.db.boards[0]!["columns"] as unknown as string) as Array<{
       id: string;
       category: string;
     }>;
     const doneCol = cols.find((c) => c.category === "done")!;
     await h.app.request(
-      `/api/v0/issues/${done.id}/transition`,
+      url("issue.transition", { id: done.id }),
       jsonReq("POST", { column_id: doneCol.id }),
       {},
     );
-    await h.app.request(`/api/v0/boards/kb/sprints/${s1.id}/complete`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.complete", { slug: "kb", id: s1.id }), jsonReq("POST", {}), {});
 
     const arch = await h.app.request(
-      `/api/v0/boards/kb/sprints/${s1.id}/archive`,
+      url("sprint.archivedIssues.list", { slug: "kb", id: s1.id }),
       { headers: { ...bearer } },
       {},
     );
@@ -781,17 +793,17 @@ describe("phase 21a — sprint membership audit + delete", () => {
     const h = makeHarness();
     await createBoard(h);
     const sprint = await createSprint(h);
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     const active = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       { method: "DELETE", headers: { ...bearer } },
       {},
     );
     expect(active.status).toBe(409);
 
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/complete`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.complete", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     const completed = await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}`,
+      url("sprint.update", { slug: "kb", id: sprint.id }),
       { method: "DELETE", headers: { ...bearer } },
       {},
     );
@@ -957,7 +969,7 @@ describe("sprint request schemas (EFB-84)", () => {
     it("POST answers 400 name for a whitespace-only name", async () => {
       const h = makeHarness();
       await createBoard(h);
-      const res = await h.app.request("/api/v0/boards/kb/sprints", jsonReq("POST", { name: " " }), {});
+      const res = await h.app.request(url("sprint.list", { slug: "kb" }), jsonReq("POST", { name: " " }), {});
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({ error: "invalid-body", reason: "name" });
     });
@@ -966,7 +978,7 @@ describe("sprint request schemas (EFB-84)", () => {
       const h = makeHarness();
       await createBoard(h);
       const res = await h.app.request(
-        "/api/v0/boards/kb/sprints",
+        url("sprint.list", { slug: "kb" }),
         jsonReq("POST", { name: "S", planed_days: 7 }),
         {},
       );
@@ -981,9 +993,9 @@ describe("sprint request schemas (EFB-84)", () => {
       const h = makeHarness();
       await createBoard(h);
       const sprint = await createSprint(h);
-      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+      await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
       const res = await h.app.request(
-        `/api/v0/boards/kb/sprints/${sprint.id}`,
+        url("sprint.update", { slug: "kb", id: sprint.id }),
         jsonReq("PATCH", { planned_days: 999 }),
         {},
       );
@@ -996,7 +1008,7 @@ describe("sprint request schemas (EFB-84)", () => {
       await createBoard(h);
       const sprint = await createSprint(h);
       const res = await h.app.request(
-        `/api/v0/boards/kb/sprints/${sprint.id}`,
+        url("sprint.update", { slug: "kb", id: sprint.id }),
         jsonReq("PATCH", { planned_days: 999 }),
         {},
       );
@@ -1011,9 +1023,9 @@ describe("sprint request schemas (EFB-84)", () => {
       const h = makeHarness();
       await createBoard(h);
       const sprint = await createSprint(h);
-      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+      await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
       const res = await h.app.request(
-        `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+        url("sprint.complete", { slug: "kb", id: sprint.id }),
         { method: "POST", headers: { ...bearer } },
         {},
       );
@@ -1026,10 +1038,10 @@ describe("sprint request schemas (EFB-84)", () => {
       const sprint = await createSprint(h);
       const issue = await createIssue(h);
       await addIssue(h, sprint.id, issue.id);
-      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+      await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
 
       const res = await h.app.request(
-        `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+        url("sprint.complete", { slug: "kb", id: sprint.id }),
         jsonReq("POST", { carryOver: "dropp" }),
         {},
       );
@@ -1097,7 +1109,7 @@ describe("EFB-91 — 30553 on sprint-driven container moves", () => {
     }
     await settle();
 
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     await settle();
 
     const rows = promoteRows(h);
@@ -1125,7 +1137,7 @@ describe("EFB-91 — 30553 on sprint-driven container moves", () => {
     await addIssue(h, sprint.id, issue.id);
     await settle();
 
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     await settle();
 
     const row = promoteRows(h)[0]!;
@@ -1136,7 +1148,7 @@ describe("EFB-91 — 30553 on sprint-driven container moves", () => {
     const h = makeHarness();
     await createPublicBoard(h);
     const sprint = await createSprint(h);
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     const issue = await createIssue(h, { title: "late arrival" });
     await settle();
 
@@ -1178,13 +1190,13 @@ describe("EFB-91 — 30553 on sprint-driven container moves", () => {
     const sprint = await createSprint(h);
     const issue = await createIssue(h, { title: "unfinished" });
     await addIssue(h, sprint.id, issue.id);
-    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await h.app.request(url("sprint.start", { slug: "kb", id: sprint.id }), jsonReq("POST", {}), {});
     await settle();
     const rowsBefore = h.db.statusChanges.length;
     const changesBefore = plaintextEvents(h).filter((e) => e.kind === 30553).length;
 
     await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+      url("sprint.complete", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { carryOver: "drop" }),
       {},
     );

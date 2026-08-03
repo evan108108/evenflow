@@ -4,6 +4,7 @@
 // sealing a standard NIP-44 decrypt can round-trip.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -136,7 +137,7 @@ describe("POST /api/v0/signin/nostr — NIP-98 path", () => {
 
 describe("POST /api/v0/signin/nostr — challenge path", () => {
   const getChallenge = async (h: Harness, pubkey = PUBKEY) => {
-    const res = await h.app.request(`/api/v0/signin/nostr/challenge?pubkey=${pubkey}`, {}, ENV);
+    const res = await h.app.request(`${url("signin.nostr.challenge")}?pubkey=${pubkey}`, {}, ENV);
     expect(res.status).toBe(200);
     return ((await res.json()) as { challenge: string }).challenge;
   };
@@ -187,7 +188,7 @@ describe("POST /api/v0/signin/nostr — challenge path", () => {
 
   it("validates the challenge pubkey param", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/signin/nostr/challenge?pubkey=nope", {}, ENV);
+    const res = await h.app.request(`${url("signin.nostr.challenge")}?pubkey=nope`, {}, ENV);
     expect(res.status).toBe(400);
   });
 });
@@ -214,7 +215,7 @@ describe("register-key no-downgrade + grants to the real key", () => {
     // the existing row and refuses the replace. Drive the endpoint with a
     // canned JWT whose hash we transplant onto the nostr row.
     const res = await h.app.request(
-      "/api/v0/session/register-key",
+      url("session.key.register"),
       jsonReq("POST", { session_pubkey: "ab".repeat(32) }),
       ENV,
     );
@@ -229,12 +230,12 @@ describe("register-key no-downgrade + grants to the real key", () => {
   it("guard: register-key against a jwt_hash that holds a nostr row keeps the real key", async () => {
     const h = makeHarness();
     // Seed: a nostr registration under the canned caller's jwt hash.
-    const probe = await h.app.request("/api/v0/session/register-key", jsonReq("POST", { session_pubkey: "cd".repeat(32) }), ENV);
+    const probe = await h.app.request(url("session.key.register"), jsonReq("POST", { session_pubkey: "cd".repeat(32) }), ENV);
     expect(probe.status).toBe(201);
     const row = h.db.sessionKeys[h.db.sessionKeys.length - 1]!;
     Object.assign(row, { session_pubkey: PUBKEY, session_key_source: "nostr" });
 
-    const res = await h.app.request("/api/v0/session/register-key", jsonReq("POST", { session_pubkey: "ef".repeat(32) }), ENV);
+    const res = await h.app.request(url("session.key.register"), jsonReq("POST", { session_pubkey: "ef".repeat(32) }), ENV);
     expect(res.status).toBe(201);
     const body = (await res.json()) as { session_pubkey: string; source: string };
     expect(body.source).toBe("nostr");
@@ -245,10 +246,10 @@ describe("register-key no-downgrade + grants to the real key", () => {
 
 describe("invite by Nostr pubkey → immediate level-4 grant", () => {
   const setupPrivateBoard = async (h: Harness) => {
-    const create = await h.app.request("/api/v0/boards", jsonReq("POST", { slug: "kb", title: "Board" }), ENV);
+    const create = await h.app.request(url("board.create"), jsonReq("POST", { slug: "kb", title: "Board" }), ENV);
     expect(create.status).toBe(201);
     const flip = await h.app.request(
-      "/api/v0/orgs/tester/boards/kb",
+      url("board.get", { slug: "kb" }, "tester"),
       jsonReq("PATCH", { visibility: "private", is_encrypted: true }),
       ENV,
     );
@@ -260,7 +261,7 @@ describe("invite by Nostr pubkey → immediate level-4 grant", () => {
     await setupPrivateBoard(h);
     const member = nostrMemberPubkey(PUBKEY);
     const add = await h.app.request(
-      "/api/v0/orgs/tester/boards/kb/members",
+      url("org.board.members.list", { org_slug: "tester", slug: "kb" }),
       jsonReq("POST", { pubkey: member, role: "contributor" }),
       ENV,
     );

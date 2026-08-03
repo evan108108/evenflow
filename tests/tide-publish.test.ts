@@ -7,6 +7,7 @@
 // the gift-wrap and checks the actual kind and `d` tag on the wire.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   bearer,
   createBoard,
@@ -48,7 +49,7 @@ afterEach(() => {
 
 const registerKey = async (h: Harness, sessionPub: string) => {
   const res = await h.app.request(
-    "/api/v0/session/register-key",
+    url("session.key.register"),
     jsonReq("POST", { session_pubkey: sessionPub }),
     {},
   );
@@ -57,7 +58,7 @@ const registerKey = async (h: Harness, sessionPub: string) => {
 
 const createSprint = async (h: Harness): Promise<SprintShape> => {
   const res = await h.app.request(
-    "/api/v0/boards/kb/sprints",
+    url("sprint.list", { slug: "kb" }),
     jsonReq("POST", { name: "Sprint 1" }),
     {},
   );
@@ -67,7 +68,7 @@ const createSprint = async (h: Harness): Promise<SprintShape> => {
 
 const readTide = async (h: Harness, sprintId: string) => {
   const res = await h.app.request(
-    `/api/v0/boards/kb/sprints/${sprintId}/tide`,
+    url("sprint.tide", { slug: "kb", id: sprintId }),
     { headers: bearer },
     {},
   );
@@ -88,7 +89,7 @@ describe("private board — encrypted 30565", () => {
     await registerKey(h, session.pub);
     await createBoard(h);
     const flip = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "private" }),
       {},
     );
@@ -97,11 +98,11 @@ describe("private board — encrypted 30565", () => {
     const sprint = await createSprint(h);
     const issue = await createIssue(h, { title: "Secret work" });
     await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: issue.id }),
       {},
     );
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { estimate: 5 }), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { estimate: 5 }), {});
 
     // Cross into a new day so the read closes out day 0.
     vi.setSystemTime(at(1));
@@ -128,7 +129,7 @@ describe("private board — encrypted 30565", () => {
     const session = generateEpochKeypair();
     await registerKey(h, session.pub);
     await createBoard(h);
-    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {});
+    await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "private" }), {});
     const sprint = await createSprint(h);
 
     vi.setSystemTime(at(1));
@@ -143,7 +144,7 @@ describe("private board — encrypted 30565", () => {
     const session2 = generateEpochKeypair();
     await registerKey(h2, session2.pub);
     await createBoard(h2);
-    await h2.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {});
+    await h2.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "private" }), {});
     const sprint2 = await createSprint(h2);
 
     vi.setSystemTime(at(1));
@@ -165,7 +166,7 @@ describe("private board — never leaks to the public substrate", () => {
     const session = generateEpochKeypair();
     await registerKey(h, session.pub);
     await createBoard(h);
-    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "private" }), {});
+    await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "private" }), {});
     const sprint = await createSprint(h);
 
     vi.setSystemTime(at(1));
@@ -190,11 +191,11 @@ describe("public board — caller-signed 30560", () => {
     const sprint = await createSprint(h);
     const issue = await createIssue(h, { title: "Open work" });
     await h.app.request(
-      `/api/v0/boards/kb/sprints/${sprint.id}/add-issue`,
+      url("sprint.issues.attach", { slug: "kb", id: sprint.id }),
       jsonReq("POST", { issue_id: issue.id }),
       {},
     );
-    await h.app.request(`/api/v0/issues/${issue.id}`, jsonReq("PATCH", { estimate: 5 }), {});
+    await h.app.request(url("issue.get", { id: issue.id }), jsonReq("PATCH", { estimate: 5 }), {});
 
     vi.setSystemTime(at(1));
     await readTide(h, sprint.id);
@@ -233,7 +234,7 @@ describe("public board — caller-signed 30560", () => {
     await createPublicBoard(h);
 
     vi.setSystemTime(at(1));
-    const res = await h.app.request("/api/v0/boards/kb/tide", { headers: bearer }, {});
+    const res = await h.app.request(url("board.tide", { slug: "kb" }), { headers: bearer }, {});
     expect(res.status).toBe(200);
 
     const { event } = (h.audience.calls.find((c) => c.path === KANBAN_TIDE_PATH)!

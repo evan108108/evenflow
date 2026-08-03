@@ -3,6 +3,7 @@
 // fragment shapes.
 
 import { describe, expect, it } from "vitest";
+import { url } from "@routes-manifest";
 import { render } from "solid-js/web";
 import { MemoryRouter, Route } from "@solidjs/router";
 import { Landing } from "./Landing";
@@ -30,8 +31,8 @@ describe("Landing", () => {
     expect(container.querySelector("h1")?.textContent).toBe("Evenflow");
     expect(container.textContent).toContain("The Even Flow of Work.");
     const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    expect(hrefs).toContain("/auth/oauth/start?provider=google");
-    expect(hrefs).toContain("/auth/oauth/start?provider=github");
+    expect(hrefs).toContain(`${url("auth.oauth.start")}?provider=google`);
+    expect(hrefs).toContain(`${url("auth.oauth.start")}?provider=github`);
     dispose();
     container.remove();
   });

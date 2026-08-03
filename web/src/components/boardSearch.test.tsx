@@ -11,6 +11,7 @@
 // and link to the right places, and that a comment hit stays on one line.
 
 import { describe, expect, it, vi, afterEach } from "vitest";
+import { url } from "@routes-manifest";
 import { render } from "solid-js/web";
 import { BoardSearch } from "./BoardSearch";
 import type { BoardView } from "../lib/boardView";
@@ -81,7 +82,7 @@ const mount = (view: BoardView = "kanban") => {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const dispose = render(
-    () => <BoardSearch apiBase="/api/v0/orgs/me/boards/kb" base="/@me/kb" view={view} />,
+    () => <BoardSearch apiBase={url("board.get", { slug: "kb" }, "me")} base="/@me/kb" view={view} />,
     container,
   );
   return { container, dispose };
@@ -126,7 +127,7 @@ describe("BoardSearch", () => {
 
     expect(calls.length).toBe(1);
     expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.url).toContain("/api/v0/orgs/me/boards/kb/search");
+    expect(calls[0]?.url).toContain(url("search.board", { slug: "kb" }, "me"));
     // `q` is the trimmed query and `limit` is sent — the two keys the route's
     // schema accepts. An extra key here would be a 400 from parseRouteBody.
     expect(calls[0]?.body).toEqual({ q: "widget", limit: 8 });

@@ -3,6 +3,7 @@
 // rules, test-panel and audit surfaces.
 
 import { beforeEach, describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import { makeHarness, bearer, jsonReq, createBoard, createIssue, type Harness } from "./harness";
 import { signGithubBody } from "../src/github/secret";
 import { fixture } from "./fixtures/github";
@@ -34,7 +35,7 @@ let shortId: string;
 
 const connect = async (preset = "defaults") => {
   const res = await h.app.request(
-    "/api/v0/boards/kb/github",
+    url("github.config.get", { slug: "kb" }),
     jsonReq("PUT", { repo: "evan108108/evenflow", preset }),
     ENV,
   );
@@ -43,7 +44,7 @@ const connect = async (preset = "defaults") => {
 };
 
 const mintSecret = async (): Promise<string> => {
-  const res = await h.app.request("/api/v0/boards/kb/github/secret", jsonReq("POST"), ENV);
+  const res = await h.app.request(url("github.secret.set", { slug: "kb" }), jsonReq("POST"), ENV);
   expect(res.status).toBe(201);
   return ((await res.json()) as { secret: string }).secret;
 };
@@ -63,7 +64,7 @@ const deliver = async (
   if (sig !== null) headers["x-hub-signature-256"] = sig;
   const deliveryId = opts.deliveryId === undefined ? crypto.randomUUID() : opts.deliveryId;
   if (deliveryId !== null) headers["x-github-delivery"] = deliveryId;
-  return h.app.request(`/api/v0/webhooks/github/${boardId}`, { method: "POST", headers, body: raw }, ENV);
+  return h.app.request(url("github.webhook.receive", { board_id: boardId }), { method: "POST", headers, body: raw }, ENV);
 };
 
 const issueRow = () => h.db.issues.find((r) => r["short_id"] === shortId)!;
@@ -82,7 +83,7 @@ beforeEach(async () => {
 
 describe("board GitHub config", () => {
   it("seeds the default preset on connect and reports it", async () => {
-    const res = await h.app.request("/api/v0/boards/kb/github", { headers: bearer }, ENV);
+    const res = await h.app.request(url("github.config.get", { slug: "kb" }), { headers: bearer }, ENV);
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.config.repo).toBe("evan108108/evenflow");
@@ -93,7 +94,7 @@ describe("board GitHub config", () => {
   });
 
   it("never discloses the secret after minting", async () => {
-    const res = await h.app.request("/api/v0/boards/kb/github", { headers: bearer }, ENV);
+    const res = await h.app.request(url("github.config.get", { slug: "kb" }), { headers: bearer }, ENV);
     const text = await res.text();
     expect(text).not.toContain(secret);
     expect(text).toContain("has_secret");
@@ -111,7 +112,7 @@ describe("board GitHub config", () => {
 
   it("rejects a malformed repo", async () => {
     const res = await h.app.request(
-      "/api/v0/boards/kb/github",
+      url("github.config.get", { slug: "kb" }),
       jsonReq("PUT", { repo: "not-a-repo" }),
       ENV,
     );
@@ -127,7 +128,7 @@ describe("board GitHub config", () => {
 
   it("switching to custom does not wipe hand-edited rules", async () => {
     await h.app.request(
-      "/api/v0/boards/kb/github/rules",
+      url("github.rules.set", { slug: "kb" }),
       jsonReq("PUT", {
         rules: [
           { bucket: "match", when: { event: "pull_request" }, do: { type: "set_external_state", value: "ci_passing" } },
@@ -136,14 +137,14 @@ describe("board GitHub config", () => {
       ENV,
     );
     await connect("custom");
-    const res = await h.app.request("/api/v0/boards/kb/github", { headers: bearer }, ENV);
+    const res = await h.app.request(url("github.config.get", { slug: "kb" }), { headers: bearer }, ENV);
     const body = (await res.json()) as any;
     expect(body.rules).toHaveLength(1);
   });
 
   it("disconnect clears repo and secret but keeps the audit trail", async () => {
     await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
-    const res = await h.app.request("/api/v0/boards/kb/github", { method: "DELETE", headers: bearer }, ENV);
+    const res = await h.app.request(url("github.config.get", { slug: "kb" }), { method: "DELETE", headers: bearer }, ENV);
     expect(res.status).toBe(200);
     expect(h.db.boards[0]!["github_repo"]).toBeNull();
     expect(h.db.boards[0]!["github_webhook_secret_ciphertext"]).toBeNull();
@@ -151,12 +152,12 @@ describe("board GitHub config", () => {
   });
 
   it("requires admin", async () => {
-    const res = await h.app.request("/api/v0/boards/kb/github", {}, ENV);
+    const res = await h.app.request(url("github.config.get", { slug: "kb" }), {}, ENV);
     expect(res.status).toBe(401);
   });
 
   it("503s when the server master key is missing", async () => {
-    const res = await h.app.request("/api/v0/boards/kb/github/secret", jsonReq("POST"), {});
+    const res = await h.app.request(url("github.secret.set", { slug: "kb" }), jsonReq("POST"), {});
     expect(res.status).toBe(503);
     expect(((await res.json()) as any).error).toBe("server-misconfigured");
   });
@@ -326,7 +327,7 @@ describe("POST /api/v0/webhooks/github/:board_id", () => {
   it("404s an unknown board without disclosing existence", async () => {
     const raw = JSON.stringify(fixture("pull_request.opened"));
     const res = await h.app.request(
-      "/api/v0/webhooks/github/no-such-board",
+      url("github.webhook.receive", { board_id: "no-such-board" }),
       {
         method: "POST",
         headers: {
@@ -342,7 +343,7 @@ describe("POST /api/v0/webhooks/github/:board_id", () => {
   });
 
   it("404s a board with no secret configured", async () => {
-    await h.app.request("/api/v0/boards/kb/github", { method: "DELETE", headers: bearer }, ENV);
+    await h.app.request(url("github.config.get", { slug: "kb" }), { method: "DELETE", headers: bearer }, ENV);
     const res = await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
     expect(res.status).toBe(404);
   });
@@ -355,7 +356,7 @@ describe("POST /boards/:slug/github/test", () => {
     const payload = retarget(fixture("pull_request.closed_merged"), shortId);
     const before = JSON.stringify(issueRow());
     const res = await h.app.request(
-      "/api/v0/boards/kb/github/test",
+      url("github.connection.test", { slug: "kb" }),
       jsonReq("POST", { event: "pull_request", payload }),
       ENV,
     );
@@ -377,7 +378,7 @@ describe("POST /boards/:slug/github/test", () => {
     // The panel and the webhook share evaluateDelivery; this pins that.
     const payload = retarget(fixture("pull_request.opened"), shortId);
     const dry = await h.app.request(
-      "/api/v0/boards/kb/github/test",
+      url("github.connection.test", { slug: "kb" }),
       jsonReq("POST", { event: "pull_request", payload }),
       ENV,
     );
@@ -391,7 +392,7 @@ describe("POST /boards/:slug/github/test", () => {
 
   it("explains a no-match delivery", async () => {
     const res = await h.app.request(
-      "/api/v0/boards/kb/github/test",
+      url("github.connection.test", { slug: "kb" }),
       jsonReq("POST", { event: "pull_request", payload: fixture("pull_request.opened_no_ref") }),
       ENV,
     );
@@ -403,7 +404,7 @@ describe("POST /boards/:slug/github/test", () => {
 
   it("rejects a payload that is not an object", async () => {
     const res = await h.app.request(
-      "/api/v0/boards/kb/github/test",
+      url("github.connection.test", { slug: "kb" }),
       jsonReq("POST", { event: "pull_request", payload: "nope" }),
       ENV,
     );
@@ -415,7 +416,7 @@ describe("POST /boards/:slug/github/test", () => {
 
 describe("PUT /boards/:slug/github/rules", () => {
   const put = (rules: unknown) =>
-    h.app.request("/api/v0/boards/kb/github/rules", jsonReq("PUT", { rules }), ENV);
+    h.app.request(url("github.rules.set", { slug: "kb" }), jsonReq("PUT", { rules }), ENV);
 
   it("replaces the set and flips the preset to custom", async () => {
     const res = await put([
@@ -443,7 +444,7 @@ describe("PUT /boards/:slug/github/rules", () => {
 
   it("rejects an external state outside the board vocabulary", async () => {
     await h.app.request(
-      "/api/v0/boards/kb/github",
+      url("github.config.get", { slug: "kb" }),
       jsonReq("PUT", { external_states: ["only_this"] }),
       ENV,
     );
@@ -510,7 +511,7 @@ describe("GET /boards/:slug/github/audit", () => {
   it("lists deliveries newest first with their actions", async () => {
     await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
     await deliver("check_run", fixture("check_run.completed_success"));
-    const res = await h.app.request("/api/v0/boards/kb/github/audit", { headers: bearer }, ENV);
+    const res = await h.app.request(url("github.audit.list", { slug: "kb" }), { headers: bearer }, ENV);
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.entries).toHaveLength(2);
@@ -522,7 +523,7 @@ describe("GET /boards/:slug/github/audit", () => {
     await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
     await deliver("check_run", fixture("check_run.completed_success"));
     const res = await h.app.request(
-      "/api/v0/boards/kb/github/audit?event_type=check_run",
+      `${url("github.audit.list", { slug: "kb" })}?event_type=check_run`,
       { headers: bearer },
       ENV,
     );
@@ -535,7 +536,7 @@ describe("GET /boards/:slug/github/audit", () => {
     await deliver("pull_request", retarget(fixture("pull_request.opened"), shortId));
     await deliver("pull_request", null, { raw: "{bad" });
     const res = await h.app.request(
-      "/api/v0/boards/kb/github/audit?errors_only=1",
+      `${url("github.audit.list", { slug: "kb" })}?errors_only=1`,
       { headers: bearer },
       ENV,
     );
@@ -546,14 +547,14 @@ describe("GET /boards/:slug/github/audit", () => {
 
   it("records a delivery that matched nothing, so silence is visible", async () => {
     await deliver("pull_request", fixture("pull_request.opened_no_ref"));
-    const res = await h.app.request("/api/v0/boards/kb/github/audit", { headers: bearer }, ENV);
+    const res = await h.app.request(url("github.audit.list", { slug: "kb" }), { headers: bearer }, ENV);
     const body = (await res.json()) as any;
     expect(body.entries).toHaveLength(1);
     expect(body.entries[0].matched_issue_ids).toEqual([]);
   });
 
   it("requires admin", async () => {
-    const res = await h.app.request("/api/v0/boards/kb/github/audit", {}, ENV);
+    const res = await h.app.request(url("github.audit.list", { slug: "kb" }), {}, ENV);
     expect(res.status).toBe(401);
   });
 });
@@ -658,8 +659,8 @@ describe("EFB-66 — github transitions emit board events", () => {
 
   it("leaves an iceboxed ticket parked — icebox is sticky under webhooks", async () => {
     const promote = await h.app.request(
-      `/api/v0/issues/${issueRow()["id"]}/send_to_icebox`,
-      jsonReq("POST", {}),
+      url("issue.container.set", { id: String(issueRow()["id"]) }),
+      jsonReq("POST", { container: "icebox" }),
       ENV,
     );
     expect(promote.status).toBe(200);
@@ -675,7 +676,7 @@ describe("EFB-66 — github transitions emit board events", () => {
 
   it("emits issue.container_changed for a container move, with from/to container", async () => {
     const put = await h.app.request(
-      "/api/v0/boards/kb/github/rules",
+      url("github.rules.set", { slug: "kb" }),
       jsonReq("PUT", {
         rules: [
           {
@@ -710,7 +711,7 @@ describe("EFB-66 — github transitions emit board events", () => {
   // substrate's audit trail.
   it("emits no transition event for a non-transition action", async () => {
     const put = await h.app.request(
-      "/api/v0/boards/kb/github/rules",
+      url("github.rules.set", { slug: "kb" }),
       jsonReq("PUT", {
         rules: [
           {

@@ -6,6 +6,7 @@
 // path unwraps them with the server secret.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { encrypt, getConversationKey } from "nostr-tools/nip44";
 import type { AttachmentShape, IssueShape } from "../src/shapes";
@@ -38,17 +39,17 @@ const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 
 /** Board + issue under the caller's personal org; returns issue + org row. */
 const setup = async (h: Harness) => {
-  const res = await h.app.request("/api/v0/boards", jsonReq("POST", { slug: "kb", title: "Board" }), {});
+  const res = await h.app.request(url("board.create"), jsonReq("POST", { slug: "kb", title: "Board" }), {});
   expect(res.status).toBe(201);
   const issue = await createIssue(h);
   return { issue, org: callerOrg(h) };
 };
 
-const storagePath = (slug: unknown) => `/api/v0/orgs/${String(slug)}/storage`;
+const storagePath = (slug: unknown) => url("storage.get", { org_slug: String(slug) });
 
 const upload = (h: Harness, issue: IssueShape, env: Record<string, unknown> = {}) =>
   h.app.request(
-    `/api/v0/boards/kb/issues/${issue.id}/attachments`,
+    url("attachment.create", { slug: "kb", issue_ref: issue.id }),
     jsonReq("POST", { file_b64: b64(PNG_BYTES), filename: "shot.png", content_type: "image/png" }),
     env,
   );
@@ -62,7 +63,7 @@ const encryptCreds = (serverPubkey: string, creds: Record<string, string>) => {
 };
 
 const serverPubkey = async (h: Harness) => {
-  const res = await h.app.request("/api/v0/server-pubkey", {}, ENV);
+  const res = await h.app.request(url("storage.serverPubkey"), {}, ENV);
   expect(res.status).toBe(200);
   return ((await res.json()) as { pubkey: string }).pubkey;
 };
@@ -90,7 +91,7 @@ const putS3Config = async (h: Harness, orgSlug: unknown, over: Record<string, un
 describe("server-pubkey", () => {
   it("serves the derived static pubkey with a day of cache", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/server-pubkey", {}, ENV);
+    const res = await h.app.request(url("storage.serverPubkey"), {}, ENV);
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("public, max-age=86400");
     const { pubkey } = (await res.json()) as { pubkey: string };
@@ -99,7 +100,7 @@ describe("server-pubkey", () => {
 
   it("answers 503 when the storage secret is not configured", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/server-pubkey", {}, {});
+    const res = await h.app.request(url("storage.serverPubkey"), {}, {});
     expect(res.status).toBe(503);
   });
 });
@@ -303,7 +304,7 @@ describe("upload routing", () => {
     const { issue, org } = await setup(h);
     expect((await putS3Config(h, org["slug"])).status).toBe(200);
     const res = await h.app.request(
-      `/api/v0/boards/kb/issues/${issue.id}/attachments`,
+      url("attachment.create", { slug: "kb", issue_ref: issue.id }),
       jsonReq("POST", { file_b64: b64(PNG_BYTES), filename: "run.exe", content_type: "application/x-msdownload" }),
       ENV,
     );

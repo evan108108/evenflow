@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { MCP_PROTOCOL_VERSION, MCP_TOOLS } from "../src/routes/mcp";
 import { bearer, createBoard, createIssue, makeHarness, type Harness } from "./harness";
 
@@ -145,7 +146,7 @@ describe("tools/call", () => {
     expect(structured(got.body)["board"]).toEqual(structured(created.body)["board"]);
     expect(structured(got.body)["role"]).toBe("owner");
 
-    const rest = await h.app.request("/api/v0/boards/kb", { headers: bearer }, {});
+    const rest = await h.app.request(url("board.get", { slug: "kb" }), { headers: bearer }, {});
     expect(await rest.json()).toEqual(structured(got.body));
   });
 

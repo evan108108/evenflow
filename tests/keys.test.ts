@@ -3,6 +3,7 @@
 // keys-can't-manage-keys guard.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { API_KEY_DISPLAY_PREFIX_LEN, API_KEY_PREFIX } from "../src/apikeys";
 import { CALLER, createBoard, jsonReq, makeHarness, type Harness } from "./harness";
 
@@ -24,7 +25,7 @@ interface KeyView {
 }
 
 const mintKey = async (h: Harness, name = "CI bot") => {
-  const res = await h.app.request("/api/v0/keys", jsonReq("POST", { name }), {});
+  const res = await h.app.request(url("key.create"), jsonReq("POST", { name }), {});
   expect(res.status).toBe(201);
   return (await res.json()) as { key: KeyView; plaintext: string };
 };
@@ -48,9 +49,9 @@ describe("POST /api/v0/keys", () => {
 
   it("validates the name and requires auth", async () => {
     const h = makeHarness();
-    const bad = await h.app.request("/api/v0/keys", jsonReq("POST", { name: "  " }), {});
+    const bad = await h.app.request(url("key.create"), jsonReq("POST", { name: "  " }), {});
     expect(bad.status).toBe(400);
-    const anon = await h.app.request("/api/v0/keys", {
+    const anon = await h.app.request(url("key.create"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "x" }),
@@ -65,7 +66,7 @@ describe("GET /api/v0/keys + DELETE", () => {
     await mintKey(h, "first");
     vi.setSystemTime(2_000_000);
     await mintKey(h, "second");
-    const res = await h.app.request("/api/v0/keys", { headers: jsonReq("GET").headers }, {});
+    const res = await h.app.request(url("key.list"), { headers: jsonReq("GET").headers }, {});
     expect(res.status).toBe(200);
     const { keys } = (await res.json()) as { keys: KeyView[] };
     expect(keys.map((k) => k.name)).toEqual(["second", "first"]);
@@ -75,12 +76,12 @@ describe("GET /api/v0/keys + DELETE", () => {
   it("soft-revokes; revoking twice stays 200; foreign keys 404", async () => {
     const h = makeHarness();
     const { key } = await mintKey(h);
-    const res = await h.app.request(`/api/v0/keys/${key.id}`, jsonReq("DELETE"), {});
+    const res = await h.app.request(url("key.delete", { id: key.id }), jsonReq("DELETE"), {});
     expect(res.status).toBe(200);
     expect(h.db.apiKeys[0]!["revoked_at_ms"]).toBe(1_000_000);
-    const again = await h.app.request(`/api/v0/keys/${key.id}`, jsonReq("DELETE"), {});
+    const again = await h.app.request(url("key.delete", { id: key.id }), jsonReq("DELETE"), {});
     expect(again.status).toBe(200);
-    const foreign = await h.app.request(`/api/v0/keys/${key.id}`, jsonReq("DELETE", undefined, "tok-stranger"), {});
+    const foreign = await h.app.request(url("key.delete", { id: key.id }), jsonReq("DELETE", undefined, "tok-stranger"), {});
     expect(foreign.status).toBe(404);
   });
 });
@@ -90,7 +91,7 @@ describe("evk_ bearer auth", () => {
     const h = makeHarness();
     await createBoard(h);
     const { plaintext } = await mintKey(h);
-    const res = await h.app.request("/api/v0/boards", evkReq(plaintext), {});
+    const res = await h.app.request(url("board.create"), evkReq(plaintext), {});
     expect(res.status).toBe(200);
     const { boards } = (await res.json()) as { boards: Array<{ slug: string }> };
     expect(boards.map((b) => b.slug)).toEqual(["kb"]);
@@ -101,7 +102,7 @@ describe("evk_ bearer auth", () => {
     await createBoard(h);
     const { plaintext } = await mintKey(h, "automation");
     const res = await h.app.request(
-      "/api/v0/boards/kb/issues",
+      url("issue.create", { slug: "kb" }),
       {
         method: "POST",
         headers: { Authorization: `Bearer ${plaintext}`, "Content-Type": "application/json" },
@@ -116,12 +117,12 @@ describe("evk_ bearer auth", () => {
   it("rejects unknown and revoked keys with the same 401 reason", async () => {
     const h = makeHarness();
     const { key, plaintext } = await mintKey(h);
-    const unknown = await h.app.request("/api/v0/boards", evkReq("evk_nope_nope_nope_nope_nope_nope_nope_nope"), {});
+    const unknown = await h.app.request(url("board.create"), evkReq("evk_nope_nope_nope_nope_nope_nope_nope_nope"), {});
     expect(unknown.status).toBe(401);
     expect(((await unknown.json()) as { reason: string }).reason).toBe("invalid-api-key");
 
-    await h.app.request(`/api/v0/keys/${key.id}`, jsonReq("DELETE"), {});
-    const revoked = await h.app.request("/api/v0/boards", evkReq(plaintext), {});
+    await h.app.request(url("key.delete", { id: key.id }), jsonReq("DELETE"), {});
+    const revoked = await h.app.request(url("board.create"), evkReq(plaintext), {});
     expect(revoked.status).toBe(401);
     expect(((await revoked.json()) as { reason: string }).reason).toBe("invalid-api-key");
   });
@@ -129,15 +130,15 @@ describe("evk_ bearer auth", () => {
   it("a key cannot mint, list, or revoke keys", async () => {
     const h = makeHarness();
     const { key, plaintext } = await mintKey(h);
-    const mint = await h.app.request("/api/v0/keys", {
+    const mint = await h.app.request(url("key.create"), {
       method: "POST",
       headers: { Authorization: `Bearer ${plaintext}`, "Content-Type": "application/json" },
       body: JSON.stringify({ name: "escalation" }),
     }, {});
     expect(mint.status).toBe(403);
-    const list = await h.app.request("/api/v0/keys", evkReq(plaintext), {});
+    const list = await h.app.request(url("key.list"), evkReq(plaintext), {});
     expect(list.status).toBe(403);
-    const revoke = await h.app.request(`/api/v0/keys/${key.id}`, { method: "DELETE", ...evkReq(plaintext) }, {});
+    const revoke = await h.app.request(url("key.delete", { id: key.id }), { method: "DELETE", ...evkReq(plaintext) }, {});
     expect(revoke.status).toBe(403);
   });
 
@@ -145,15 +146,15 @@ describe("evk_ bearer auth", () => {
     const h = makeHarness();
     await createBoard(h);
     const { plaintext } = await mintKey(h);
-    await h.app.request("/api/v0/boards", evkReq(plaintext), {});
+    await h.app.request(url("board.create"), evkReq(plaintext), {});
     expect(h.db.apiKeys[0]!["last_used_at_ms"]).toBe(1_000_000);
 
     vi.setSystemTime(1_030_000); // +30s → throttled
-    await h.app.request("/api/v0/boards", evkReq(plaintext), {});
+    await h.app.request(url("board.create"), evkReq(plaintext), {});
     expect(h.db.apiKeys[0]!["last_used_at_ms"]).toBe(1_000_000);
 
     vi.setSystemTime(1_070_000); // +70s → bumps
-    await h.app.request("/api/v0/boards", evkReq(plaintext), {});
+    await h.app.request(url("board.create"), evkReq(plaintext), {});
     expect(h.db.apiKeys[0]!["last_used_at_ms"]).toBe(1_070_000);
   });
 
@@ -186,18 +187,18 @@ describe("GET /issues/:id?include=", () => {
   it("expands comments + attachments in one response (the MCP shape)", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const issueRes = await h.app.request("/api/v0/boards/kb/issues", jsonReq("POST", { title: "Full" }), {});
+    const issueRes = await h.app.request(url("issue.create", { slug: "kb" }), jsonReq("POST", { title: "Full" }), {});
     const { issue } = (await issueRes.json()) as { issue: { id: string } };
-    await h.app.request(`/api/v0/issues/${issue.id}/comments`, jsonReq("POST", { body: "hi" }), {});
+    await h.app.request(url("comment.create", { id: issue.id }), jsonReq("POST", { body: "hi" }), {});
     await h.app.request(
-      `/api/v0/boards/kb/issues/${issue.id}/attachments`,
+      url("attachment.create", { slug: "kb", issue_ref: issue.id }),
       // image/* because this board is on default storage, which takes images
       // only (EFB-80); the type is incidental — the test just wants a row.
       jsonReq("POST", { file_b64: "aGk=", filename: "hi.png", content_type: "image/png" }),
       {},
     );
     const res = await h.app.request(
-      `/api/v0/issues/${issue.id}?include=comments,attachments`,
+      `${url("issue.get", { id: issue.id })}?include=comments,attachments`,
       { headers: jsonReq("GET").headers },
       {},
     );
@@ -206,11 +207,11 @@ describe("GET /issues/:id?include=", () => {
     expect(body.comments.map((c) => c.body)).toEqual(["hi"]);
     expect(body.attachments.map((a) => a.filename)).toEqual(["hi.png"]);
 
-    const plain = await h.app.request(`/api/v0/issues/${issue.id}`, { headers: jsonReq("GET").headers }, {});
+    const plain = await h.app.request(url("issue.get", { id: issue.id }), { headers: jsonReq("GET").headers }, {});
     const plainBody = (await plain.json()) as Record<string, unknown>;
     expect(plainBody["comments"]).toBeUndefined();
 
-    const bad = await h.app.request(`/api/v0/issues/${issue.id}?include=secrets`, { headers: jsonReq("GET").headers }, {});
+    const bad = await h.app.request(`${url("issue.get", { id: issue.id })}?include=secrets`, { headers: jsonReq("GET").headers }, {});
     expect(bad.status).toBe(400);
   });
 });

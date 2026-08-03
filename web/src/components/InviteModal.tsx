@@ -7,6 +7,7 @@
 //            and a human tripping on the link (migration 0020).
 
 import { Show, createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
 
@@ -29,13 +30,13 @@ interface InviteCreateResponse {
 
 const createInvite = (body: Record<string, unknown>): Promise<InviteCreateResponse> =>
   appRuntime.runPromise(
-    Effect.flatMap(ApiClient, (c) => c.post<InviteCreateResponse>("/api/v0/invites", body)),
+    Effect.flatMap(ApiClient, (c) => c.post<InviteCreateResponse>(url("invite.create"), body)),
   );
 
 const emailInvite = (id: string): Promise<{ sent: boolean }> =>
   appRuntime.runPromise(
     Effect.flatMap(ApiClient, (c) =>
-      c.post<{ sent: boolean }>(`/api/v0/invites/${encodeURIComponent(id)}/email`, {}),
+      c.post<{ sent: boolean }>(url("invite.email.send", { id: id }), {}),
     ),
   );
 

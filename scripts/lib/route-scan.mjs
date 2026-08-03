@@ -39,15 +39,55 @@ import path from "node:path";
  * A template path keeps its `${…}` verbatim in the reported id, because the
  * substitution is not resolvable without an AST walk and inventing a
  * concrete-looking route name would be a worse lie than an honest one.
- * Registrations whose path is a bare identifier (`issues.post(path, …)`) are
- * STILL invisible; those are declared in the allowlist instead, and a
- * declaration-based enumeration is filed as follow-up.
+ *
+ * EFB-98 added the third form, `router.post(path("route.id"), …)`, and with it
+ * the declaration-based enumeration this comment used to file as follow-up.
+ * The id resolves through src/routes-manifest.ts, so the scanner sees a
+ * concrete path again — and because the manifest is now the ONLY place a route
+ * may be spelled, the bare-identifier hole that hid two body-reading routes in
+ * EFB-17 cannot reopen: a computed path no longer reaches Hono at all.
  */
 export const registrationPattern = (verbs) =>
   new RegExp(
-    String.raw`\b([A-Za-z_$][\w$]*)\.(${verbs.join("|")})\(\s*(?:"([^"]+)"|\x60([^\x60]+)\x60)\s*,`,
+    String.raw`\b([A-Za-z_$][\w$]*)\.(${verbs.join("|")})\(\s*(?:"([^"]+)"|\x60([^\x60]+)\x60|path\(\s*"([^"]+)"\s*\))\s*,`,
     "g",
   );
+
+/**
+ * Route id -> canonical path, read from the manifest.
+ *
+ * Parsed rather than imported: these checks run in CI before any TypeScript
+ * build step, so they cannot import a .ts module.
+ */
+let manifestPaths = null;
+export const resolveManifestPath = (id) => {
+  if (manifestPaths === null) {
+    manifestPaths = new Map();
+    const file = path.join(process.cwd(), "src", "routes-manifest.ts");
+    if (fs.existsSync(file)) {
+      const src = fs.readFileSync(file, "utf8");
+      const open = src.indexOf("[", src.indexOf("export const ROUTES = ["));
+      let depth = 0;
+      let end = -1;
+      for (let i = open; i < src.length; i++) {
+        if (src[i] === "[") depth++;
+        else if (src[i] === "]") {
+          depth--;
+          if (depth === 0) {
+            end = i;
+            break;
+          }
+        }
+      }
+      if (end !== -1) {
+        for (const entry of new Function(`return ${src.slice(open, end + 1)};`)()) {
+          manifestPaths.set(entry.id, entry.path);
+        }
+      }
+    }
+  }
+  return manifestPaths.get(id) ?? null;
+};
 
 /**
  * Span of the balanced (), starting at the index of an opening paren.
@@ -166,7 +206,21 @@ export function resolveIdentifierBody(src, name) {
  */
 export function withHelpers(handlerSrc, fileSrc) {
   const called = new Set();
-  for (const m of handlerSrc.matchAll(/\b([a-z][\w$]*)\s*\(/g)) called.add(m[1]);
+  // The lookbehind is load-bearing: `\b` alone matches AFTER A DOT, so a raw
+  // `c.req.query(...)` read contributed the bare identifier `query`, and a
+  // same-file `const query = …` then got concatenated into this handler's
+  // source. A handler reading no schema at all was reported as calling both a
+  // schema parse and a raw read, and the check exited 1 on a route that was
+  // fine.
+  //
+  // `.param(`, `.get(` and `.json(` leak the same way, so any file pairing a
+  // raw read with a same-named local trips it. The bug is older than EFB-98;
+  // src/routes/issues.ts is simply the first file to collide.
+  //
+  // A dot-preceded name is a method call on some object, never a free function
+  // declared in this file, so excluding it strictly removes false pull-ins and
+  // cannot drop a real helper: a same-file helper is called bare.
+  for (const m of handlerSrc.matchAll(/(?<![.\w$])([a-z][\w$]*)\s*\(/g)) called.add(m[1]);
   let combined = handlerSrc;
   for (const name of called) {
     if (name === "if" || name === "for" || name === "while" || name === "switch") continue;
@@ -192,8 +246,14 @@ export function scanFile(absPath, relPath, { verbs, classify, middlewareAware = 
   const found = [];
   let m;
   while ((m = registration.exec(src)) !== null) {
-    const [, , verb, quotedPath, templatePath] = m;
-    const routePath = quotedPath ?? templatePath;
+    const [, , verb, quotedPath, templatePath, manifestId] = m;
+    const routePath =
+      quotedPath ??
+      templatePath ??
+      // An id that resolves to nothing falls back to the id itself rather than
+      // to undefined, so a typo surfaces as an unmatched route rather than as
+      // a route that quietly stops being scanned.
+      (manifestId === undefined ? undefined : (resolveManifestPath(manifestId) ?? manifestId));
     const openIdx = src.indexOf("(", m.index);
     const span = balancedSpan(src, openIdx);
     const line = src.slice(0, m.index).split("\n").length;
@@ -267,15 +327,34 @@ export function scanRoutes(routesDir, options) {
  * registration regex — resolving it needs an AST walk. Counting the calls whose
  * first argument is neither a string nor a template literal at least turns an
  * unknown-unknown into a number a human can compare against the scanned total.
+ *
+ * EFB-98: `path("route.id")` is explicitly NOT opaque. It resolves through the
+ * manifest, so the scanner sees a concrete path for it. Counting it here would
+ * report every route in the codebase as invisible and make the number that
+ * exists to measure a blind spot the loudest lie in the output.
  */
 export function countOpaqueRegistrations(routesDir, verbs) {
-  const pattern = new RegExp(
-    String.raw`\b[A-Za-z_$][\w$]*\.(${verbs.join("|")})\(\s*(?!["\x60])[A-Za-z_$]`,
-    "g",
-  );
   let n = 0;
   for (const f of fs.readdirSync(routesDir).filter((x) => x.endsWith(".ts"))) {
     const src = fs.readFileSync(path.join(routesDir, f), "utf8");
+    // Only identifiers that are ACTUALLY Hono routers in this file. Matching
+    // any `<ident>.get(` counted `map.get(key)`, `TOOL_BY_NAME.get(name)` and a
+    // Durable Object `ns.get(ns.idFromName(...))` as route registrations — and
+    // `.get` is far too common a method name for that to be rare.
+    //
+    // The consequence was worse than noise. This number is the one that tells a
+    // human HOW MUCH THE SCAN CANNOT SEE, so inflating it with lookups makes
+    // the blind spot look bigger than it is and buries a real opaque
+    // registration among false ones. A number reported as a measure of
+    // uncertainty has to be trustworthy or it is worse than absent.
+    const routers = [...src.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Hono\b/g)].map(
+      (m) => m[1],
+    );
+    if (routers.length === 0) continue;
+    const pattern = new RegExp(
+      String.raw`\b(?:${routers.join("|")})\.(${verbs.join("|")})\(\s*(?!["\x60]|path\(\s*")[A-Za-z_$]`,
+      "g",
+    );
     n += [...src.matchAll(pattern)].length;
   }
   return n;

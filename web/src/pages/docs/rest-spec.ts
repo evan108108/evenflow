@@ -1,12 +1,24 @@
-// Hand-written API reference data for /docs (phase 19).
+// API reference data for /docs.
 //
-// This is the DOCUMENTED surface, not an exhaustive route dump — the
-// routers in src/routes/* on the Worker remain the source of truth.
-// MCP_TOOLS mirrors src/routes/mcp.ts tool names/shapes; keep in lockstep.
+// The PROSE here is hand-written — a summary, what each parameter means, the
+// response shape. The METHOD and PATH are not: they resolve through
+// src/routes-manifest.ts from a route id, so a documented endpoint cannot
+// describe a URL the server does not serve.
+//
+// EFB-98 made that necessary rather than tidy. Every path in this file was
+// stale — it advertised /orgs/:org/boards/:slug and
+// /issues/:ref/promote_to_active, one of which had been renamed and the other
+// deleted. A docs page is a URL-DISPENSING SURFACE: a reader copies the curl
+// and gets a 404, which is the same failure that opened this ticket, pointed
+// at a human instead of a script. Deriving the path means it cannot happen
+// again without the build breaking.
+//
+// This is the documented SUBSET, not an exhaustive dump — the manifest is the
+// exhaustive list. MCP_TOOLS mirrors src/routes/mcp.ts; keep in lockstep.
 
 export interface RestEndpoint {
-  readonly method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  readonly path: string;
+  /** Route id in src/routes-manifest.ts. Method and path derive from it. */
+  readonly id: RouteId;
   readonly summary: string;
   readonly params?: ReadonlyArray<{ name: string; note: string }>;
   readonly response: string;
@@ -18,16 +30,23 @@ export interface RestSection {
   readonly endpoints: ReadonlyArray<RestEndpoint>;
 }
 
+import { API_BASE, route, type RouteId } from "@routes-manifest";
+
 const KEY = "evk_your_key_here";
-const BASE = "https://evenflow.work/api/v0";
+const BASE = `https://evenflow.work${API_BASE}`;
+
+/** The method a documented endpoint uses, straight off the manifest. */
+export const methodOf = (e: RestEndpoint) => route(e.id).method;
+
+/** The path a documented endpoint uses, straight off the manifest. */
+export const pathOf = (e: RestEndpoint) => route(e.id).path;
 
 export const REST_SECTIONS: ReadonlyArray<RestSection> = [
   {
     title: "Boards",
     endpoints: [
       {
-        method: "GET",
-        path: "/boards",
+        id: "board.list",
         summary: "Every board you can see, newest-updated first.",
         params: [
           { name: "limit", note: "page size, default 20, max 100" },
@@ -37,15 +56,13 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
         curl: `curl ${BASE}/boards -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "GET",
-        path: "/orgs/:org/boards/:slug",
+        id: "board.get",
         summary: "One board, with your effective role.",
         response: "{ board, org, role }",
-        curl: `curl ${BASE}/orgs/acme/boards/flow -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl ${BASE}/org/acme/board/flow -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "POST",
-        path: "/orgs/:org/boards",
+        id: "board.create",
         summary: "Create a board. Columns default to Todo / In Progress / In Review / Done.",
         params: [
           { name: "slug", note: "required, [A-Za-z0-9_-]{1,64}" },
@@ -53,11 +70,10 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           { name: "columns", note: "optional Column[] {id,name,order,enabled,category} or string[] of names" },
         ],
         response: "{ board, org }",
-        curl: `curl -X POST ${BASE}/orgs/acme/boards -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"slug":"flow","title":"Flow"}'`,
+        curl: `curl -X POST ${BASE}/org/acme/boards -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"slug":"flow","title":"Flow"}'`,
       },
       {
-        method: "PATCH",
-        path: "/orgs/:org/boards/:slug",
+        id: "board.update",
         summary:
           "Update title/description/columns/visibility. Deleting a column that still has issues needs column_move_map.",
         params: [
@@ -66,7 +82,7 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           { name: "visibility", note: "'private' | 'public'" },
         ],
         response: "{ board }",
-        curl: `curl -X PATCH ${BASE}/orgs/acme/boards/flow -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"visibility":"public"}'`,
+        curl: `curl -X PATCH ${BASE}/org/acme/board/flow -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"visibility":"public"}'`,
       },
     ],
   },
@@ -74,8 +90,7 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
     title: "Issues",
     endpoints: [
       {
-        method: "GET",
-        path: "/orgs/:org/boards/:slug/issues",
+        id: "issue.list",
         summary:
           "Issues on a board, newest-updated first. Filters compose. Unknown query params are rejected — see the note below.",
         params: [
@@ -88,19 +103,17 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           },
         ],
         response: "{ issues: Issue[], total, has_more } — each issue carries cover_url when a cover is set",
-        curl: `curl "${BASE}/orgs/acme/boards/flow/issues?container=active" -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl "${BASE}/org/acme/board/flow/issues" -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "GET",
-        path: "/issues/:ref",
+        id: "issue.get",
         summary: "One issue by UUID or short id (FLOW-42). ?include= expands related records.",
         params: [{ name: "include", note: "comma list: comments, attachments" }],
         response: "{ issue, comments?, attachments? }",
-        curl: `curl "${BASE}/issues/FLOW-42?include=comments,attachments" -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl "${BASE}/issue/FLOW-42" -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "POST",
-        path: "/orgs/:org/boards/:slug/issues",
+        id: "issue.create",
         summary: "Create an issue. type ∈ task|feature|bug|story|improvement|chore (default task).",
         params: [
           { name: "title", note: "required" },
@@ -108,32 +121,29 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           { name: "type / status / container / estimate / priority / labels", note: "optional" },
         ],
         response: "{ issue } — short_id like FLOW-42 is minted here",
-        curl: `curl -X POST ${BASE}/orgs/acme/boards/flow/issues -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"title":"Ship it","type":"feature"}'`,
+        curl: `curl -X POST ${BASE}/org/acme/board/flow/issues -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"title":"Ship it","type":"feature"}'`,
       },
       {
-        method: "PATCH",
-        path: "/issues/:ref",
+        id: "issue.update",
         summary: "Partial update: title, body, body_format, type, status (by name), assignee, priority, estimate, labels.",
         response: "{ issue }",
-        curl: `curl -X PATCH ${BASE}/issues/FLOW-42 -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"type":"bug"}'`,
+        curl: `curl -X PATCH ${BASE}/issue/FLOW-42 -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"type":"bug"}'`,
       },
       {
-        method: "POST",
-        path: "/issues/:ref/transition",
+        id: "issue.transition",
         summary: "Move between columns. column_id (stable across renames) wins over the legacy name form `to`.",
         params: [
           { name: "column_id", note: "preferred — a Column.id from the board" },
           { name: "to", note: "legacy exact column name" },
         ],
         response: "{ issue }",
-        curl: `curl -X POST ${BASE}/issues/FLOW-42/transition -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"to":"Done"}'`,
+        curl: `curl -X POST ${BASE}/issue/FLOW-42/transition -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"to":"Done"}'`,
       },
       {
-        method: "POST",
-        path: "/issues/:ref/promote_to_active",
+        id: "issue.container.set",
         summary: "Container verbs: promote_to_active, promote_to_backlog, send_to_icebox. Idempotent.",
         response: "{ issue }",
-        curl: `curl -X POST ${BASE}/issues/FLOW-42/promote_to_active -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl -X POST ${BASE}/issue/FLOW-42/container -H "Authorization: Bearer ${KEY}"`,
       },
     ],
   },
@@ -141,18 +151,16 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
     title: "Comments",
     endpoints: [
       {
-        method: "GET",
-        path: "/issues/:ref/comments",
+        id: "comment.list",
         summary: "Thread in chronological order, forward keyset pagination.",
         response: "{ comments: Comment[], total, has_more }",
-        curl: `curl ${BASE}/issues/FLOW-42/comments -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl ${BASE}/issue/FLOW-42/comments -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "POST",
-        path: "/issues/:ref/comments",
+        id: "comment.create",
         summary: "Post a comment; in_reply_to threads under another comment.",
         response: "{ comment }",
-        curl: `curl -X POST ${BASE}/issues/FLOW-42/comments -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"body":"On it."}'`,
+        curl: `curl -X POST ${BASE}/issue/FLOW-42/comments -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"body":"On it."}'`,
       },
     ],
   },
@@ -160,27 +168,24 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
     title: "Attachments",
     endpoints: [
       {
-        method: "POST",
-        path: "/orgs/:org/boards/:slug/issues/:ref/attachments",
+        id: "attachment.create",
         summary:
           "Upload (multipart `file` field, or JSON base64). 5MB/file, 20/issue, images+pdf+text+zip+json only.",
         params: [{ name: "file_b64 / filename / content_type", note: "JSON body form" }],
         response: "{ attachment } — or an actionable {code, message, link} rejection",
-        curl: `curl -X POST ${BASE}/orgs/acme/boards/flow/issues/FLOW-42/attachments -H "Authorization: Bearer ${KEY}" -F "file=@shot.png"`,
+        curl: `curl -X POST ${BASE}/org/acme/board/flow/issue/FLOW-42/attachments -H "Authorization: Bearer ${KEY}" -F "file=@shot.png"`,
       },
       {
-        method: "PATCH",
-        path: "/attachments/:id",
+        id: "attachment.update",
         summary: "{is_cover: true} makes an image the card cover (one per issue).",
         response: "{ attachment }",
-        curl: `curl -X PATCH ${BASE}/attachments/ID -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"is_cover":true}'`,
+        curl: `curl -X PATCH ${BASE}/attachment/FLOW-42 -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"is_cover":true}'`,
       },
       {
-        method: "DELETE",
-        path: "/attachments/:id",
+        id: "attachment.delete",
         summary: "Soft delete — the row hides, the blob stays on Blossom.",
         response: "{ deleted: true }",
-        curl: `curl -X DELETE ${BASE}/attachments/ID -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl -X DELETE ${BASE}/attachment/FLOW-42 -H "Authorization: Bearer ${KEY}"`,
       },
     ],
   },
@@ -188,26 +193,23 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
     title: "API keys",
     endpoints: [
       {
-        method: "POST",
-        path: "/keys",
+        id: "key.create",
         summary: "Mint a key (JWT session required — keys can't mint keys). Plaintext returns ONCE.",
         params: [{ name: "name", note: "required, ≤60 chars" }],
         response: "{ key, plaintext }",
         curl: `curl -X POST ${BASE}/keys -H "Authorization: Bearer YOUR_JWT" -H "Content-Type: application/json" -d '{"name":"CI"}'`,
       },
       {
-        method: "GET",
-        path: "/keys",
+        id: "key.list",
         summary: "Your keys — name, display prefix, created/last-used/revoked. Never the secret.",
         response: "{ keys: Key[] }",
         curl: `curl ${BASE}/keys -H "Authorization: Bearer YOUR_JWT"`,
       },
       {
-        method: "DELETE",
-        path: "/keys/:id",
+        id: "key.delete",
         summary: "Soft-revoke. Requests with the key 401 immediately after.",
         response: "{ revoked: true }",
-        curl: `curl -X DELETE ${BASE}/keys/ID -H "Authorization: Bearer YOUR_JWT"`,
+        curl: `curl -X DELETE ${BASE}/key/FLOW-42 -H "Authorization: Bearer YOUR_JWT"`,
       },
     ],
   },
@@ -215,15 +217,13 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
     title: "GitHub integration",
     endpoints: [
       {
-        method: "GET",
-        path: "/boards/:slug/github",
+        id: "github.config.get",
         summary: "Repo binding, whether a webhook secret exists, the active preset, and the rule set. Admin only. The secret itself is never returned.",
         response: "{ config: GithubConfig, rules: Rule[] }",
-        curl: `curl ${BASE}/boards/flow/github -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl ${BASE}/board/flow/github -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "PUT",
-        path: "/boards/:slug/github",
+        id: "github.config.set",
         summary: "Connect a repo and/or choose a preset. Switching to a non-custom preset re-seeds the rule set; 'custom' leaves your edits alone.",
         params: [
           { name: "repo", note: '"owner/name", or null to clear' },
@@ -231,37 +231,33 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           { name: "external_states", note: "string[] to narrow the pill vocabulary, or null for the defaults" },
         ],
         response: "{ config, rules, seeded }",
-        curl: `curl -X PUT ${BASE}/boards/flow/github -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"repo":"you/repo","preset":"defaults"}'`,
+        curl: `curl -X PUT ${BASE}/board/flow/github -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"repo":"you/repo","preset":"defaults"}'`,
       },
       {
-        method: "POST",
-        path: "/boards/:slug/github/secret",
+        id: "github.secret.set",
         summary: "Mint (or rotate) the webhook secret. Plaintext returns ONCE — paste it into GitHub's Secret field. Rotating invalidates the old one immediately.",
         response: "{ secret, webhook_url }",
-        curl: `curl -X POST ${BASE}/boards/flow/github/secret -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl -X POST ${BASE}/board/flow/github/secret -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "PUT",
-        path: "/boards/:slug/github/rules",
+        id: "github.rules.set",
         summary: "Replace the whole rule set (priority order included) and flip the board to the 'custom' preset. Rejected atomically if any rule is invalid.",
         params: [{ name: "rules", note: "Rule[] — each { bucket?, priority?, when, do, enabled? }" }],
         response: "{ rules: Rule[] }",
-        curl: `curl -X PUT ${BASE}/boards/flow/github/rules -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"rules":[{"when":{"event":"pull_request","action":"opened"},"do":{"type":"set_external_state","value":"pr_review"}}]}'`,
+        curl: `curl -X PUT ${BASE}/board/flow/github/rules -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"rules":[{"when":{"event":"pull_request","action":"opened"},"do":{"type":"set_external_state","value":"pr_review"}}]}'`,
       },
       {
-        method: "POST",
-        path: "/boards/:slug/github/test",
+        id: "github.connection.test",
         summary: "Dry-run a payload against the live rules. Runs the same evaluator the webhook does and writes NOTHING — no cards change, no activity recorded.",
         params: [
           { name: "event", note: "pull_request | pull_request_review | check_run" },
           { name: "payload", note: "the webhook body, as JSON" },
         ],
         response: "{ facts, refs, matched, unresolved, outcomes }",
-        curl: `curl -X POST ${BASE}/boards/flow/github/test -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"event":"pull_request","payload":{"action":"opened"}}'`,
+        curl: `curl -X POST ${BASE}/board/flow/github/test -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"event":"pull_request","payload":{"action":"opened"}}'`,
       },
       {
-        method: "GET",
-        path: "/boards/:slug/github/audit",
+        id: "github.audit.list",
         summary: "Every verified delivery, newest first — including ones that matched no ticket or no rule, so a silently-idle rule is visible.",
         params: [
           { name: "event_type", note: "filter to one GitHub event" },
@@ -270,11 +266,10 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
           { name: "limit", note: "default 50, max 200" },
         ],
         response: "{ entries: AuditEntry[] }",
-        curl: `curl "${BASE}/boards/flow/github/audit?errors_only=1" -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl "${BASE}/board/flow/github/audit" -H "Authorization: Bearer ${KEY}"`,
       },
       {
-        method: "POST",
-        path: "/webhooks/github/:board_id",
+        id: "github.webhook.receive",
         summary: "GitHub's delivery endpoint. PUBLIC — auth is the HMAC in x-hub-signature-256 over the raw body. Returns 2xx for anything verified (including no-match) so GitHub stops retrying; 400 only for a bad signature or unreadable body.",
         response: "{ ok, matched, unresolved, rule_matched, actions }",
         curl: "# configured in GitHub, not called by hand",

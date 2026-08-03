@@ -6,20 +6,23 @@
 // to 4a with client_id + PKCE, 4a redirects back to /auth/callback with a
 // code, and we exchange it server-side for the JWT. We never store the raw
 // JWT, only its sha256 hex (sessionCache.jwt_hash).
+//
+// EFB-98: the three session/identity programs live in src/actions/auth.ts.
+// The OAuth pair below does NOT, and deliberately: /oauth/start mints a PKCE
+// verifier into a cookie and 302s to 4a, and /callback compares a state
+// cookie, exchanges the code, and 302s with the JWT in a URL fragment. It
+// never touches a session row — it is cookie and redirect plumbing end to
+// end, which is exactly what an action module is supposed to be free of.
 
 import { Hono } from "hono";
+import { path } from "../routes-manifest";
 import { getCookie } from "hono/cookie";
-import { Cause, Clock, Effect, Exit, Option } from "effect";
-import {
-  AuditLog,
-  Db,
-  FourA,
-  Jwt,
-  bootstrap,
-  hashToken,
-} from "../effects";
+import { Cause, Effect, Exit, Option } from "effect";
+import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import { requireAuth } from "../middleware/requireAuth";
+import { actionInput } from "../actions/types";
+import { createSessionFromJwt, deleteSession, whoami } from "../actions/auth";
 
 const PROVIDERS = ["google", "github"] as const;
 const BEARER_PREFIX = "Bearer ";
@@ -57,42 +60,26 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // with). Resolution failure is audited, not fatal — pubkey null. On
   // success the sessionCache row is upgraded in place, closing out the
   // pubkey '' sentinel rows the KmsClient-stub era wrote.
-  auth.get("/whoami", requireAuth(layerFor), async (c) => {
+  auth.get(path("auth.whoami"), requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
     }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
-    const program = Effect.gen(function* () {
-      const fourA = yield* FourA;
-      const audit = yield* AuditLog;
-      const pubkey = yield* fourA.whoami(token).pipe(
-        Effect.map((r) => r.pubkey),
-        Effect.catchAll((err) =>
-          audit
-            .record({
-              event_type: "pubkey_resolve_failed",
-              actor: claims.login,
-              details: { reason: err.reason },
-            })
-            .pipe(Effect.as(null)),
+    // runPromise, not runPromiseExit: `whoami` cannot fail — a gateway
+    // resolution failure is audited and answers pubkey null. Same as pre-split.
+    return c.json(
+      await Effect.runPromise(
+        Effect.provide(
+          whoami(actionInput(claims, c.req.param(), undefined, { token })),
+          layerFor(c.env),
         ),
-      );
-      if (pubkey !== null) {
-        const db = yield* Db;
-        const hash = yield* hashToken(token);
-        yield* db.execute(
-          "UPDATE sessionCache SET pubkey = ? WHERE jwt_hash = ?",
-          [pubkey, hash],
-        );
-      }
-      return { claims, pubkey };
-    });
-    return c.json(await Effect.runPromise(Effect.provide(program, layerFor(c.env))));
+      ),
+    );
   });
 
   // Exchange a 4a-minted JWT for a cached session row. Body: { jwt }.
-  auth.post("/session", async (c) => {
+  auth.post(path("auth.session.create"), async (c) => {
     let body: unknown;
     try {
       body = await c.req.json();
@@ -104,32 +91,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
       return c.json({ error: "invalid-body", reason: "missing-jwt" }, 400);
     }
 
-    const program = Effect.gen(function* () {
-      const jwtService = yield* Jwt;
-      const claims = yield* jwtService.verify(jwt);
-      const db = yield* Db;
-      const audit = yield* AuditLog;
-      const hash = yield* hashToken(jwt);
-      const now = yield* Clock.currentTimeMillis;
-      // Resolve the caller's hex pubkey at session creation so the row is
-      // born complete. Non-fatal: a gateway hiccup falls back to the ''
-      // sentinel, and /auth/whoami repairs the row on its next call.
-      const fourA = yield* FourA;
-      const pubkey = yield* fourA.whoami(jwt).pipe(
-        Effect.map((r) => r.pubkey),
-        Effect.catchAll(() => Effect.succeed("")),
-      );
-      yield* db.execute(
-        "INSERT OR REPLACE INTO sessionCache (jwt_hash, pubkey, provider, oauth_id, expires_at_ms, last_seen_ms) VALUES (?, ?, ?, ?, ?, ?)",
-        [hash, pubkey, claims.provider, claims.oauth_id, claims.exp * 1000, now],
-      );
-      yield* audit.record({
-        event_type: "session_created",
-        actor: claims.login,
-        details: { provider: claims.provider },
-      });
-      return { session_hash: hash };
-    });
+    const program = createSessionFromJwt(jwt);
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) {
@@ -144,21 +106,14 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   });
 
   // Drop the caller's session row.
-  auth.delete("/session", requireAuth(layerFor), async (c) => {
+  auth.delete(path("auth.session.delete"), requireAuth(layerFor), async (c) => {
     const claims = c.get("claims");
     if (claims === undefined) {
       return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
     }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
 
-    const program = Effect.gen(function* () {
-      const db = yield* Db;
-      const audit = yield* AuditLog;
-      const hash = yield* hashToken(token);
-      yield* db.execute("DELETE FROM sessionCache WHERE jwt_hash = ?", [hash]);
-      yield* audit.record({ event_type: "session_deleted", actor: claims.login });
-      return { deleted: true };
-    });
+    const program = deleteSession(actionInput(claims, c.req.param(), undefined, { token }));
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) {
@@ -172,7 +127,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // Entry into 4a's OAuth AS as a registered client (authorization-code +
   // PKCE). Without client_id/redirect_uri 4a would run its "direct" flow and
   // strand the user on a raw-JSON JWT page at api.4a4.ai.
-  auth.get("/oauth/start", async (c) => {
+  auth.get(path("auth.oauth.start"), async (c) => {
     const provider = c.req.query("provider") ?? "google";
     if (!(PROVIDERS as ReadonlyArray<string>).includes(provider)) {
       return c.json({ error: "invalid-provider", reason: `expected one of: ${PROVIDERS.join(", ")}` }, 400);
@@ -199,7 +154,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
   // 4a redirects back here with ?code=&state=. Exchange the code for the JWT
   // server-side (client_secret + PKCE verifier), then hand the JWT to the SPA
   // via the fragment — /signin parses #jwt= and persists it.
-  auth.get("/callback", async (c) => {
+  auth.get(path("auth.oauth.callback"), async (c) => {
     const code = c.req.query("code");
     if (code === undefined || code === "") {
       return c.json({ error: "invalid-callback", reason: "missing-code" }, 400);

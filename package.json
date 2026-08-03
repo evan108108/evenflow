@@ -23,7 +23,9 @@
     "check:boundary": "node scripts/check-boundary-discipline.mjs",
     "check:boundary-query": "node scripts/check-boundary-query.mjs",
     "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "check:rest-conventions": "node scripts/check-rest-conventions.mjs",
+    "check": "npm run typecheck:src && npm run check:boundary && npm run check:boundary-query && npm run check:rest-conventions"
   },
   "dependencies": {
     "@noble/ciphers": "2.1.1",

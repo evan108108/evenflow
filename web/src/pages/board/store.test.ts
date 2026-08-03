@@ -2,6 +2,7 @@
 // optimistic updates + rollback.
 
 import { describe, expect, it } from "vitest";
+import { url } from "@routes-manifest";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { ApiClient, ApiError } from "../../effects";
 import type { Board, Issue } from "../../lib/types";
@@ -16,13 +17,27 @@ interface Call {
   body?: unknown;
 }
 
-/** ApiClient stub: canned responses keyed by "METHOD path"; FAIL → 500. */
+/**
+ * ApiClient stub: canned responses keyed by "METHOD path"; FAIL → 500.
+ *
+ * EFB-98: a key may also hold a seq([...]) of responses consumed in order.
+ * Before the migration, three container moves meant three URLs, so keying on
+ * the path alone distinguished them. They are one route now with the
+ * destination in the body, so successive calls share a key and the stub has to
+ * be able to answer them differently.
+ */
+const SEQ = Symbol("seq");
+const seq = (...responses: unknown[]) => ({ [SEQ]: responses });
 const makeTestRun = (routes: Record<string, unknown>) => {
   const calls: Call[] = [];
   const respond = <T>(method: string, path: string, body?: unknown): Effect.Effect<T, ApiError> =>
     Effect.suspend(() => {
       calls.push({ method, path, ...(body === undefined ? {} : { body }) });
-      const canned = routes[`${method} ${path}`];
+      let canned = routes[`${method} ${path}`];
+      if (canned !== null && typeof canned === "object" && SEQ in canned) {
+        const queue = (canned as { [SEQ]: unknown[] })[SEQ];
+        canned = queue.length > 1 ? queue.shift() : queue[0];
+      }
       if (canned === undefined || canned === FAIL) {
         return Effect.fail(new ApiError({ reason: "http", status: canned === FAIL ? 500 : 404 }));
       }
@@ -99,13 +114,13 @@ const emptyPage = { issues: [], has_more: false, next_after: null };
 const page = (issues: unknown[]) => ({ issues, has_more: false, next_after: null });
 
 const LOAD_ROUTES = {
-  "GET /api/v0/boards/kb": { board },
-  "GET /api/v0/boards/kb/sprints": { sprints: [] },
-  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c1": page([issue()]),
-  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c2": emptyPage,
-  "GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c3": emptyPage,
-  "GET /api/v0/boards/kb/issues?container=backlog&limit=50": emptyPage,
-  "GET /api/v0/boards/kb/issues?container=icebox&limit=50": emptyPage,
+  [`GET ${url("board.get", { slug: "kb" })}`]: { board },
+  [`GET ${url("sprint.list", { slug: "kb" })}`]: { sprints: [] },
+  [`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c1`]: page([issue()]),
+  [`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c2`]: emptyPage,
+  [`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c3`]: emptyPage,
+  [`GET ${url("issue.list", { slug: "kb" })}?container=backlog&limit=50`]: emptyPage,
+  [`GET ${url("issue.list", { slug: "kb" })}?container=icebox&limit=50`]: emptyPage,
 };
 
 const loadedStore = async (extraRoutes: Record<string, unknown> = {}) => {
@@ -131,37 +146,36 @@ describe("createBoardStore", () => {
     // Board + sprints in parallel + members (best-effort, feeds the
     // assignee dropdown), then one primed page per stream.
     expect(calls.map((c) => c.path).sort()).toEqual([
-      "/api/v0/boards/kb",
-      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c1",
-      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c2",
-      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c3",
-      "/api/v0/boards/kb/issues?container=backlog&limit=50",
-      "/api/v0/boards/kb/issues?container=icebox&limit=50",
-      "/api/v0/boards/kb/members",
-      "/api/v0/boards/kb/sprints",
+      url("board.get", { slug: "kb" }),
+      `${url("issue.create", { slug: "kb" })}?container=active&limit=50&column_id=c1`,
+      `${url("issue.create", { slug: "kb" })}?container=active&limit=50&column_id=c2`,
+      `${url("issue.create", { slug: "kb" })}?container=active&limit=50&column_id=c3`,
+      `${url("issue.create", { slug: "kb" })}?container=backlog&limit=50`,
+      `${url("issue.create", { slug: "kb" })}?container=icebox&limit=50`,
+      url("sprint.list", { slug: "kb" }),
     ]);
   });
 
   it("transition posts the target column_id and applies the server issue", async () => {
     const moved = issue({ status: "Done", column_id: "c3", updated_at_ms: 9 });
     const { store, calls, routes } = await loadedStore({
-      "POST /api/v0/issues/i1/transition": { issue: moved },
+      [`POST ${url("issue.transition", { id: "i1" })}`]: { issue: moved },
     });
     // The card has left c1 and joined c3 as far as the server is concerned.
-    routes["GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c1"] = page([]);
-    routes["GET /api/v0/boards/kb/issues?container=active&limit=50&column_id=c3"] = page([moved]);
+    routes[`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c1`] = page([]);
+    routes[`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c3`] = page([moved]);
     await store.transition(store.issues()[0]!, COLUMNS[2]!);
     // The POST, then a re-primed first page for BOTH sides of the move —
     // the source stream lost a row before its cursor and the target gained
     // one, so leaving either stale would skip a card on the next page.
     expect(calls.map((c) => c.path)).toEqual([
-      "/api/v0/issues/i1/transition",
-      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c1",
-      "/api/v0/boards/kb/issues?container=active&limit=50&column_id=c3",
+      url("issue.transition", { id: "i1" }),
+      `${url("issue.create", { slug: "kb" })}?container=active&limit=50&column_id=c1`,
+      `${url("issue.create", { slug: "kb" })}?container=active&limit=50&column_id=c3`,
     ]);
     expect(calls[0]).toEqual({
       method: "POST",
-      path: "/api/v0/issues/i1/transition",
+      path: url("issue.transition", { id: "i1" }),
       body: { column_id: "c3" },
     });
     expect(store.issues()[0]!.status).toBe("Done");
@@ -169,45 +183,47 @@ describe("createBoardStore", () => {
   });
 
   it("rolls the optimistic update back when the API fails", async () => {
-    const { store, calls } = await loadedStore({ "POST /api/v0/issues/i1/transition": FAIL });
+    const { store, calls } = await loadedStore({ [`POST ${url("issue.transition", { id: "i1" })}`]: FAIL });
     await store.transition(store.issues()[0]!, COLUMNS[2]!);
     // Failed POST + the two stream re-primes, which run regardless so the
     // rolled-back view still matches the server.
-    expect(calls[0]!.path).toBe("/api/v0/issues/i1/transition");
+    expect(calls[0]!.path).toBe(url("issue.transition", { id: "i1" }));
     expect(store.issues()[0]!.status).toBe("Backlog");
     expect(store.issues()[0]!.column_id).toBe("c1");
     expect(store.lastError()).toContain("500");
   });
 
-  it("moveContainer hits the right verb for each container and skips no-ops", async () => {
+  it("moveContainer sends the destination in the body and skips no-ops", async () => {
     const { store, calls } = await loadedStore({
-      "POST /api/v0/issues/i1/send_to_icebox": { issue: issue({ container: "icebox" }) },
-      "POST /api/v0/issues/i1/promote_to_backlog": { issue: issue({ container: "backlog" }) },
-      "POST /api/v0/issues/i1/promote_to_active": { issue: issue({ container: "active" }) },
+      [`POST ${url("issue.container.set", { id: "i1" })}`]: seq(
+        { issue: issue({ container: "icebox" }) },
+        { issue: issue({ container: "backlog" }) },
+        { issue: issue({ container: "active" }) },
+      ),
     });
     await store.moveContainer(store.issues()[0]!, "promote_to_active"); // already active → no-op
     expect(calls).toHaveLength(0);
     await store.moveContainer(store.issues()[0]!, "send_to_icebox");
     await store.moveContainer(store.issues()[0]!, "promote_to_backlog");
     await store.moveContainer(store.issues()[0]!, "promote_to_active");
-    // Stream re-primes are interleaved; assert the verbs in order.
-    expect(calls.map((c) => c.path).filter((p) => p.startsWith("/api/v0/issues/"))).toEqual([
-      "/api/v0/issues/i1/send_to_icebox",
-      "/api/v0/issues/i1/promote_to_backlog",
-      "/api/v0/issues/i1/promote_to_active",
-    ]);
+    // Stream re-primes are interleaved; assert the destinations in order.
+    // One URL now, so the sequence lives in the bodies rather than the paths.
+    const target = url("issue.container.set", { id: "i1" });
+    expect(
+      calls.filter((c) => c.path === target).map((c) => (c.body as { container: string }).container),
+    ).toEqual(["icebox", "backlog", "active"]);
     expect(store.issues()[0]!.container).toBe("active");
   });
 
   it("createIssue posts the input shape and prepends the result", async () => {
     const { store, calls } = await loadedStore({
-      "POST /api/v0/boards/kb/issues": { issue: issue({ id: "i2", title: "Fresh" }) },
+      [`POST ${url("issue.create", { slug: "kb" })}`]: { issue: issue({ id: "i2", title: "Fresh" }) },
     });
     await store.createIssue({ title: "Fresh", container: "backlog", estimate: 5 });
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/api/v0/boards/kb/issues",
+        path: url("issue.create", { slug: "kb" }),
         body: { title: "Fresh", container: "backlog", estimate: 5 },
       },
     ]);
@@ -216,12 +232,18 @@ describe("createBoardStore", () => {
 
   it("sprint membership posts add-issue / remove-issue and rolls back on failure", async () => {
     const { store, calls } = await loadedStore({
-      "POST /api/v0/boards/kb/sprints/s1/add-issue": { issue: issue({ sprint_id: "s1" }) },
-      "POST /api/v0/boards/kb/sprints/s1/remove-issue": FAIL,
+      [`POST ${url("sprint.issues.attach", { slug: "kb", id: "s1" })}`]: {
+        issue: issue({ sprint_id: "s1" }),
+      },
+      [`DELETE ${url("sprint.issue.detach", { slug: "kb", id: "s1", issue_id: "i1" })}`]: FAIL,
     });
     await store.addIssueToSprint(store.issues()[0]!, "s1");
     expect(calls).toEqual([
-      { method: "POST", path: "/api/v0/boards/kb/sprints/s1/add-issue", body: { issue_id: "i1" } },
+      {
+        method: "POST",
+        path: url("sprint.issues.attach", { slug: "kb", id: "s1" }),
+        body: { issue_id: "i1" },
+      },
     ]);
     expect(store.issues()[0]!.sprint_id).toBe("s1");
     await store.removeIssueFromSprint(store.issues()[0]!);
@@ -242,13 +264,13 @@ describe("createBoardStore", () => {
       created_at_ms: 1,
     };
     const { store, calls } = await loadedStore({
-      "GET /api/v0/boards/kb/sprints": { sprints: [{ ...started, status: "planning", started_at_ms: null }] },
-      "POST /api/v0/boards/kb/sprints/s1/start": { sprint: started },
+      [`GET ${url("sprint.list", { slug: "kb" })}`]: { sprints: [{ ...started, status: "planning", started_at_ms: null }] },
+      [`POST ${url("sprint.start", { slug: "kb", id: "s1" })}`]: { sprint: started },
     });
     await store.refetchSprints();
     calls.length = 0;
     await store.startSprint("s1");
-    expect(calls.map((c) => c.path)).toContain("/api/v0/boards/kb/sprints/s1/start");
+    expect(calls.map((c) => c.path)).toContain(url("sprint.start", { slug: "kb", id: "s1" }));
     expect(store.sprints()[0]!.status).toBe("active");
   });
 });

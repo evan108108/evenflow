@@ -3,7 +3,7 @@
 // docs/rest-spec.ts, the MCP tool reference, and the /evenflow skill.
 
 import { For } from "solid-js";
-import { MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
+import { methodOf, pathOf, MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
 import { IMPORT_PROMPTS, IMPORT_PROMPT_PREAMBLE } from "./docs/import-prompts";
 import { CANONICAL_COLUMNS } from "../../../src/lib/csv-canonical";
 import "../lib/board.css";
@@ -83,10 +83,10 @@ export const Docs = () => (
               {(endpoint) => (
                 <article class="docs-endpoint">
                   <div class="endpoint-line">
-                    <span class="method" data-method={endpoint.method}>
-                      {endpoint.method}
+                    <span class="method" data-method={methodOf(endpoint)}>
+                      {methodOf(endpoint)}
                     </span>
-                    <code class="path">{endpoint.path}</code>
+                    <code class="path">{pathOf(endpoint)}</code>
                   </div>
                   <p>{endpoint.summary}</p>
                   <For each={endpoint.params ?? []}>

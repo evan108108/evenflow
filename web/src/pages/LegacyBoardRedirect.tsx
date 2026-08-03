@@ -6,6 +6,7 @@
 // old links never dead-end.
 
 import { useLocation, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { Show, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -31,7 +32,7 @@ export const LegacyBoardRedirect = () => {
         try {
           await api((c) =>
             c.get(
-              `/api/v0/orgs/${encodeURIComponent(org.slug)}/boards/${encodeURIComponent(params.slug)}`,
+              url("board.get", { slug: params.slug }, org.slug),
             ),
           );
           // Preserve the sub-path (backlog/icebox/issues/…) across the bounce.

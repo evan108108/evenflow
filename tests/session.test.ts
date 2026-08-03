@@ -1,6 +1,7 @@
 // /api/v0/session/bootstrap — personal-org auto-creation + org roster.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { jsonReq, makeHarness, tokenFor, CALLER } from "./harness";
 
 interface BootstrapBody {
@@ -10,7 +11,7 @@ interface BootstrapBody {
 }
 
 const bootstrap = (h: ReturnType<typeof makeHarness>, token?: string, body?: unknown) =>
-  h.app.request("/api/v0/session/bootstrap", jsonReq("POST", body ?? {}, token), {});
+  h.app.request(url("session.bootstrap"), jsonReq("POST", body ?? {}, token), {});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -80,7 +81,7 @@ describe("POST /api/v0/session/bootstrap", () => {
 
   it("401s anonymous callers", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/session/bootstrap", { method: "POST" }, {});
+    const res = await h.app.request(url("session.bootstrap"), { method: "POST" }, {});
     expect(res.status).toBe(401);
   });
 

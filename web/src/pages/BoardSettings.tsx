@@ -10,6 +10,7 @@
 // move-or-hide modal — a move rides along as column_move_map.
 
 import { useNavigate, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -82,7 +83,7 @@ export const BoardSettings = () => {
   const navigate = useNavigate();
   const handle = () => params.handle.replace(/^@/, "");
   const apiBase = () =>
-    `/api/v0/orgs/${encodeURIComponent(handle())}/boards/${encodeURIComponent(params.board_slug)}`;
+    url("board.get", { slug: params.board_slug }, handle());
 
   const selfPubkey = (() => {
     try {
@@ -97,11 +98,11 @@ export const BoardSettings = () => {
     api<BoardDetail>((c) => c.get(apiBase())),
   );
   const [membersWire, { refetch: refetchMembers }] = createResource(() =>
-    api<MembersWire>((c) => c.get(`${apiBase()}/members`)),
+    api<MembersWire>((c) => c.get(url("org.board.members.list", { org_slug: handle(), slug: params.board_slug }))),
   );
   const members = () => membersWire()?.members;
   const [invites, { refetch: refetchInvites }] = createResource(() =>
-    api<{ invites: PendingInvite[] }>((c) => c.get(`${apiBase()}/invites`))
+    api<{ invites: PendingInvite[] }>((c) => c.get(url("invite.orgBoard.list", { org_slug: handle(), slug: params.board_slug })))
       .then((r) => r.invites)
       .catch(() => [] as PendingInvite[]), // non-admins get 403/404 — hide the section
   );
@@ -109,7 +110,7 @@ export const BoardSettings = () => {
   // 100-cap the board views run with.
   const [issues, { refetch: refetchIssues }] = createResource(() =>
     api<{ issues: Array<{ id: string; column_id: string | null; status: string }> }>((c) =>
-      c.get(`${apiBase()}/issues?limit=100`),
+      c.get(`${url("issue.list", { slug: params.board_slug }, handle())}?limit=100`),
     ).then((r) => r.issues),
   );
 
@@ -127,7 +128,7 @@ export const BoardSettings = () => {
 
   const changeRole = (pubkey: string, role: string) =>
     withRefresh(
-      api((c) => c.patch(`${apiBase()}/members/${encodeURIComponent(pubkey)}`, { role })),
+      api((c) => c.patch(url("org.board.member.update", { org_slug: handle(), slug: params.board_slug, pubkey }), { role })),
       () => void refetchMembers(),
     );
 
@@ -141,14 +142,14 @@ export const BoardSettings = () => {
       return;
     }
     withRefresh(
-      api((c) => c.delete(`${apiBase()}/members/${encodeURIComponent(pubkey)}`)),
+      api((c) => c.delete(url("org.board.member.remove", { org_slug: handle(), slug: params.board_slug, pubkey }))),
       () => void refetchMembers(),
     );
   };
 
   const revokeInvite = (id: string) =>
     withRefresh(
-      api((c) => c.delete(`/api/v0/invites/${encodeURIComponent(id)}`)),
+      api((c) => c.delete(url("invite.delete", { id }))),
       () => void refetchInvites(),
     );
 

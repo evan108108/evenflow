@@ -4,6 +4,7 @@
 // zone (transfer / delete, both slug-confirmed).
 
 import { useNavigate, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -45,7 +46,7 @@ export const OrgSettings = () => {
   const params = useParams<{ handle: string }>();
   const navigate = useNavigate();
   const handle = () => params.handle.replace(/^@/, "");
-  const orgApi = () => `/api/v0/orgs/${encodeURIComponent(handle())}`;
+  const orgApi = () => url("org.get", { org_slug: encodeURIComponent(handle()) });
 
   const selfPubkey = (() => {
     try {
@@ -143,7 +144,7 @@ export const OrgSettings = () => {
     );
   const revokeInvite = (id: string) =>
     withRefresh(
-      api((c) => c.delete(`/api/v0/invites/${encodeURIComponent(id)}`)),
+      api((c) => c.delete(url("invite.get", { code: id }))),
       () => void refetchInvites(),
     );
 

@@ -2,6 +2,7 @@
 // access matrix.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   CALLER,
   bearer,
@@ -28,7 +29,7 @@ afterEach(() => {
 
 const createTeam = (h: Harness, overrides?: Record<string, unknown>, token?: string) =>
   h.app.request(
-    "/api/v0/orgs",
+    url("org.create"),
     jsonReq("POST", { slug: "acme", display_name: "Acme", kind: "team", ...overrides }, token),
     {},
   );
@@ -71,7 +72,7 @@ describe("POST /api/v0/orgs", () => {
   it("401s anonymous callers", async () => {
     const h = makeHarness();
     const res = await h.app.request(
-      "/api/v0/orgs",
+      url("org.create"),
       { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
       {},
     );
@@ -90,23 +91,23 @@ describe("GET /api/v0/orgs/:slug", () => {
   // not where it is granted and the thing simply is not there.
   it("404s (not 401) an unknown handle for anonymous callers — the claim-CTA path", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/orgs/never-claimed", {}, {});
+    const res = await h.app.request(url("org.get", { org_slug: "never-claimed" }), {}, {});
     expect(res.status).toBe(404);
-    const boards = await h.app.request("/api/v0/orgs/never-claimed/boards", {}, {});
+    const boards = await h.app.request(url("board.create", {}, "never-claimed"), {}, {});
     expect(boards.status).toBe(404);
   });
 
   it("serves public info to anyone — anonymous included — and internals to members", async () => {
     const h = makeHarness();
     await createTeam(h);
-    const anon = await h.app.request("/api/v0/orgs/acme", {}, {});
+    const anon = await h.app.request(url("org.get", { org_slug: "acme" }), {}, {});
     expect(anon.status).toBe(200);
     const anonBody = (await anon.json()) as { org: Record<string, unknown>; role: null };
     expect(anonBody.role).toBeNull();
     expect(anonBody.org["slug"]).toBe("acme");
     expect(anonBody.org["id"]).toBeUndefined(); // member-only field
 
-    const member = await h.app.request("/api/v0/orgs/acme", { headers: bearer }, {});
+    const member = await h.app.request(url("org.get", { org_slug: "acme" }), { headers: bearer }, {});
     const memberBody = (await member.json()) as { org: Record<string, unknown>; role: string };
     expect(memberBody.role).toBe("owner");
     expect(memberBody.org["id"]).toBeDefined();
@@ -114,7 +115,7 @@ describe("GET /api/v0/orgs/:slug", () => {
 
   it("404s unknown orgs", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/orgs/nope", { headers: bearer }, {});
+    const res = await h.app.request(url("org.get", { org_slug: "nope" }), { headers: bearer }, {});
     expect(res.status).toBe(404);
   });
 });
@@ -123,7 +124,7 @@ describe("PATCH /api/v0/orgs/:slug", () => {
   it("updates display_name for admins", async () => {
     const h = makeHarness();
     await createTeam(h);
-    const res = await h.app.request("/api/v0/orgs/acme", jsonReq("PATCH", { display_name: "Acme Industries" }), {});
+    const res = await h.app.request(url("org.get", { org_slug: "acme" }), jsonReq("PATCH", { display_name: "Acme Industries" }), {});
     expect(res.status).toBe(200);
     expect(h.db.orgs[0]!["display_name"]).toBe("Acme Industries");
   });
@@ -133,13 +134,13 @@ describe("PATCH /api/v0/orgs/:slug", () => {
     await createTeam(h);
     seedOrgMember(h, h.db.orgs[0]!["id"] as string, pubkeyFor("mem"), "member");
     const asMember = await h.app.request(
-      "/api/v0/orgs/acme",
+      url("org.get", { org_slug: "acme" }),
       jsonReq("PATCH", { display_name: "X" }, tokenFor("mem")),
       {},
     );
     expect(asMember.status).toBe(403);
     const asOutsider = await h.app.request(
-      "/api/v0/orgs/acme",
+      url("org.get", { org_slug: "acme" }),
       jsonReq("PATCH", { display_name: "X" }, tokenFor("stranger")),
       {},
     );
@@ -149,11 +150,11 @@ describe("PATCH /api/v0/orgs/:slug", () => {
   it("slug rename writes an alias; the old slug resolves via_alias", async () => {
     const h = makeHarness();
     await createTeam(h);
-    const res = await h.app.request("/api/v0/orgs/acme", jsonReq("PATCH", { slug: "acme-industries" }), {});
+    const res = await h.app.request(url("org.get", { org_slug: "acme" }), jsonReq("PATCH", { slug: "acme-industries" }), {});
     expect(res.status).toBe(200);
     expect(h.db.orgAliases).toMatchObject([{ old_slug: "acme" }]);
 
-    const viaOld = await h.app.request("/api/v0/orgs/acme", { headers: bearer }, {});
+    const viaOld = await h.app.request(url("org.get", { org_slug: "acme" }), { headers: bearer }, {});
     expect(viaOld.status).toBe(200);
     const body = (await viaOld.json()) as { org: { slug: string }; via_alias: boolean };
     expect(body.org.slug).toBe("acme-industries");
@@ -167,22 +168,22 @@ describe("DELETE /api/v0/orgs/:slug + transfer", () => {
     await createTeam(h);
     seedOrgMember(h, h.db.orgs[0]!["id"] as string, pubkeyFor("adm"), "admin");
     const asAdmin = await h.app.request(
-      "/api/v0/orgs/acme",
+      url("org.get", { org_slug: "acme" }),
       { method: "DELETE", headers: bearerFor(tokenFor("adm")) },
       {},
     );
     expect(asAdmin.status).toBe(403);
 
-    const res = await h.app.request("/api/v0/orgs/acme", { method: "DELETE", headers: bearer }, {});
+    const res = await h.app.request(url("org.get", { org_slug: "acme" }), { method: "DELETE", headers: bearer }, {});
     expect(res.status).toBe(200);
     expect(h.db.orgs[0]!["deleted_at_ms"]).toBe(1_000);
-    expect((await h.app.request("/api/v0/orgs/acme", { headers: bearer }, {})).status).toBe(404);
+    expect((await h.app.request(url("org.get", { org_slug: "acme" }), { headers: bearer }, {})).status).toBe(404);
   });
 
   it("refuses to delete a personal org", async () => {
     const h = makeHarness();
     await createBoard(h); // auto-creates personal org "tester"
-    const res = await h.app.request("/api/v0/orgs/tester", { method: "DELETE", headers: bearer }, {});
+    const res = await h.app.request(url("org.get", { org_slug: "tester" }), { method: "DELETE", headers: bearer }, {});
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "conflict", reason: "personal-org-undeletable" });
   });
@@ -191,7 +192,7 @@ describe("DELETE /api/v0/orgs/:slug + transfer", () => {
     const h = makeHarness();
     await createTeam(h);
     const wrong = await h.app.request(
-      "/api/v0/orgs/acme/transfer",
+      url("org.transfer", { org_slug: "acme" }),
       jsonReq("POST", { to_pubkey: pubkeyFor("next"), confirmation_slug: "oops" }),
       {},
     );
@@ -199,7 +200,7 @@ describe("DELETE /api/v0/orgs/:slug + transfer", () => {
 
     seedOrgMember(h, h.db.orgs[0]!["id"] as string, pubkeyFor("adm"), "admin");
     const asAdmin = await h.app.request(
-      "/api/v0/orgs/acme/transfer",
+      url("org.transfer", { org_slug: "acme" }),
       jsonReq("POST", { to_pubkey: pubkeyFor("next"), confirmation_slug: "acme" }, tokenFor("adm")),
       {},
     );
@@ -211,7 +212,7 @@ describe("DELETE /api/v0/orgs/:slug + transfer", () => {
     // then transfer, which is also the audit trail we want.
     seedOrgMember(h, h.db.orgs[0]!["id"] as string, pubkeyFor("next"), "member");
     const res = await h.app.request(
-      "/api/v0/orgs/acme/transfer",
+      url("org.transfer", { org_slug: "acme" }),
       jsonReq("POST", { to_pubkey: pubkeyFor("next"), confirmation_slug: "acme" }),
       {},
     );
@@ -232,18 +233,18 @@ describe("org members", () => {
     const h = makeHarness();
     await setup(h);
     const add = await h.app.request(
-      "/api/v0/orgs/acme/members",
+      url("org.members.list", { org_slug: "acme" }),
       jsonReq("POST", { pubkey: pubkeyFor("mem"), role: "member" }),
       {},
     );
     expect(add.status).toBe(201);
 
-    const list = await h.app.request("/api/v0/orgs/acme/members", { headers: bearerFor(tokenFor("mem")) }, {});
+    const list = await h.app.request(url("org.members.list", { org_slug: "acme" }), { headers: bearerFor(tokenFor("mem")) }, {});
     expect(list.status).toBe(200);
     const { members } = (await list.json()) as { members: Array<{ pubkey: string }> };
     expect(members.map((m) => m.pubkey).sort()).toEqual([CALLER, pubkeyFor("mem")].sort());
 
-    const outsider = await h.app.request("/api/v0/orgs/acme/members", { headers: bearerFor(tokenFor("out")) }, {});
+    const outsider = await h.app.request(url("org.members.list", { org_slug: "acme" }), { headers: bearerFor(tokenFor("out")) }, {});
     expect(outsider.status).toBe(404);
   });
 
@@ -252,13 +253,13 @@ describe("org members", () => {
     const orgId = await setup(h);
     seedOrgMember(h, orgId, pubkeyFor("adm"), "admin");
     const asAdmin = await h.app.request(
-      "/api/v0/orgs/acme/members",
+      url("org.members.list", { org_slug: "acme" }),
       jsonReq("POST", { pubkey: pubkeyFor("x"), role: "owner" }, tokenFor("adm")),
       {},
     );
     expect(asAdmin.status).toBe(403);
     const asOwner = await h.app.request(
-      "/api/v0/orgs/acme/members",
+      url("org.members.list", { org_slug: "acme" }),
       jsonReq("POST", { pubkey: pubkeyFor("x"), role: "owner" }),
       {},
     );
@@ -271,21 +272,21 @@ describe("org members", () => {
     seedOrgMember(h, orgId, pubkeyFor("mem"), "member");
 
     const promote = await h.app.request(
-      `/api/v0/orgs/acme/members/${encodeURIComponent(pubkeyFor("mem"))}`,
+      url("org.member.update", { org_slug: "acme", pubkey: pubkeyFor("mem") }),
       jsonReq("PATCH", { role: "admin" }),
       {},
     );
     expect(promote.status).toBe(200);
 
     const demoteLastOwner = await h.app.request(
-      `/api/v0/orgs/acme/members/${encodeURIComponent(CALLER)}`,
+      url("org.member.update", { org_slug: "acme", pubkey: CALLER }),
       jsonReq("PATCH", { role: "member" }),
       {},
     );
     expect(demoteLastOwner.status).toBe(409);
 
     const kickLastOwner = await h.app.request(
-      `/api/v0/orgs/acme/members/${encodeURIComponent(CALLER)}`,
+      url("org.member.update", { org_slug: "acme", pubkey: CALLER }),
       { method: "DELETE", headers: bearer },
       {},
     );
@@ -299,7 +300,7 @@ describe("org members", () => {
     seedBoardMember(h, "some-board", pubkeyFor("mem"), "contributor");
 
     const res = await h.app.request(
-      `/api/v0/orgs/acme/members/${encodeURIComponent(pubkeyFor("mem"))}`,
+      url("org.member.update", { org_slug: "acme", pubkey: pubkeyFor("mem") }),
       { method: "DELETE", headers: bearer },
       {},
     );
@@ -313,7 +314,7 @@ describe("org members", () => {
     await setup(h);
     h.fourA.failPublishes = true;
     const add = await h.app.request(
-      "/api/v0/orgs/acme/members",
+      url("org.members.list", { org_slug: "acme" }),
       jsonReq("POST", { pubkey: pubkeyFor("mem"), role: "member" }),
       {},
     );
@@ -338,10 +339,10 @@ describe("board access role matrix", () => {
   it("viewer reads but cannot create issues", async () => {
     const h = makeHarness();
     await setup(h);
-    const read = await h.app.request("/api/v0/boards/kb/issues", { headers: bearerFor(tokenFor("view")) }, {});
+    const read = await h.app.request(url("issue.create", { slug: "kb" }), { headers: bearerFor(tokenFor("view")) }, {});
     expect(read.status).toBe(200);
     const write = await h.app.request(
-      "/api/v0/boards/kb/issues",
+      url("issue.create", { slug: "kb" }),
       jsonReq("POST", { title: "Nope" }, tokenFor("view")),
       {},
     );
@@ -352,13 +353,13 @@ describe("board access role matrix", () => {
     const h = makeHarness();
     await setup(h);
     const write = await h.app.request(
-      "/api/v0/boards/kb/issues",
+      url("issue.create", { slug: "kb" }),
       jsonReq("POST", { title: "Mine" }, tokenFor("contrib")),
       {},
     );
     expect(write.status).toBe(201);
     const patch = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { title: "Hijacked" }, tokenFor("contrib")),
       {},
     );
@@ -369,7 +370,7 @@ describe("board access role matrix", () => {
     const h = makeHarness();
     await setup(h);
     const patch = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { title: "Renamed" }, tokenFor("badmin")),
       {},
     );
@@ -384,10 +385,10 @@ describe("board access role matrix", () => {
     // enumerate); an anonymous caller gets 401 (nothing to hide from someone
     // who has shown no identity at all — every answer is the same 401).
     expect(
-      (await h.app.request("/api/v0/boards/kb", { headers: bearerFor(tokenFor("out")) }, {})).status,
+      (await h.app.request(url("board.get", { slug: "kb" }), { headers: bearerFor(tokenFor("out")) }, {})).status,
     ).toBe(404);
-    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(401);
-    const anonWrite = await h.app.request("/api/v0/boards/kb/issues", {
+    expect((await h.app.request(url("board.get", { slug: "kb" }), {}, {})).status).toBe(401);
+    const anonWrite = await h.app.request(url("issue.create", { slug: "kb" }), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: "Anon" }),
@@ -401,13 +402,13 @@ describe("board access role matrix", () => {
     const orgId = h.db.orgs[0]!["id"] as string;
     seedOrgMember(h, orgId, pubkeyFor("orgmem"), "member");
     const write = await h.app.request(
-      "/api/v0/boards/kb/issues",
+      url("issue.create", { slug: "kb" }),
       jsonReq("POST", { title: "Via org" }, tokenFor("orgmem")),
       {},
     );
     expect(write.status).toBe(201);
     const patch = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { title: "Nope" }, tokenFor("orgmem")),
       {},
     );
@@ -438,7 +439,7 @@ describe("EFB-38 identity references on membership writes", () => {
 
   describe("POST /orgs/:slug/members", () => {
     const add = (h: Harness, pubkey: unknown) =>
-      h.app.request("/api/v0/orgs/acme/members", jsonReq("POST", { pubkey, role: "member" }), {});
+      h.app.request(url("org.members.list", { org_slug: "acme" }), jsonReq("POST", { pubkey, role: "member" }), {});
     const roster = (h: Harness) => h.db.orgMembers.map((m) => m["pubkey"]);
 
     it("normalizes raw hex to nostr: form", async () => {
@@ -486,7 +487,7 @@ describe("EFB-38 identity references on membership writes", () => {
     };
     const add = (h: Harness, orgSlug: string, pubkey: unknown) =>
       h.app.request(
-        `/api/v0/orgs/${orgSlug}/boards/kb/members`,
+        url("org.board.members.list", { org_slug: orgSlug, slug: "kb" }),
         jsonReq("POST", { pubkey, role: "contributor" }),
         {},
       );
@@ -524,7 +525,7 @@ describe("EFB-38 identity references on membership writes", () => {
   describe("POST /orgs/:slug/transfer", () => {
     const transfer = (h: Harness, to_pubkey: unknown) =>
       h.app.request(
-        "/api/v0/orgs/acme/transfer",
+        url("org.transfer", { org_slug: "acme" }),
         jsonReq("POST", { to_pubkey, confirmation_slug: "acme" }),
         {},
       );
@@ -577,7 +578,7 @@ describe("EFB-42 :pubkey route param normalization", () => {
         await createTeam(h);
         seedOrgMember(h, h.db.orgs.find((o) => o["slug"] === "acme")!["id"] as string, CANON, "member");
       },
-      req: (p: string) => ["/api/v0/orgs/acme/members/" + p, jsonReq("PATCH", { role: "admin" })] as const,
+      req: (p: string) => [url("org.member.update", { org_slug: "acme", pubkey: p }), jsonReq("PATCH", { role: "admin" })] as const,
     },
     {
       label: "DELETE /orgs/:slug/members/:pubkey",
@@ -586,7 +587,7 @@ describe("EFB-42 :pubkey route param normalization", () => {
         seedOrgMember(h, h.db.orgs.find((o) => o["slug"] === "acme")!["id"] as string, CANON, "member");
       },
       req: (p: string) =>
-        ["/api/v0/orgs/acme/members/" + p, { method: "DELETE", headers: bearer }] as const,
+        [url("org.member.update", { org_slug: "acme", pubkey: p }), { method: "DELETE", headers: bearer }] as const,
     },
     {
       label: "PATCH /orgs/:org_slug/boards/:slug/members/:pubkey",
@@ -595,7 +596,7 @@ describe("EFB-42 :pubkey route param normalization", () => {
         seedBoardMember(h, h.db.boards[0]!["id"] as string, CANON, "viewer");
       },
       req: (p: string) =>
-        ["/api/v0/orgs/tester/boards/kb/members/" + p, jsonReq("PATCH", { role: "contributor" })] as const,
+        [url("org.board.member.update", { org_slug: "tester", slug: "kb", pubkey: p }), jsonReq("PATCH", { role: "contributor" })] as const,
     },
     {
       label: "DELETE /orgs/:org_slug/boards/:slug/members/:pubkey",
@@ -604,7 +605,7 @@ describe("EFB-42 :pubkey route param normalization", () => {
         seedBoardMember(h, h.db.boards[0]!["id"] as string, CANON, "viewer");
       },
       req: (p: string) =>
-        ["/api/v0/orgs/tester/boards/kb/members/" + p, { method: "DELETE", headers: bearer }] as const,
+        [url("org.board.member.update", { org_slug: "tester", slug: "kb", pubkey: p }), { method: "DELETE", headers: bearer }] as const,
     },
   ] as const;
 

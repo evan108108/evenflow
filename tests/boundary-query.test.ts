@@ -17,6 +17,7 @@
 // pasted into a PR once, but a proof that re-runs on every CI.
 
 import { spawnSync } from "node:child_process";
+import { url } from "../src/routes-manifest";
 import { describe, expect, it } from "vitest";
 import { Effect, Schema } from "effect";
 import { QueryString, decodeQuery } from "../src/lib/route-body";
@@ -169,7 +170,7 @@ describe("GET /boards/:slug/issues — the route that misled a caller", () => {
   const list = async (query: string) => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request(`/api/v0/boards/kb/issues?${query}`, { headers: bearer }, {});
+    const res = await h.app.request(`${url("issue.create", { slug: "kb" })}?${query}`, { headers: bearer }, {});
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   };
 

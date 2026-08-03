@@ -3,6 +3,7 @@
 // anonymous read matrix, and the kanban cover_url enrichment.
 
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import type { AttachmentShape, IssueShape } from "../src/shapes";
 import {
   BLOSSOM_DEFAULT_MAX_BYTES,
@@ -35,12 +36,12 @@ const b64 = (bytes: Uint8Array) => {
 };
 
 const setup = async (h: Harness) => {
-  const res = await h.app.request("/api/v0/boards", jsonReq("POST", { slug: "kb", title: "Board" }), {});
+  const res = await h.app.request(url("board.create"), jsonReq("POST", { slug: "kb", title: "Board" }), {});
   expect(res.status).toBe(201);
   return createIssue(h);
 };
 
-const uploadPath = (issue: IssueShape) => `/api/v0/boards/kb/issues/${issue.id}/attachments`;
+const uploadPath = (issue: IssueShape) => url("attachment.create", { slug: "kb", issue_ref: issue.id });
 
 const uploadJson = (
   h: Harness,
@@ -65,7 +66,7 @@ const uploadOk = async (h: Harness, issue: IssueShape, filename = "shot.png") =>
 };
 
 const setCover = (h: Harness, id: string, is_cover: boolean) =>
-  h.app.request(`/api/v0/attachments/${id}`, jsonReq("PATCH", { is_cover }), {});
+  h.app.request(url("attachment.update", { id: id }), jsonReq("PATCH", { is_cover }), {});
 
 describe("upload", () => {
   it("accepts the JSON shape, uploads to Blossom, and returns the row", async () => {
@@ -161,7 +162,7 @@ describe("upload", () => {
     expect(anon.status).toBe(401);
 
     // Public board: a signed-in stranger holds only the viewer floor.
-    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
+    await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "public" }), {});
     const viewer = await h.app.request(
       uploadPath(issue),
       jsonReq("POST", { file_b64: b64(PNG_BYTES), filename: "x.png", content_type: "image/png" }, "tok-stranger"),
@@ -214,7 +215,7 @@ describe("upload", () => {
     const h = makeHarness();
     const issue = await setup(h);
     const put = await h.app.request(
-      `/api/v0/orgs/${String(callerOrg(h)["slug"])}/storage`,
+      url("storage.get", { org_slug: String(callerOrg(h)["slug"]) }),
       jsonReq("PUT", { kind: "blossom", blossom_url: "https://blobs.acme.dev" }),
       {},
     );
@@ -261,7 +262,7 @@ describe("upload", () => {
     const h = makeHarness();
     const issue = await setup(h);
     const res = await h.app.request(
-      `/api/v0/orgs/tester/boards/kb/issues/${issue.short_id}/attachments`,
+      url("attachment.create", { slug: "kb", issue_ref: issue.short_id }, "tester"),
       jsonReq("POST", { file_b64: b64(PNG_BYTES), filename: "org.png", content_type: "image/png" }),
       {},
     );
@@ -302,12 +303,12 @@ describe("covers", () => {
     const h = makeHarness();
     const issue = await setup(h);
     const a = await uploadOk(h, issue);
-    const bad = await h.app.request(`/api/v0/attachments/${a.id}`, jsonReq("PATCH", { is_cover: "yes" }), {});
+    const bad = await h.app.request(url("attachment.update", { id: a.id }), jsonReq("PATCH", { is_cover: "yes" }), {});
     expect(bad.status).toBe(400);
     const ghost = await setCover(h, "ghost", true);
     expect(ghost.status).toBe(404);
 
-    await h.app.request(`/api/v0/attachments/${a.id}`, jsonReq("DELETE"), {});
+    await h.app.request(url("attachment.update", { id: a.id }), jsonReq("DELETE"), {});
     const gone = await setCover(h, a.id, true);
     expect(gone.status).toBe(404);
   });
@@ -316,7 +317,7 @@ describe("covers", () => {
     const h = makeHarness();
     const issue = await setup(h);
     const a = await uploadOk(h, issue);
-    const res = await h.app.request(`/api/v0/attachments/${a.id}`, {
+    const res = await h.app.request(url("attachment.update", { id: a.id }), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_cover: true }),
@@ -332,7 +333,7 @@ describe("delete + list", () => {
     const a = await uploadOk(h, issue, "a.png");
     const b = await uploadOk(h, issue, "b.png");
 
-    const res = await h.app.request(`/api/v0/attachments/${a.id}`, jsonReq("DELETE"), {});
+    const res = await h.app.request(url("attachment.update", { id: a.id }), jsonReq("DELETE"), {});
     expect(res.status).toBe(200);
     expect((await res.json()) as object).toEqual({ deleted: true });
     // Soft delete: the row survives with deleted_at_ms set.
@@ -346,7 +347,7 @@ describe("delete + list", () => {
   it("404s an unknown attachment", async () => {
     const h = makeHarness();
     await setup(h);
-    const res = await h.app.request("/api/v0/attachments/ghost", jsonReq("DELETE"), {});
+    const res = await h.app.request(url("attachment.update", { id: "ghost" }), jsonReq("DELETE"), {});
     expect(res.status).toBe(404);
   });
 
@@ -373,7 +374,7 @@ describe("delete + list", () => {
     const before = await h.app.request(uploadPath(issue), {}, {});
     expect(before.status).toBe(401);
 
-    await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { visibility: "public" }), {});
+    await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { visibility: "public" }), {});
     const after = await h.app.request(uploadPath(issue), {}, {});
     expect(after.status).toBe(200);
     const { attachments } = (await after.json()) as { attachments: AttachmentShape[] };
@@ -396,7 +397,7 @@ describe("kanban cover enrichment + body_format", () => {
     // takes images only (EFB-80) — so point the org at its own Blossom
     // before uploading the non-image cover this assertion needs.
     const byo = await h.app.request(
-      `/api/v0/orgs/${String(callerOrg(h)["slug"])}/storage`,
+      url("storage.get", { org_slug: String(callerOrg(h)["slug"]) }),
       jsonReq("PUT", { kind: "blossom", blossom_url: "https://blobs.acme.dev" }),
       {},
     );
@@ -406,7 +407,7 @@ describe("kanban cover enrichment + body_format", () => {
     const pdf = ((await pdfRes.json()) as { attachment: AttachmentShape }).attachment;
     await setCover(h, pdf.id, true);
 
-    const list = await h.app.request("/api/v0/boards/kb/issues?limit=100", { headers: bearer }, {});
+    const list = await h.app.request(`${url("issue.create", { slug: "kb" })}?limit=100`, { headers: bearer }, {});
     const { issues } = (await list.json()) as { issues: Array<IssueShape & { cover_url: string | null }> };
     const byId = new Map(issues.map((i) => [i.id, i.cover_url]));
     expect(byId.get(withCover.id)).toBe(img.blob_url);
@@ -424,7 +425,7 @@ describe("kanban cover enrichment + body_format", () => {
     expect(plain.body_format).toBe("plain");
 
     const flip = await h.app.request(
-      `/api/v0/issues/${plain.id}`,
+      url("issue.get", { id: plain.id }),
       jsonReq("PATCH", { body: "# now md", body_format: "markdown" }),
       {},
     );
@@ -432,7 +433,7 @@ describe("kanban cover enrichment + body_format", () => {
     expect(((await flip.json()) as { issue: IssueShape }).issue.body_format).toBe("markdown");
 
     const bad = await h.app.request(
-      `/api/v0/issues/${plain.id}`,
+      url("issue.get", { id: plain.id }),
       jsonReq("PATCH", { body_format: "html" }),
       {},
     );

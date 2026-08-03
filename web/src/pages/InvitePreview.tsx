@@ -5,6 +5,7 @@
 // browser back here to auto-continue.
 
 import { useNavigate, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { Show, createResource, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -43,7 +44,7 @@ export const InvitePreview = () => {
   const params = useParams<{ code: string }>();
   const navigate = useNavigate();
   const [preview] = createResource(() =>
-    api<InvitePreviewData>((c) => c.get(`/api/v0/invites/${encodeURIComponent(params.code)}`)),
+    api<InvitePreviewData>((c) => c.get(url("invite.get", { code: params.code }))),
   );
   const [signedIn, setSignedIn] = createSignal<boolean | null>(null);
   const [busy, setBusy] = createSignal(false);
@@ -56,7 +57,7 @@ export const InvitePreview = () => {
     setError(null);
     try {
       const res = await api<{ target_url: string }>((c) =>
-        c.post(`/api/v0/invites/${encodeURIComponent(params.code)}/accept`, {}),
+        c.post(url("invite.accept", { code: params.code }), {}),
       );
       navigate(res.target_url, { replace: true });
     } catch {
@@ -75,7 +76,7 @@ export const InvitePreview = () => {
 
   const acceptSignedOut = (provider: "google" | "github") => {
     stashPendingInvite(params.code);
-    window.location.assign(`/auth/oauth/start?provider=${provider}`);
+    window.location.assign(`${url("auth.oauth.start")}?provider=${provider}`);
   };
 
   const decline = async () => {
@@ -83,7 +84,7 @@ export const InvitePreview = () => {
     setBusy(true);
     setError(null);
     try {
-      await api((c) => c.post(`/api/v0/invites/${encodeURIComponent(params.code)}/decline`, {}));
+      await api((c) => c.post(url("invite.decline", { code: params.code }), {}));
       setDeclined(true);
     } catch {
       setError("The current pushed back — try again.");

@@ -18,6 +18,7 @@
 // surfaces as -32001.
 
 import { Hono } from "hono";
+import { path, url } from "../routes-manifest";
 import type { Context } from "hono";
 import { requireAuth } from "../middleware/requireAuth";
 import { bootstrap } from "../effects";
@@ -131,13 +132,13 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     name: "kanban_board_list",
     description: "List the caller's kanban boards, newest-updated first.",
     inputSchema: schema({ ...PAGING }),
-    toRequest: (a) => ({ method: "GET", path: "/api/v0/boards", query: pick(a, ["limit", "after"]) }),
+    toRequest: (a) => ({ method: "GET", path: url("board.list"), query: pick(a, ["limit", "after"]) }),
   },
   {
     name: "kanban_board_get",
     description: "Fetch one of the caller's boards by slug.",
     inputSchema: schema({ slug: { type: "string" } }, ["slug"]),
-    toRequest: (a) => ({ method: "GET", path: `/api/v0/boards/${encodeURIComponent(str(a, "slug"))}` }),
+    toRequest: (a) => ({ method: "GET", path: url("board.get", { slug: str(a, "slug") }) }),
   },
   {
     name: "kanban_board_create",
@@ -156,7 +157,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "POST",
-      path: "/api/v0/boards",
+      path: url("board.create"),
       body: pick(a, ["slug", "title", "description", "columns", "labels", "member_policy"]),
     }),
   },
@@ -181,7 +182,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "PATCH",
-      path: `/api/v0/boards/${encodeURIComponent(str(a, "slug"))}`,
+      path: url("board.get", { slug: str(a, "slug") }),
       body: pick(a, ["title", "description", "columns", "column_move_map", "labels", "member_policy"]),
     }),
   },
@@ -189,7 +190,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     name: "kanban_board_delete",
     description: "Delete one of the caller's boards. Issues are not cascaded (audit history is kept).",
     inputSchema: schema({ slug: { type: "string" } }, ["slug"]),
-    toRequest: (a) => ({ method: "DELETE", path: `/api/v0/boards/${encodeURIComponent(str(a, "slug"))}` }),
+    toRequest: (a) => ({ method: "DELETE", path: url("board.get", { slug: str(a, "slug") }) }),
   },
   {
     name: "kanban_issue_list",
@@ -208,7 +209,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "GET",
-      path: `/api/v0/boards/${encodeURIComponent(str(a, "board_slug"))}/issues`,
+      path: url("issue.list", { slug: str(a, "board_slug") }),
       query: pick(a, ["status", "container", "assignee", "label", "limit", "after"]),
     }),
   },
@@ -219,7 +220,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "GET",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}`,
+      path: url("issue.get", { id: str(a, "id") }),
       query: { include: "comments,attachments" },
     }),
   },
@@ -244,7 +245,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/boards/${encodeURIComponent(str(a, "board_slug"))}/issues`,
+      path: url("issue.list", { slug: str(a, "board_slug") }),
       body: pick(a, ["title", "body", "type", "status", "container", "assignee_pubkey", "priority", "estimate", "labels"]),
     }),
   },
@@ -268,7 +269,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "PATCH",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}`,
+      path: url("issue.get", { id: str(a, "id") }),
       body: pick(a, ["title", "body", "type", "status", "assignee_pubkey", "priority", "estimate", "labels"]),
     }),
   },
@@ -286,7 +287,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/transition`,
+      path: url("issue.transition", { id: str(a, "id") }),
       body: pick(a, ["column_id", "to", "to_status"]),
     }),
   },
@@ -296,8 +297,8 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/promote_to_backlog`,
-      body: {},
+      path: url("issue.container.set", { id: str(a, "id") }),
+      body: { container: "backlog" },
     }),
   },
   {
@@ -306,8 +307,8 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/promote_to_active`,
-      body: {},
+      path: url("issue.container.set", { id: str(a, "id") }),
+      body: { container: "active" },
     }),
   },
   {
@@ -316,15 +317,15 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}/send_to_icebox`,
-      body: {},
+      path: url("issue.container.set", { id: str(a, "id") }),
+      body: { container: "icebox" },
     }),
   },
   {
     name: "kanban_issue_delete",
     description: "Delete an issue and its comments. Activity-feed audit rows are kept.",
     inputSchema: schema({ id: { type: "string", description: ISSUE_REF } }, ["id"]),
-    toRequest: (a) => ({ method: "DELETE", path: `/api/v0/issues/${encodeURIComponent(str(a, "id"))}` }),
+    toRequest: (a) => ({ method: "DELETE", path: url("issue.get", { id: str(a, "id") }) }),
   },
   {
     name: "kanban_comment_post",
@@ -339,7 +340,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "POST",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "issue_id"))}/comments`,
+      path: url("comment.list", { id: str(a, "issue_id") }),
       body: pick(a, ["body", "in_reply_to"]),
     }),
   },
@@ -349,7 +350,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     inputSchema: schema({ issue_id: { type: "string", description: ISSUE_REF }, ...PAGING }, ["issue_id"]),
     toRequest: (a) => ({
       method: "GET",
-      path: `/api/v0/issues/${encodeURIComponent(str(a, "issue_id"))}/comments`,
+      path: url("comment.list", { id: str(a, "issue_id") }),
       query: pick(a, ["limit", "after"]),
     }),
   },
@@ -367,7 +368,7 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
     ),
     toRequest: (a) => ({
       method: "GET",
-      path: `/api/v0/boards/${encodeURIComponent(str(a, "board_slug"))}/activity`,
+      path: url("feed.board.activity", { slug: str(a, "board_slug") }),
       query: pick(a, ["type", "limit", "after"]),
     }),
   },
@@ -434,7 +435,7 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
 
   const mcp = new Hono<AppHonoEnv>();
 
-  mcp.post("/mcp", async (c) => {
+  mcp.post(path("mcp.post"), async (c) => {
     let message: unknown;
     try {
       message = await c.req.json();
@@ -519,9 +520,19 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
     }
   });
 
+  // EFB-98 left this file whole, and the reason is `callTool` above. It looks
+  // like the dispatch half of this handler is business logic, and it is not:
+  // it forwards the caller's Authorization header into `api.request(...)` and
+  // re-enters this same app over HTTP. It is an HTTP CLIENT. Moving it into
+  // src/actions/ would put an HTTP client inside the module defined by having
+  // no HTTP in it. Everything around it is JSON-RPC envelope handling —
+  // `{jsonrpc, id, error:{code}}`, 202 for notifications, protocol version
+  // negotiation — which is transport for a second protocol, not this app's
+  // domain. The 17 tool definitions are a client too, and already migrated.
+  //
   // The transport is POST-only here: no server-initiated stream is offered.
-  mcp.get("/mcp", (c) => c.json({ error: "method-not-allowed" }, 405));
-  mcp.delete("/mcp", (c) => c.json({ error: "method-not-allowed" }, 405));
+  mcp.get(path("mcp.get"), (c) => c.json({ error: "method-not-allowed" }, 405));
+  mcp.delete(path("mcp.delete"), (c) => c.json({ error: "method-not-allowed" }, 405));
 
   return mcp;
 };

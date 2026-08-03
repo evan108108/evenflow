@@ -5,6 +5,7 @@
 // localStorage so bootstrap can auto-slug the personal org.
 
 import { useNavigate, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createResource, createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime } from "../effects";
@@ -50,12 +51,12 @@ const fetchHandle = async (
     const [detail, boards] = await Promise.all([
       appRuntime.runPromise(
         Effect.flatMap(ApiClient, (c) =>
-          c.get<OrgDetailResponse>(`/api/v0/orgs/${encodeURIComponent(handle)}`),
+          c.get<OrgDetailResponse>(url("org.get", { org_slug: handle })),
         ),
       ),
       appRuntime.runPromise(
         Effect.flatMap(ApiClient, (c) =>
-          c.get<OrgBoardsResponse>(`/api/v0/orgs/${encodeURIComponent(handle)}/boards`),
+          c.get<OrgBoardsResponse>(url("org.boards.list", { org_slug: handle })),
         ),
       ),
     ]);
@@ -69,7 +70,7 @@ const fetchHandle = async (
 const ClaimCta = (props: { handle: string }) => {
   const signUp = (provider: "google" | "github") => {
     stashClaimedHandle(props.handle);
-    window.location.assign(`/auth/oauth/start?provider=${provider}`);
+    window.location.assign(`${url("auth.oauth.start")}?provider=${provider}`);
   };
   return (
     <main style={{ display: "grid", "place-items": "center", "min-height": "100vh" }}>
@@ -123,7 +124,9 @@ export const HandlePage = () => {
     const res = await appRuntime.runPromise(
       Effect.flatMap(ApiClient, (c) =>
         c.post<{ board: CreatedBoard }>(
-          `/api/v0/orgs/${encodeURIComponent(handle())}/boards`,
+          // POST creates a board IN the org, so it is board.create under the
+          // org prefix — not the org boards listing.
+          url("board.create", {}, handle()),
           input,
         ),
       ),

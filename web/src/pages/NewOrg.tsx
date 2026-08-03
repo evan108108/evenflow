@@ -4,6 +4,7 @@
 // reserved blocklist and uniqueness — 409s surface inline).
 
 import { useNavigate } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { Show, createSignal, onMount } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, AuthManager, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -54,7 +55,7 @@ export const NewOrg = () => {
     setError(null);
     try {
       await api((c) =>
-        c.post("/api/v0/orgs", {
+        c.post(url("org.create"), {
           kind: "team",
           slug: s,
           display_name: name().trim(),

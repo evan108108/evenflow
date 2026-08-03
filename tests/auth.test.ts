@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Hono } from "hono";
 import { Effect, Layer } from "effect";
 import {
@@ -100,7 +101,7 @@ describe("requireAuth", () => {
 describe("GET /auth/whoami", () => {
   it("returns claims + gateway-derived pubkey and upgrades the session row", async () => {
     const { app, db } = makeHarness();
-    const res = await app.request("/auth/whoami", bearer(JWT_TEST_TOKEN), {});
+    const res = await app.request(url("auth.whoami"), bearer(JWT_TEST_TOKEN), {});
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       claims: JWT_TEST_CLAIMS,
@@ -114,7 +115,7 @@ describe("GET /auth/whoami", () => {
 
   it("returns pubkey null + audits when the gateway is unreachable", async () => {
     const { app, audit, db } = makeHarness({ fourAFails: true });
-    const res = await app.request("/auth/whoami", bearer(JWT_TEST_TOKEN), {});
+    const res = await app.request(url("auth.whoami"), bearer(JWT_TEST_TOKEN), {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as { pubkey: string | null };
     expect(body.pubkey).toBeNull();
@@ -125,7 +126,7 @@ describe("GET /auth/whoami", () => {
 
   it("is protected", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/whoami", {}, {});
+    const res = await app.request(url("auth.whoami"), {}, {});
     expect(res.status).toBe(401);
   });
 });
@@ -139,7 +140,7 @@ describe("POST /auth/session", () => {
 
   it("stores a hashed session row and returns session_hash = sha256(jwt)", async () => {
     const { app, db } = makeHarness();
-    const res = await app.request("/auth/session", post({ jwt: JWT_TEST_TOKEN }), {});
+    const res = await app.request(url("auth.session.create"), post({ jwt: JWT_TEST_TOKEN }), {});
     expect(res.status).toBe(200);
     const { session_hash } = (await res.json()) as { session_hash: string };
     expect(session_hash).toBe(await sha256Hex(JWT_TEST_TOKEN));
@@ -155,14 +156,14 @@ describe("POST /auth/session", () => {
 
   it("rejects an invalid jwt with 401", async () => {
     const { app, db } = makeHarness();
-    const res = await app.request("/auth/session", post({ jwt: "garbage" }), {});
+    const res = await app.request(url("auth.session.create"), post({ jwt: "garbage" }), {});
     expect(res.status).toBe(401);
     expect(db.executes).toHaveLength(0);
   });
 
   it("rejects a missing jwt field with 400", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/session", post({}), {});
+    const res = await app.request(url("auth.session.create"), post({}), {});
     expect(res.status).toBe(400);
   });
 });
@@ -171,7 +172,7 @@ describe("DELETE /auth/session", () => {
   it("deletes the row for this token's hash", async () => {
     const { app, db } = makeHarness();
     const res = await app.request(
-      "/auth/session",
+      url("auth.session.create"),
       { method: "DELETE", ...bearer(JWT_TEST_TOKEN) },
       {},
     );
@@ -204,7 +205,7 @@ const setCookiesOf = (res: Response): string[] =>
 describe("GET /auth/oauth/start", () => {
   it("redirects to google by default with full AS-flow params + PKCE", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/oauth/start", {}, {});
+    const res = await app.request(url("auth.oauth.start"), {}, {});
     expect(res.status).toBe(302);
     const location = new URL(res.headers.get("Location") ?? "");
     expect(location.origin).toBe("https://api.4a4.ai");
@@ -229,7 +230,7 @@ describe("GET /auth/oauth/start", () => {
 
   it("honors ?provider=github and passes the caller's state through", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/oauth/start?provider=github&state=csrf-123", {}, {});
+    const res = await app.request(`${url("auth.oauth.start")}?provider=github&state=csrf-123`, {}, {});
     expect(res.status).toBe(302);
     const location = new URL(res.headers.get("Location") ?? "");
     expect(location.pathname).toBe("/auth/github/start");
@@ -238,7 +239,7 @@ describe("GET /auth/oauth/start", () => {
 
   it("rejects unknown providers", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/oauth/start?provider=twitter", {}, {});
+    const res = await app.request(`${url("auth.oauth.start")}?provider=twitter`, {}, {});
     expect(res.status).toBe(400);
   });
 });
@@ -264,7 +265,7 @@ describe("GET /auth/callback", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const res = await app.request(
-      "/auth/callback?code=abc&state=st-1",
+      `${url("auth.oauth.callback")}?code=abc&state=st-1`,
       cookies("the-verifier", "st-1"),
       env,
     );
@@ -272,8 +273,8 @@ describe("GET /auth/callback", () => {
     expect(res.headers.get("Location")).toBe("/signin#jwt=jwt.from.4a");
 
     expect(fetchSpy).toHaveBeenCalledOnce();
-    const [url, init] = fetchSpy.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(url).toBe("https://api.4a4.ai/auth/token");
+    const [tokenUrl, init] = fetchSpy.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(tokenUrl).toBe("https://api.4a4.ai/auth/token");
     const body = new URLSearchParams(init.body as string);
     expect(body.get("grant_type")).toBe("authorization_code");
     expect(body.get("code")).toBe("abc");
@@ -291,14 +292,14 @@ describe("GET /auth/callback", () => {
 
   it("rejects a missing code with 400", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/callback?state=st-1", cookies("v", "st-1"), env);
+    const res = await app.request(`${url("auth.oauth.callback")}?state=st-1`, cookies("v", "st-1"), env);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid-callback", reason: "missing-code" });
   });
 
   it("rejects a state mismatch with 400", async () => {
     const { app } = makeHarness();
-    const res = await app.request("/auth/callback?code=abc&state=evil", cookies("v", "st-1"), env);
+    const res = await app.request(`${url("auth.oauth.callback")}?code=abc&state=evil`, cookies("v", "st-1"), env);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid-callback", reason: "state-mismatch" });
   });
@@ -306,7 +307,7 @@ describe("GET /auth/callback", () => {
   it("rejects a missing pkce_verifier cookie with 400", async () => {
     const { app } = makeHarness();
     const res = await app.request(
-      "/auth/callback?code=abc&state=st-1",
+      `${url("auth.oauth.callback")}?code=abc&state=st-1`,
       { headers: { Cookie: "oauth_state=st-1" } },
       env,
     );
@@ -318,7 +319,7 @@ describe("GET /auth/callback", () => {
     const { app } = makeHarness();
     vi.stubGlobal("fetch", vi.fn(async () => new Response("invalid_grant", { status: 400 })));
     const res = await app.request(
-      "/auth/callback?code=expired&state=st-1",
+      `${url("auth.oauth.callback")}?code=expired&state=st-1`,
       cookies("v", "st-1"),
       env,
     );

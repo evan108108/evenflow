@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
-import { PatchBoardBody, PostBoardBody } from "../src/routes/boards";
+// EFB-98: the schemas live with the logic that consumes them now. The route
+// imports them back for parseRouteBody; a test that asserts what the SHAPE
+// accepts belongs against the shape's own module.
+import { PatchBoardBody, PostBoardBody } from "../src/actions/boards";
 import {
   CALLER,
   bearer,
@@ -13,7 +17,7 @@ import {
 import type { BoardShape } from "../src/shapes";
 
 const createBoard = (h: Harness, overrides?: Record<string, unknown>) =>
-  h.app.request("/api/v0/boards", jsonReq("POST", { slug: "kb", title: "Kanban", ...overrides }), {});
+  h.app.request(url("board.create"), jsonReq("POST", { slug: "kb", title: "Kanban", ...overrides }), {});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -80,7 +84,7 @@ describe("POST /api/v0/boards", () => {
 
   it("rejects a missing title with 400", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/boards", jsonReq("POST", { slug: "kb" }), {});
+    const res = await h.app.request(url("board.create"), jsonReq("POST", { slug: "kb" }), {});
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid-body", reason: "title" });
   });
@@ -101,7 +105,7 @@ describe("GET /api/v0/boards", () => {
     // A foreign board must never leak into the caller's list.
     seedForeignBoardAndIssue(h);
 
-    const res = await h.app.request("/api/v0/boards", { headers: bearer }, {});
+    const res = await h.app.request(url("board.create"), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       boards: Array<BoardShape & { org_slug: string | null }>;
@@ -118,20 +122,20 @@ describe("GET /api/v0/boards", () => {
       vi.setSystemTime(1_000 * (i + 1));
       await createBoard(h, { slug });
     }
-    const first = await h.app.request("/api/v0/boards?limit=2", { headers: bearer }, {});
+    const first = await h.app.request(`${url("board.create")}?limit=2`, { headers: bearer }, {});
     const page1 = (await first.json()) as { boards: BoardShape[]; total: number };
     expect(page1.boards.map((b) => b.slug)).toEqual(["c", "b"]);
     expect(page1.total).toBe(3);
 
     const cursor = page1.boards[1]!.id;
-    const second = await h.app.request(`/api/v0/boards?limit=2&after=${cursor}`, { headers: bearer }, {});
+    const second = await h.app.request(`${url("board.create")}?limit=2&after=${cursor}`, { headers: bearer }, {});
     const page2 = (await second.json()) as { boards: BoardShape[] };
     expect(page2.boards.map((b) => b.slug)).toEqual(["a"]);
   });
 
   it("rejects an unknown after-cursor with 400", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/boards?after=nope", { headers: bearer }, {});
+    const res = await h.app.request(`${url("board.create")}?after=nope`, { headers: bearer }, {});
     expect(res.status).toBe(400);
   });
 });
@@ -140,7 +144,7 @@ describe("GET /api/v0/boards/:slug", () => {
   it("returns the board with org context and the caller's role", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", { headers: bearer }, {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const { board, org, role } = (await res.json()) as {
       board: BoardShape;
@@ -155,7 +159,7 @@ describe("GET /api/v0/boards/:slug", () => {
 
   it("404s on an unknown slug", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/boards/nope", { headers: bearer }, {});
+    const res = await h.app.request(url("board.get", { slug: "nope" }), { headers: bearer }, {});
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "not-found", reason: "board" });
   });
@@ -163,7 +167,7 @@ describe("GET /api/v0/boards/:slug", () => {
   it("resolves via the canonical org-scoped path too", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/orgs/tester/boards/kb", { headers: bearer }, {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }, "tester"), { headers: bearer }, {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardShape };
     expect(board.slug).toBe("kb");
@@ -175,7 +179,7 @@ describe("PATCH /api/v0/boards/:slug", () => {
     const h = makeHarness();
     await createBoard(h);
     vi.setSystemTime(5_000);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { title: "Renamed" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { title: "Renamed" }), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardShape };
     expect(board.title).toBe("Renamed");
@@ -186,14 +190,14 @@ describe("PATCH /api/v0/boards/:slug", () => {
 
   it("404s on a non-existent board", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/boards/nope", jsonReq("PATCH", { title: "X" }), {});
+    const res = await h.app.request(url("board.get", { slug: "nope" }), jsonReq("PATCH", { title: "X" }), {});
     expect(res.status).toBe(404);
   });
 
   it("rejects slug changes with 400", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { slug: "kb2" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { slug: "kb2" }), {});
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid-body", reason: "slug-immutable" });
   });
@@ -201,7 +205,7 @@ describe("PATCH /api/v0/boards/:slug", () => {
   it("rejects an empty patch with 400", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", {}), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", {}), {});
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid-body", reason: "empty-patch" });
   });
@@ -213,17 +217,17 @@ describe("visibility", () => {
     await createBoard(h);
     // EFB-76: was 404. A tokenless caller is told to authenticate, not sent
     // looking elsewhere for a board that is right there but private.
-    expect((await h.app.request("/api/v0/boards/kb", {}, {})).status).toBe(401);
+    expect((await h.app.request(url("board.get", { slug: "kb" }), {}, {})).status).toBe(401);
 
     const patched = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "public" }),
       {},
     );
     expect(patched.status).toBe(200);
     expect(((await patched.json()) as { board: BoardShape }).board.visibility).toBe("public");
 
-    const anon = await h.app.request("/api/v0/boards/kb", {}, {});
+    const anon = await h.app.request(url("board.get", { slug: "kb" }), {}, {});
     expect(anon.status).toBe(200);
     const { role } = (await anon.json()) as { role: string };
     expect(role).toBe("viewer");
@@ -233,7 +237,7 @@ describe("visibility", () => {
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { visibility: "unlisted" }),
       {},
     );
@@ -246,28 +250,28 @@ describe("DELETE /api/v0/boards/:slug", () => {
   it("deletes the board and its member rows; subsequent GET 404s", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", { method: "DELETE", headers: bearer }, {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), { method: "DELETE", headers: bearer }, {});
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: true });
     expect(h.db.boards).toHaveLength(0);
     expect(h.db.boardMembers).toHaveLength(0);
-    const gone = await h.app.request("/api/v0/boards/kb", { headers: bearer }, {});
+    const gone = await h.app.request(url("board.get", { slug: "kb" }), { headers: bearer }, {});
     expect(gone.status).toBe(404);
   });
 
   it("404s on an unknown slug", async () => {
     const h = makeHarness();
-    const res = await h.app.request("/api/v0/boards/nope", { method: "DELETE", headers: bearer }, {});
+    const res = await h.app.request(url("board.get", { slug: "nope" }), { method: "DELETE", headers: bearer }, {});
     expect(res.status).toBe(404);
   });
 });
 
 describe("auth gating", () => {
   it.each([
-    ["POST", "/api/v0/boards"],
-    ["GET", "/api/v0/boards"],
-    ["PATCH", "/api/v0/boards/kb"],
-    ["DELETE", "/api/v0/boards/kb"],
+    ["POST", url("board.create")],
+    ["GET", url("board.create")],
+    ["PATCH", url("board.get", { slug: "kb" })],
+    ["DELETE", url("board.get", { slug: "kb" })],
   ])("%s %s rejects unauthenticated requests with 401", async (method, path) => {
     const h = makeHarness();
     const res = await h.app.request(path, { method }, {});
@@ -282,9 +286,9 @@ describe("auth gating", () => {
   it("GET /api/v0/boards/kb answers 401 to anonymous callers, existing or not", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const existsButPrivate = await h.app.request("/api/v0/boards/kb", {}, {});
+    const existsButPrivate = await h.app.request(url("board.get", { slug: "kb" }), {}, {});
     expect(existsButPrivate.status).toBe(401);
-    const doesNotExist = await h.app.request("/api/v0/boards/no-such-board", {}, {});
+    const doesNotExist = await h.app.request(url("board.get", { slug: "no-such-board" }), {}, {});
     expect(doesNotExist.status).toBe(401);
     // The oracle test: the two answers must be byte-identical, or the status
     // code alone still distinguishes "private" from "nonexistent".
@@ -329,7 +333,7 @@ describe("issue_prefix", () => {
   it("PATCH may change the prefix while no issue exists", async () => {
     const h = makeHarness();
     await createBoard(h);
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
     expect(res.status).toBe(200);
     const { board } = (await res.json()) as { board: BoardShape };
     expect(board.issue_prefix).toBe("ZZ");
@@ -339,7 +343,7 @@ describe("issue_prefix", () => {
     const h = makeHarness();
     await createBoard(h);
     h.db.boards[0]!["next_issue_number"] = 2; // an issue exists
-    const res = await h.app.request("/api/v0/boards/kb", jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
+    const res = await h.app.request(url("board.get", { slug: "kb" }), jsonReq("PATCH", { issue_prefix: "ZZ" }), {});
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "conflict", reason: "prefix-locked-issues-exist" });
   });
@@ -362,7 +366,7 @@ describe("issue_prefix", () => {
     await createBoard(h);
     for (const bad of [0, 91, 1.5, "not-a-number", null]) {
       const res = await h.app.request(
-        "/api/v0/boards/kb",
+        url("board.get", { slug: "kb" }),
         jsonReq("PATCH", { done_window_days: bad }),
         {},
       );
@@ -378,7 +382,7 @@ describe("issue_prefix", () => {
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { default_sprint_days: 91 }),
       {},
     );
@@ -396,7 +400,7 @@ describe("issue_prefix", () => {
     await createBoard(h);
     h.db.boards[0]!["next_issue_number"] = 2;
     const res = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { issue_prefix: "ZZ", done_window_days: 999 }),
       {},
     );
@@ -408,7 +412,7 @@ describe("issue_prefix", () => {
     const h = makeHarness();
     await createBoard(h);
     const res = await h.app.request(
-      "/api/v0/boards/kb",
+      url("board.get", { slug: "kb" }),
       jsonReq("PATCH", { done_window_days: 30 }),
       {},
     );

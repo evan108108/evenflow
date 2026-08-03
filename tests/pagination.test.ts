@@ -7,6 +7,7 @@
 // a truncated stream.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   cursorOf,
   cursorPredicate,
@@ -123,8 +124,8 @@ const drain = async (h: Harness, query: string, limit: number) => {
   let after: string | null = null;
   let pages = 0;
   for (;;) {
-    const url = `/api/v0/boards/kb/issues?${query}&limit=${limit}${after === null ? "" : `&after=${encodeURIComponent(after)}`}`;
-    const res = await h.app.request(url, { headers: bearer }, {});
+    const reqUrl = `${url("issue.list", { slug: "kb" })}?${query}&limit=${limit}${after === null ? "" : `&after=${encodeURIComponent(after)}`}`;
+    const res = await h.app.request(reqUrl, { headers: bearer }, {});
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       issues: IssueShape[];
@@ -195,7 +196,7 @@ describe("paged column stream", () => {
     seed(h, String(h.db.boards[0]!["id"]), col, 150);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/issues?container=active&column_id=${col}&limit=500`,
+      `${url("issue.list", { slug: "kb" })}?container=active&column_id=${col}&limit=500`,
       { headers: bearer },
       {},
     );
@@ -211,7 +212,7 @@ describe("paged column stream", () => {
     seed(h, String(h.db.boards[0]!["id"]), col, 7);
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/issues?container=active&column_id=${col}&limit=3`,
+      `${url("issue.list", { slug: "kb" })}?container=active&column_id=${col}&limit=3`,
       { headers: bearer },
       {},
     );
@@ -229,7 +230,7 @@ describe("paged column stream", () => {
 
     const first = (await (
       await h.app.request(
-        `/api/v0/boards/kb/issues?container=active&column_id=${col}&limit=3`,
+        `${url("issue.list", { slug: "kb" })}?container=active&column_id=${col}&limit=3`,
         { headers: bearer },
         {},
       )
@@ -242,7 +243,7 @@ describe("paged column stream", () => {
     );
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/issues?container=active&column_id=${col}&limit=3&after=${encodeURIComponent(first.next_after)}`,
+      `${url("issue.list", { slug: "kb" })}?container=active&column_id=${col}&limit=3&after=${encodeURIComponent(first.next_after)}`,
       { headers: bearer },
       {},
     );
@@ -260,7 +261,7 @@ describe("paged column stream", () => {
     const col = firstColumnId(h);
 
     const bad = await h.app.request(
-      "/api/v0/boards/kb/issues?container=active&column_id=nope",
+      `${url("issue.list", { slug: "kb" })}?container=active&column_id=nope`,
       { headers: bearer },
       {},
     );
@@ -268,7 +269,7 @@ describe("paged column stream", () => {
 
     const recency = encodeCursor({ kind: "recency", isNull: 0, value: 1, id: "x" });
     const mismatched = await h.app.request(
-      `/api/v0/boards/kb/issues?container=active&column_id=${col}&after=${encodeURIComponent(recency)}`,
+      `${url("issue.list", { slug: "kb" })}?container=active&column_id=${col}&after=${encodeURIComponent(recency)}`,
       { headers: bearer },
       {},
     );
@@ -311,7 +312,7 @@ describe("paged side-list stream", () => {
 
     // Pre-22 clients passed the last issue id directly.
     const res = await h.app.request(
-      "/api/v0/boards/kb/issues?container=backlog&limit=2&after=i0004",
+      `${url("issue.list", { slug: "kb" })}?container=backlog&limit=2&after=i0004`,
       { headers: bearer },
       {},
     );

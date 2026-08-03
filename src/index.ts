@@ -5,28 +5,7 @@ import { asShortId } from "./slug";
 import { INVITE_CODE_PREFIX } from "./roles";
 import type { AppHonoEnv } from "./http";
 import { optionalAuth } from "./middleware/requireAuth";
-import { makeAttachmentsRouter } from "./routes/attachments";
-import { makeAudiencesRouter } from "./routes/audiences";
-import { makeAuthRouter } from "./routes/auth";
-import { makeBoardsRouter } from "./routes/boards";
-import { makeCommentsRouter } from "./routes/comments";
-import { makeFeedRouter } from "./routes/feed";
-import { makeInvitesRouter } from "./routes/invites";
-import { makeKeysRouter } from "./routes/keys";
-import { makeIssuesRouter } from "./routes/issues";
-import { makeImportsRouter } from "./routes/imports";
-import { makeWebhooksRouter } from "./routes/webhooks";
-import { makeSearchRouter } from "./routes/search";
-import { makeMcpRouter } from "./routes/mcp";
-import { makeOrgsRouter } from "./routes/orgs";
-import { makeProfileRouter } from "./routes/profile";
-import { makeSessionRouter } from "./routes/session";
-import { makeSigninRouter } from "./routes/signin";
-import { makeSprintsRouter } from "./routes/sprints";
-import { makeNotificationsRouter } from "./routes/notifications";
-import { makeStorageRouter } from "./routes/storage";
-import { makeGithubRouter } from "./routes/github";
-import { makeWellKnownRouter } from "./routes/wellknown";
+import { mountAll } from "./router";
 import { scheduled } from "./scheduled";
 
 const app = new Hono<AppHonoEnv>();
@@ -78,16 +57,12 @@ app.get("/healthz", async (c) => {
   return c.json(await Effect.runPromise(Effect.provide(healthz, bootstrap(c.env))));
 });
 
-app.route("/auth", makeAuthRouter());
-
-// Public mounts: RFC 9728 discovery + the MCP endpoint (auth happens per
-// JSON-RPC call inside the router, answering -32001 instead of HTTP 401).
-app.route("/", makeWellKnownRouter());
-app.route("/", makeMcpRouter());
-
 // Phase 16: /api/v0/* runs behind OPTIONAL auth — a present JWT must be
 // valid (401 otherwise), an absent one passes through anonymous so public
 // boards read without sign-in. Every mutation gates on requireCaller.
+//
+// Registered before mountAll so it wraps every /api/v0 router below. The
+// /auth, / and /mcp mounts sit outside it by design and are unaffected.
 app.use("/api/v0/*", optionalAuth());
 
 // Placeholder demonstrating the middleware end-to-end: echoes the verified claims.
@@ -99,52 +74,10 @@ app.get("/api/v0/me", (c) => {
   return c.json(claims);
 });
 
-app.route("/api/v0", makeSigninRouter());
-app.route("/api/v0", makeSessionRouter());
-// Orgs before the org-scoped board mounts: /orgs/:slug/boards (org listing)
-// and /orgs/:org_slug/boards/:slug/members must match the orgs/invites
-// routers, not the mirrored board routers.
-app.route("/api/v0", makeOrgsRouter());
-app.route("/api/v0", makeInvitesRouter());
-app.route("/api/v0", makeKeysRouter());
-// BYOB storage (phase 18b): /server-pubkey + /orgs/:handle/storage — before
-// the org-scoped board mounts for the same reason the orgs router is.
-app.route("/api/v0", makeStorageRouter());
-app.route("/api/v0", makeNotificationsRouter());
-// GitHub integration (phase 21). Carries BOTH the public inbound webhook
-// (/webhooks/github/:board_id — HMAC-gated, never reads claims) and the
-// admin config surface, so it mounts before the board-family routers for
-// the same precedence reason the orgs router does.
-app.route("/api/v0", makeGithubRouter());
-
-// Board-family routers, mounted twice: legacy compat at /api/v0 and the
-// canonical org-scoped namespace at /api/v0/orgs/:org_slug. Handlers branch
-// on the org_slug param via resolveBoardScope.
-app.route("/api/v0", makeBoardsRouter());
-// EFB-15 — before the issues router. Nothing in it currently matches
-// /boards/:slug/issues/bulk, but the day someone adds /boards/:slug/issues/:id
-// there, a bulk POST would start resolving to it with `bulk` as the id. Mount
-// order is the cheap guard; the same precedence reasoning as the orgs router.
-app.route("/api/v0", makeImportsRouter());
-app.route("/api/v0", makeIssuesRouter());
-app.route("/api/v0", makeSprintsRouter());
-app.route("/api/v0", makeCommentsRouter());
-app.route("/api/v0", makeFeedRouter());
-app.route("/api/v0", makeAttachmentsRouter());
-app.route("/api/v0", makeWebhooksRouter());
-app.route("/api/v0", makeSearchRouter());
-app.route("/api/v0/orgs/:org_slug", makeBoardsRouter());
-app.route("/api/v0/orgs/:org_slug", makeImportsRouter());
-app.route("/api/v0/orgs/:org_slug", makeIssuesRouter());
-app.route("/api/v0/orgs/:org_slug", makeSprintsRouter());
-app.route("/api/v0/orgs/:org_slug", makeCommentsRouter());
-app.route("/api/v0/orgs/:org_slug", makeFeedRouter());
-app.route("/api/v0/orgs/:org_slug", makeAttachmentsRouter());
-app.route("/api/v0/orgs/:org_slug", makeSearchRouter());
-app.route("/api/v0", makeAudiencesRouter());
-app.route("/api/v0/orgs/:org_slug", makeAudiencesRouter());
-app.route("/api/v0/orgs/:org_slug", makeGithubRouter());
-app.route("/api/v0", makeProfileRouter());
+// EFB-98: every mount, in order, from the one table in src/router.ts. The
+// list that used to live here was copied into three test files and had
+// already drifted from all of them.
+mountAll(app);
 
 // /i/FLOW-42 — the paste-anywhere deep link (git commits, chat). Resolves
 // the board slug server-side and bounces to the full canonical SPA URL.

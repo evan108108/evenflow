@@ -5,6 +5,7 @@
 // butterfly.
 
 import { useLocation, useNavigate, useParams } from "@solidjs/router";
+import { url } from "@routes-manifest";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Effect, Fiber, Stream } from "effect";
 import type { RuntimeFiber } from "effect/Fiber";
@@ -64,11 +65,13 @@ export const BoardPage = () => {
   const navigate = useNavigate();
   const orgHandle = () => params.handle?.replace(/^@/, "") ?? null;
   const boardSlug = params.board_slug ?? params.slug ?? "";
-  const apiBase =
-    params.handle !== undefined && params.board_slug !== undefined
-      ? `/api/v0/orgs/${encodeURIComponent(params.handle.replace(/^@/, ""))}/boards/${encodeURIComponent(params.board_slug)}`
-      : `/api/v0/boards/${encodeURIComponent(boardSlug)}`;
-  const store = createBoardStore(boardSlug, undefined, apiBase);
+  // EFB-98: the store builds its own URLs from the manifest now; it needs the
+  // org handle, not a prefix. url() percent-encodes its parameters, so the
+  // hand-rolled encodeURIComponent that used to wrap these is gone — keeping it
+  // would double-encode.
+  const orgParam = params.handle === undefined ? undefined : params.handle.replace(/^@/, "");
+  const store = createBoardStore(boardSlug, undefined, orgParam);
+  const apiBase = store.apiBase;
   const base = () =>
     orgHandle() !== null ? `/@${orgHandle()}/${boardSlug}` : `/boards/${boardSlug}`;
 

@@ -7,6 +7,7 @@
 // asserted directly instead of inferred from an HTTP status.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { url } from "../src/routes-manifest";
 import { Effect, Exit } from "effect";
 import { decodeBody } from "../src/lib/route-body";
 import { makeDbMock, type DbMock, type Row } from "./dbMock";
@@ -20,12 +21,16 @@ import {
   makeHarness,
   type Harness,
 } from "./harness";
+// EFB-98 — the subscription vocabulary (event kinds, the two body schemas) and
+// the predicate authorization rule are business logic, so they moved to the
+// action module with the handlers that use them. The route file is now the HTTP
+// shell. Same symbols, same rules, one directory over.
 import {
   BOARD_EVENT_KINDS,
   PatchSubscriptionBody,
   PostSubscriptionBody,
   requirePredicateAllowed,
-} from "../src/routes/webhooks";
+} from "../src/actions/webhooks";
 import type { BoardEventKind } from "../src/durable-objects/board-events";
 import {
   BACKOFF_MS,
@@ -560,7 +565,7 @@ describe("EFB-62 — emit-path wiring", () => {
 
   const registerWebhook = (h: Harness, slug = "kb") =>
     h.app.request(
-      `/api/v0/boards/${slug}/webhooks`,
+      url("webhook.list", { slug: slug }),
       jsonReq("POST", {
         name: "hook",
         url: "https://example.com/hook",
@@ -616,7 +621,7 @@ describe("EFB-62 — emit-path wiring", () => {
     await registerWebhook(h);
 
     const ok = (await (
-      await h.app.request("/api/v0/boards/kb/webhooks", { headers: bearer }, WEBHOOK_ENV)
+      await h.app.request(url("webhook.list", { slug: "kb" }), { headers: bearer }, WEBHOOK_ENV)
     ).json()) as { subscriptions: Array<{ member_ok: boolean }>; private_board: boolean };
     expect(ok.subscriptions[0]!.member_ok).toBe(true);
     // `private_board` now reads `visibility`, not `encryption_active` — a board
@@ -626,7 +631,7 @@ describe("EFB-62 — emit-path wiring", () => {
 
     h.db.webhookSubscriptions[0]!["creator_pubkey"] = BOB;
     const revoked = (await (
-      await h.app.request("/api/v0/boards/kb/webhooks", { headers: bearer }, WEBHOOK_ENV)
+      await h.app.request(url("webhook.list", { slug: "kb" }), { headers: bearer }, WEBHOOK_ENV)
     ).json()) as { subscriptions: Array<{ member_ok: boolean; enabled: boolean }> };
     // Still enabled — the row is deliberately left alive — but visibly not
     // delivering. Those two facts differing IS the signal.
@@ -644,7 +649,7 @@ describe("EFB-62 — emit-path wiring", () => {
     h.db.webhookSubscriptions[0]!["creator_pubkey"] = BOB;
 
     const res = await h.app.request(
-      `/api/v0/boards/kb/webhooks/${id}`,
+      url("webhook.update", { slug: "kb", id: id }),
       jsonReq("PATCH", { name: "renamed" }),
       WEBHOOK_ENV,
     );

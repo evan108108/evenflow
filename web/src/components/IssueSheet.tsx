@@ -5,6 +5,7 @@
 // fire the container-move endpoints; comments + recent activity below.
 
 import { For, Show, createResource, createSignal } from "solid-js";
+import { url } from "@routes-manifest";
 import { useNavigate } from "@solidjs/router";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
@@ -182,7 +183,7 @@ export const IssueSheet = (props: {
   const [movableBoards] = createResource(
     () => (showMove() ? props.issue.id : null),
     async () => {
-      const res = await api<{ boards: MovableBoard[] }>((c) => c.get("/api/v0/boards?limit=100"));
+      const res = await api<{ boards: MovableBoard[] }>((c) => c.get(`${url("board.create")}?limit=100`));
       return res.boards.filter((b) => b.id !== props.board.id);
     },
   );
@@ -202,7 +203,7 @@ export const IssueSheet = (props: {
     setMoveError(null);
     try {
       const { issue: moved } = await api<{ issue: Issue }>((c) =>
-        c.post(`/api/v0/issues/${props.issue.id}/move-to-board`, { target_board_id: target.id }),
+        c.put(url("issue.board.set", { id: props.issue.id }), { target_board_id: target.id }),
       );
       setShowMove(false);
       props.onClose();

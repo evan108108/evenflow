@@ -34,6 +34,7 @@
 // every read site, which means every read site can lie.
 
 import { describe, expect, it } from "vitest";
+import { url } from "../src/routes-manifest";
 import {
   createIssue,
   createPublicBoard,
@@ -52,13 +53,21 @@ import type { BoardEvent } from "../src/durable-objects/BoardDO";
 import type { BoardShape } from "../src/shapes";
 
 // `?raw` — read the route sources at build time. See tests/raw.d.ts.
-import ISSUES_SRC from "../src/routes/issues.ts?raw";
-import COMMENTS_SRC from "../src/routes/comments.ts?raw";
-import GITHUB_SRC from "../src/routes/github.ts?raw";
-import BOARDS_SRC from "../src/routes/boards.ts?raw";
-import SPRINTS_SRC from "../src/routes/sprints.ts?raw";
-import ATTACHMENTS_SRC from "../src/routes/attachments.ts?raw";
-import IMPORTS_SRC from "../src/routes/imports.ts?raw";
+import ISSUES_SRC from "../src/actions/issues.ts?raw";
+// EFB-98: comments' emit callsites live in the ACTION module now — the route
+// file is a transport shell. A source-scanning guard has to follow the code it
+// guards, or it silently starts proving nothing.
+import COMMENTS_SRC from "../src/actions/comments.ts?raw";
+// EFB-98: every one of these families moved its emit callsites into an action
+// module — the route files are transport shells and contain no emit at all. A
+// guard left pointing at a route file would have gone on passing while
+// scanning the wrong file; this one asserts exact counts, so it went red
+// instead. That is the only reason the drift was visible.
+import GITHUB_SRC from "../src/actions/github.ts?raw";
+import BOARDS_SRC from "../src/actions/boards.ts?raw";
+import SPRINTS_SRC from "../src/actions/sprints.ts?raw";
+import ATTACHMENTS_SRC from "../src/actions/attachments.ts?raw";
+import IMPORTS_SRC from "../src/actions/imports.ts?raw";
 import TIDE_SRC from "../src/lib/tide/publish.ts?raw";
 import AUDIENCES_SRC from "../src/audiences.ts?raw";
 
@@ -167,7 +176,7 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     await h.app.request(
-      `/api/v0/issues/${issue.id}/transition`,
+      url("issue.transition", { id: issue.id }),
       jsonReq("POST", { to: "In Progress" }),
       {},
     );
@@ -200,7 +209,7 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "hello" }),
       {},
     );
@@ -225,14 +234,14 @@ describe("EFB-63 — provenance per route path", () => {
     await settle();
 
     const created = await h.app.request(
-      `/api/v0/issues/${issue.id}/comments`,
+      url("comment.create", { id: issue.id }),
       jsonReq("POST", { body: "delete me" }),
       {},
     );
     const { comment } = (await created.json()) as { comment: { id: string } };
     await settle();
 
-    await h.app.request(`/api/v0/comments/${comment.id}`, jsonReq("DELETE", {}), {});
+    await h.app.request(url("comment.delete", { id: comment.id }), jsonReq("DELETE", {}), {});
     await settle();
 
     const tombstone = plaintextEvents(h).find(
@@ -265,13 +274,17 @@ interface Callsite {
 }
 
 const SOURCES: ReadonlyArray<readonly [string, string]> = [
-  ["routes/issues.ts", ISSUES_SRC],
-  ["routes/comments.ts", COMMENTS_SRC],
-  ["routes/github.ts", GITHUB_SRC],
-  ["routes/boards.ts", BOARDS_SRC],
-  ["routes/sprints.ts", SPRINTS_SRC],
-  ["routes/attachments.ts", ATTACHMENTS_SRC],
-  ["routes/imports.ts", IMPORTS_SRC],
+  // EFB-98 fan-out A: the issue emits moved to the action module. This path
+  // has to follow them — left pointing at src/routes/issues.ts the guard would
+  // have kept passing while scanning a file with no emits left in it, which is
+  // the worst failure mode a source-scanning check has.
+  ["actions/issues.ts", ISSUES_SRC],
+  ["actions/comments.ts", COMMENTS_SRC],
+  ["actions/github.ts", GITHUB_SRC],
+  ["actions/boards.ts", BOARDS_SRC],
+  ["actions/sprints.ts", SPRINTS_SRC],
+  ["actions/attachments.ts", ATTACHMENTS_SRC],
+  ["actions/imports.ts", IMPORTS_SRC],
   ["lib/tide/publish.ts", TIDE_SRC],
 ];
 
@@ -320,7 +333,7 @@ const CALLSITES = SOURCES.flatMap(([file, src]) => extractCallsites(file, src));
 
 /** Which constructor each callsite is allowed to use, keyed by file:line. */
 const expectedActor = (c: Callsite): string | null => {
-  if (c.file === "routes/comments.ts") {
+  if (c.file === "actions/comments.ts") {
     // created → the caller IS the author; deleted → nobody (see the trap above).
     return c.actor.startsWith("ProvenanceFromCaller") ||
       c.actor === "ProvenanceFromSystem()"
@@ -335,7 +348,10 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // could quietly match nothing and every assertion below would vacuously
   // pass. Pin the scale so that failure is loud.
   it("finds every emitSecureBoardEvent callsite", () => {
-    expect(CALLSITES.length).toBe(32);
+    // 32 before EFB-98. Folding POST /issues/:id/duplicate-of into
+    // PATCH /issue/:id deleted that route's two emits — the set/clear pair —
+    // because PATCH already published for the same edit.
+    expect(CALLSITES.length).toBe(30);
     expect(CALLSITES.filter((c) => c.actor === "<unparsed>")).toEqual([]);
   });
 
@@ -349,7 +365,12 @@ describe("EFB-63 — every emit callsite names its actor", () => {
     // Both arms still have to be a constructor or `null`, which is the rule
     // that matters: what is banned is an inline object literal, and a ternary
     // between two admissible values cannot smuggle one in.
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    // EFB-98: `ProvenanceFromCaller(input.claims)` is admitted alongside
+    // `(claims)`. An action reads its caller off the input record rather than
+    // off a Context, and the constructor is the same one — widening the
+    // spelling keeps the rule (a NAMED constructor, never an inline literal)
+    // exactly as strict.
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -360,7 +381,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   // The guard above is only safe because it is narrow. An inline literal in
   // either arm must still be caught.
   it("rejects a fabricated literal even inside a guard", () => {
-    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\(claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
+    const CONSTRUCTOR = String.raw`null|ProvenanceFromCaller\((?:input\.)?claims\)|ProvenanceFromSystem\(\)|ProvenanceFromStoredActor\(actor\)`;
     const ADMISSIBLE = new RegExp(
       `^(?:${CONSTRUCTOR}|[A-Za-z0-9_.]+(?: === null)? \\? (?:${CONSTRUCTOR}) : (?:${CONSTRUCTOR}))$`,
     );
@@ -381,18 +402,20 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   it("names route.caller exactly where a live caller was seen", () => {
     const callerSites = CALLSITES.filter((c) => c.actor.includes("ProvenanceFromCaller"));
     expect(callerSites.map((c) => c.file).sort()).toEqual([
-      "routes/comments.ts", // comment.created — caller is the author
-      "routes/issues.ts", // issue.created
-      "routes/issues.ts", // issue.transitioned
-      "routes/issues.ts", // issue.transitioned (duplicate-of, when it moved)
-      "routes/issues.ts", // issue.container_changed
-      "routes/sprints.ts", // sprint start — backlog → active bulk promote
-      "routes/sprints.ts", // add-issue mid-sprint — backlog → active promote
+      // EFB-98 moved two families under actions/, which sorts ahead of routes/.
+      // The SET is unchanged — same seven paths, same reasons.
+      "actions/comments.ts", // comment.created — caller is the author
+      "actions/issues.ts", // issue.created
+      "actions/issues.ts", // issue.transitioned
+      "actions/issues.ts", // issue.transitioned (duplicate-of, when it moved)
+      "actions/issues.ts", // issue.container_changed
+      "actions/sprints.ts", // sprint start — backlog → active bulk promote
+      "actions/sprints.ts", // attach mid-sprint — backlog → active promote
     ]);
   });
 
   it("never names route.caller on the github webhook path", () => {
-    const github = CALLSITES.filter((c) => c.file === "routes/github.ts");
+    const github = CALLSITES.filter((c) => c.file === "actions/github.ts");
     expect(github).toHaveLength(1);
     // The webhook's authenticated caller is GitHub, not the person who moved
     // the card. `actor` is a resolved `github:<login>` the server re-attests.
@@ -400,9 +423,10 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   });
 
   it("attributes nobody on the comment tombstone", () => {
-    const comments = CALLSITES.filter((c) => c.file === "routes/comments.ts");
+    const comments = CALLSITES.filter((c) => c.file === "actions/comments.ts");
     expect(comments.map((c) => expectedActor(c))).toEqual([
-      "ProvenanceFromCaller(claims)",
+      // EFB-98: same constructor, reading the caller off the action input.
+      "ProvenanceFromCaller(input.claims)",
       "ProvenanceFromSystem()",
     ]);
   });
