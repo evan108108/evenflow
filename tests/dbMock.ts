@@ -262,7 +262,17 @@ export const makeDbMock = (): DbMock => {
         }
         if (sql.startsWith("INSERT INTO apiKeys")) {
           const [id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms] = params;
-          apiKeys.push({ id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms });
+          // EFB-99: migration 0029 adds both columns as nullable with no
+          // default, so a freshly inserted row reads "never rotated" — the
+          // mock mirrors that rather than leaving them undefined, or a
+          // `rotated_at_ms !== null` check would compare against undefined.
+          apiKeys.push({ id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, rotated_at_ms: null, rotated_to_id: null });
+          return;
+        }
+        if (sql.startsWith("UPDATE apiKeys SET rotated_at_ms = ?, rotated_to_id = ?")) {
+          const [rotated_at_ms, rotated_to_id, id] = params;
+          const row = apiKeys.find((r) => r["id"] === id);
+          if (row) Object.assign(row, { rotated_at_ms, rotated_to_id });
           return;
         }
         if (sql.startsWith("UPDATE apiKeys SET last_used_at_ms = ?")) {
@@ -1278,6 +1288,20 @@ export const makeDbMock = (): DbMock => {
         }
         // (The short_id + board_id handler was here, below the bare short_id
         // guard that shadowed it. Hoisted above that guard in EFB-35.)
+        // EFB-99 rotate lookup. Distinct prefix from the revoke lookup below,
+        // so neither shadows the other — the two differ from the first column
+        // onward ("id, name, …" vs "id, revoked_at_ms").
+        if (sql.startsWith("SELECT id, name, revoked_at_ms, rotated_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?")) {
+          const r = apiKeys.find((x) => x["id"] === params[0] && x["pubkey"] === params[1]);
+          return (r
+            ? {
+                id: r["id"],
+                name: r["name"],
+                revoked_at_ms: r["revoked_at_ms"],
+                rotated_at_ms: r["rotated_at_ms"] ?? null,
+              }
+            : null) as R | null;
+        }
         if (sql.startsWith("SELECT id, revoked_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?")) {
           const r = apiKeys.find((x) => x["id"] === params[0] && x["pubkey"] === params[1]);
           return (r ? { id: r["id"], revoked_at_ms: r["revoked_at_ms"] } : null) as R | null;
@@ -1739,16 +1763,18 @@ export const makeDbMock = (): DbMock => {
           }
           return rows.slice(0, num(params[at])).map((r) => ({ ...r })) as R[];
         }
-        if (sql.startsWith("SELECT id, pubkey, name, key_hash, last_used_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL")) {
+        if (sql.startsWith("SELECT id, pubkey, name, key_hash, last_used_at_ms, rotated_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL")) {
+          // EFB-99: rotated rows are deliberately NOT filtered here — the
+          // grace window is decided in verifyApiKey, not in this predicate.
           return apiKeys
             .filter((r) => r["prefix"] === params[0] && r["revoked_at_ms"] === null)
-            .map((r) => ({ id: r["id"], pubkey: r["pubkey"], name: r["name"], key_hash: r["key_hash"], last_used_at_ms: r["last_used_at_ms"] })) as R[];
+            .map((r) => ({ id: r["id"], pubkey: r["pubkey"], name: r["name"], key_hash: r["key_hash"], last_used_at_ms: r["last_used_at_ms"], rotated_at_ms: r["rotated_at_ms"] ?? null })) as R[];
         }
-        if (sql.startsWith("SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms FROM apiKeys WHERE pubkey = ?")) {
+        if (sql.startsWith("SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, rotated_at_ms, rotated_to_id FROM apiKeys WHERE pubkey = ?")) {
           return apiKeys
             .filter((r) => r["pubkey"] === params[0])
             .sort((a, b) => num(b["created_at_ms"]) - num(a["created_at_ms"]))
-            .map((r) => ({ id: r["id"], name: r["name"], prefix: r["prefix"], created_at_ms: r["created_at_ms"], last_used_at_ms: r["last_used_at_ms"], revoked_at_ms: r["revoked_at_ms"] })) as R[];
+            .map((r) => ({ id: r["id"], name: r["name"], prefix: r["prefix"], created_at_ms: r["created_at_ms"], last_used_at_ms: r["last_used_at_ms"], revoked_at_ms: r["revoked_at_ms"], rotated_at_ms: r["rotated_at_ms"] ?? null, rotated_to_id: r["rotated_to_id"] ?? null })) as R[];
         }
         if (sql.startsWith("SELECT * FROM issueAttachmentCache WHERE issue_id = ? AND deleted_at_ms IS NULL")) {
           return attachments

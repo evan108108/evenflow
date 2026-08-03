@@ -30,8 +30,11 @@ vi.mock("@routes-manifest", async (importOriginal) => {
 });
 
 const KEYS = [
-  { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null },
-  { id: "k2", name: "Old key", prefix: "evk_dead0000", created_at_ms: 1_600_000_000_000, last_used_at_ms: 1_650_000_000_000, revoked_at_ms: 1_690_000_000_000 },
+  { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: null, rotated_to_id: null },
+  { id: "k2", name: "Old key", prefix: "evk_dead0000", created_at_ms: 1_600_000_000_000, last_used_at_ms: 1_650_000_000_000, revoked_at_ms: 1_690_000_000_000, rotated_at_ms: null, rotated_to_id: null },
+  // EFB-99: a key that was rotated and is still inside its grace window —
+  // live, but not actionable, and pointing at the successor it was replaced by.
+  { id: "k3", name: "Rotated key", prefix: "evk_0ld00000", created_at_ms: 1_500_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: 1_700_000_500_000, rotated_to_id: "k1" },
 ];
 
 let calls: Array<{ method: string; url: string; body?: unknown }>;
@@ -86,9 +89,15 @@ describe("DeveloperKeys", () => {
   it("lists keys with prefixes; revoked rows are marked, not actionable", async () => {
     const { container, cleanup } = await mountPage(DeveloperKeys);
     const rows = [...container.querySelectorAll<HTMLElement>(".key-row")];
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(rows[0]!.querySelector(".key-prefix")!.textContent).toBe("evk_abcd1234…");
-    expect(rows[0]!.querySelector("button")!.textContent).toBe("Revoke");
+    // EFB-99 added Rotate ahead of Revoke on an actionable row, so this asserts
+    // the pair rather than "the first button" — which would now silently be
+    // satisfied by whichever button happened to render first.
+    expect([...rows[0]!.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Rotate",
+      "Revoke",
+    ]);
     expect(rows[1]!.classList.contains("revoked")).toBe(true);
     expect(rows[1]!.querySelector("button")).toBeNull();
     expect(rows[1]!.textContent).toContain("revoked");
@@ -123,6 +132,75 @@ describe("DeveloperKeys", () => {
     await flush();
     expect(container.querySelector(".modal")).toBeNull();
     expect(container.textContent).not.toContain("THE_ONE_TIME_PLAINTEXT");
+    cleanup();
+  });
+
+  // ── EFB-99: rotation ────────────────────────────────────────────────────
+
+  it("rotates a key: confirms, posts to key.rotate, reveals the new plaintext once", async () => {
+    // Typed parameter, not `vi.fn(() => true)`: without it the mock's call
+    // tuple is `[]` and reading calls[0][0] to assert the copy is a type error.
+    const confirm = vi.fn((_message?: string) => true);
+    vi.stubGlobal("confirm", confirm);
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+
+    const rotateBtn = [...container.querySelectorAll<HTMLButtonElement>(".key-row button")].find(
+      (b) => b.textContent === "Rotate",
+    )!;
+    rotateBtn.click();
+    await flush();
+    await flush();
+
+    // The confirm names the grace window and the see-it-once semantics, so a
+    // mis-aimed click is legible BEFORE it fires.
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(String(confirm.mock.calls[0]![0])).toContain("24 hours");
+    // Asserted by manifest ID, not by URL: /key/:id/rotate is reachable only
+    // through this id, but pinning the id is what the EFB-95 mock exists for.
+    expect(urlIds).toContain("key.rotate");
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/rotate"))).toBe(true);
+
+    const modal = container.querySelector(".modal")!;
+    expect(modal.textContent).toContain("rotated");
+    expect(modal.textContent).toContain("24 hours");
+    expect(modal.querySelector("code")!.textContent).toBe("evk_fresh000_THE_ONE_TIME_PLAINTEXT");
+
+    // One-shot: dismissing must not leave the secret anywhere in the DOM.
+    [...modal.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "I've stored it")!
+      .click();
+    await flush();
+    expect(container.querySelector(".modal")).toBeNull();
+    expect(container.textContent).not.toContain("THE_ONE_TIME_PLAINTEXT");
+    cleanup();
+  });
+
+  it("declining the confirm rotates nothing", async () => {
+    vi.stubGlobal("confirm", vi.fn(() => false));
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    [...container.querySelectorAll<HTMLButtonElement>(".key-row button")]
+      .find((b) => b.textContent === "Rotate")!
+      .click();
+    await flush();
+    expect(calls.some((c) => c.url.includes("/rotate"))).toBe(false);
+    expect(container.querySelector(".modal")).toBeNull();
+    cleanup();
+  });
+
+  it("shows a rotated row as replaced-by, with no Rotate or Revoke button", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    const rotated = [...container.querySelectorAll<HTMLElement>(".key-row")].find((r) =>
+      r.textContent?.includes("Rotated key"),
+    )!;
+    // Still live (inside grace), so NOT struck through as revoked...
+    expect(rotated.classList.contains("revoked")).toBe(false);
+    // ...but no longer actionable: rotating it again would fork the chain and
+    // the server refuses, so the affordance is not offered.
+    expect(rotated.querySelector("button")).toBeNull();
+    expect(rotated.textContent).toContain("rotated");
+    // The successor's prefix, resolved against the same list the page holds
+    // rather than fetched — k1 is in KEYS.
+    expect(rotated.textContent).toContain("replaced by evk_abcd1234");
     cleanup();
   });
 

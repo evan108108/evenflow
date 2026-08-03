@@ -211,6 +211,13 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
         response: "{ revoked: true }",
         curl: `curl -X DELETE ${BASE}/key/FLOW-42 -H "Authorization: Bearer YOUR_JWT"`,
       },
+      {
+        id: "key.rotate",
+        summary:
+          "Replace a key's secret without downtime. Mints a successor (same owner, same name) and returns its plaintext ONCE; the old key keeps working for 24 hours, then 401s for good. No body — the name is inherited so audit rows keep attributing to the same actor. JWT session required, like every mint. 400 if the key is already rotated or revoked.",
+        response: "{ key, plaintext }",
+        curl: `curl -X POST ${BASE}/key/FLOW-42/rotate -H "Authorization: Bearer YOUR_JWT"`,
+      },
     ],
   },
   {

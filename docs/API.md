@@ -250,6 +250,28 @@ otherwise swallow it. Each such constraint carries a comment at its entry.
 Reads on public boards sit at `viewer` and resolve anonymously.
 Every mutation gates on `requireCaller` first.
 
+### The key surface is narrower than `caller`
+
+`auth: "caller"` means *any* authenticated caller, and an API key is one — so
+the manifest's auth field cannot express "JWT sessions only". The key routes
+enforce that separately, in `rejectKeyCallers` (`src/actions/keys.ts`), which
+fails `403 jwt-required` when `input.token` is an `evk_` bearer.
+
+**The invariant: an operation that MINTS or ROTATES a key is JWT-only. An
+operation that acts on a key without minting one may be key-callable.**
+
+Minting is the line because a key that can mint is a key that can outlive its
+own revocation. If `POST /key/:id/rotate` were reachable with a key, a leaked
+one would be *permanent*: the holder rotates, takes the fresh plaintext, and
+the owner revoking the key they know about changes nothing — they revoked the
+parent and never saw the child. Worse than ordinary escalation, because the
+successor row looks like a legitimate rotation by the owner, so it costs you
+detection as well as containment.
+
+`rejectKeyCallers` therefore runs FIRST in create, rotate and delete — before
+the row lookup, and before any body is read. A caller who may not use the
+endpoint at all is told that, rather than being told to fix their JSON.
+
 ---
 
 ## Adding a route

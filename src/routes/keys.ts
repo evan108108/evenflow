@@ -30,6 +30,7 @@ import {
   createKey,
   deleteKey,
   listKeys,
+  rotateKey,
   type KeyServices,
   type KeysFailure,
 } from "../actions/keys";
@@ -86,6 +87,21 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
       );
     });
     return runJson(c, program);
+  });
+
+  // ── POST /key/:id/rotate — replace the secret, keep the owner ───────────
+  //
+  // No body: the key id is in the path and the name is inherited, so there is
+  // nothing to parse and no rule-10 ordering question here — unlike POST /keys
+  // above, where the 403 has to beat the 400.
+  keys.post(path("key.rotate"), async (c) => {
+    const program = Effect.gen(function* () {
+      const claims = yield* requireCaller(c.get("claims"));
+      return yield* rotateKey(
+        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
+      );
+    });
+    return runJson(c, program, 201);
   });
 
   // ── DELETE /keys/:id — soft revoke ──────────────────────────────────────

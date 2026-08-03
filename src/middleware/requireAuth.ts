@@ -29,6 +29,7 @@ import {
   hashApiKey,
   isApiKeyToken,
 } from "../apikeys";
+import { API_KEY_ROTATION_GRACE_MS } from "../apikey-policy";
 
 const BEARER_PREFIX = "Bearer ";
 
@@ -48,8 +49,9 @@ const verifyApiKey = (token: string): Effect.Effect<Claims, ApiKeyError, Db> =>
         name: string;
         key_hash: string;
         last_used_at_ms: number | null;
+        rotated_at_ms: number | null;
       }>(
-        "SELECT id, pubkey, name, key_hash, last_used_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL",
+        "SELECT id, pubkey, name, key_hash, last_used_at_ms, rotated_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL",
         [token.slice(0, API_KEY_DISPLAY_PREFIX_LEN)],
       )
       .pipe(Effect.mapError(() => new ApiKeyError({ reason: "invalid-api-key" })));
@@ -59,9 +61,37 @@ const verifyApiKey = (token: string): Effect.Effect<Claims, ApiKeyError, Db> =>
     const claims = claimsForApiKey(key.pubkey, key.name);
     if (claims === null) return yield* new ApiKeyError({ reason: "invalid-api-key" });
 
+    const now = yield* Clock.currentTimeMillis;
+
+    // EFB-99 — the grace window, and THIS is where a rotated key's expiry is
+    // DECIDED. A rotated row is deliberately left un-revoked so the query
+    // above still finds it: that is what keeps the old secret working while
+    // callers redeploy. Once the window has passed it stops here.
+    //
+    // Enforced at auth rather than by a sweep on purpose. A background job
+    // would make "is this key dead?" depend on whether the job ran on time,
+    // and "the sweep ran" is a PROXY for "the key is dead" that diverges
+    // exactly when it matters — a late or wedged sweep means an expired key
+    // authenticates. Deciding here makes expiry a property of the auth
+    // predicate itself. The revoke write below is bookkeeping DOWNSTREAM of a
+    // decision already made, never the thing the decision trusts; a sweep may
+    // be added later to tidy rows nobody re-presents, but it must not become
+    // the authority.
+    //
+    // The refusal reuses `invalid-api-key` verbatim. Answering something
+    // truer like "rotated" would confirm to a prober both that this prefix
+    // once existed and that its owner is actively managing it — see the
+    // ApiKeyError docstring: one reason, so revoked and never-existed are
+    // indistinguishable.
+    if (key.rotated_at_ms !== null && now - key.rotated_at_ms > API_KEY_ROTATION_GRACE_MS) {
+      yield* db
+        .execute("UPDATE apiKeys SET revoked_at_ms = ? WHERE id = ?", [now, key.id])
+        .pipe(Effect.catchAll(() => Effect.void));
+      return yield* new ApiKeyError({ reason: "invalid-api-key" });
+    }
+
     // last_used_at_ms bumps at most once a minute per key; a failed bump
     // never fails the request.
-    const now = yield* Clock.currentTimeMillis;
     if (key.last_used_at_ms === null || now - key.last_used_at_ms > API_KEY_LAST_USED_THROTTLE_MS) {
       yield* db
         .execute("UPDATE apiKeys SET last_used_at_ms = ? WHERE id = ?", [now, key.id])

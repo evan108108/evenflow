@@ -358,6 +358,22 @@ export const ROUTES = [
   { id: "key.create", method: "POST", path: "/keys", orgScoped: false, file: "keys.ts", auth: "caller" },
   { id: "key.list", method: "GET", path: "/keys", orgScoped: false, file: "keys.ts", auth: "caller" },
   { id: "key.delete", method: "DELETE", path: "/key/:id", orgScoped: false, file: "keys.ts", auth: "caller" },
+  {
+    // EFB-99. `stateAction: true` is declared even though it is not required:
+    // `rotate` is absent from check-rest-conventions' CRUD_VERBS, so the
+    // checker would pass this path without the flag. That is a gap in the
+    // checker's vocabulary, not permission to elide the declaration — rotating
+    // a credential is a real state transition, same class as
+    // /invite/:code/accept and /issue/:id/transition, and the flag is how a
+    // reader learns that from the manifest alone.
+    id: "key.rotate",
+    method: "POST",
+    path: "/key/:id/rotate",
+    orgScoped: false,
+    file: "keys.ts",
+    auth: "caller",
+    stateAction: true,
+  },
 
   // ---- mcp.ts (mounted at root) -------------------------------------------
   { id: "mcp.post", method: "POST", path: "/mcp", orgScoped: false, file: "mcp.ts", auth: "optional", mount: "root" },

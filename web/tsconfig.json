@@ -27,6 +27,9 @@
     "paths": {
       "@routes-manifest": [
         "../src/routes-manifest.ts"
+      ],
+      "@apikey-policy": [
+        "../src/apikey-policy.ts"
       ]
     },
     "baseUrl": "."
