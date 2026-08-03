@@ -58,17 +58,15 @@ import ISSUES_SRC from "../src/actions/issues.ts?raw";
 // file is a transport shell. A source-scanning guard has to follow the code it
 // guards, or it silently starts proving nothing.
 import COMMENTS_SRC from "../src/actions/comments.ts?raw";
-import GITHUB_SRC from "../src/routes/github.ts?raw";
-// EFB-98: boards' emit callsites live in the ACTION module now — the route
-// file is a transport shell. Same reason comments moved: a source-scanning
-// guard has to follow the code it guards, or it silently starts proving
-// nothing. All four are `null` actors (board.created/updated/deleted carry no
-// actor slot), so only the path changes; the rule is untouched.
+// EFB-98: every one of these families moved its emit callsites into an action
+// module — the route files are transport shells and contain no emit at all. A
+// guard left pointing at a route file would have gone on passing while
+// scanning the wrong file; this one asserts exact counts, so it went red
+// instead. That is the only reason the drift was visible.
+import GITHUB_SRC from "../src/actions/github.ts?raw";
 import BOARDS_SRC from "../src/actions/boards.ts?raw";
-// Same move for sprints — all ten emit callsites are in the action module now,
-// and the two that name a caller are the ones EFB-91 added.
 import SPRINTS_SRC from "../src/actions/sprints.ts?raw";
-import ATTACHMENTS_SRC from "../src/routes/attachments.ts?raw";
+import ATTACHMENTS_SRC from "../src/actions/attachments.ts?raw";
 import IMPORTS_SRC from "../src/routes/imports.ts?raw";
 import TIDE_SRC from "../src/lib/tide/publish.ts?raw";
 import AUDIENCES_SRC from "../src/audiences.ts?raw";
@@ -282,10 +280,10 @@ const SOURCES: ReadonlyArray<readonly [string, string]> = [
   // the worst failure mode a source-scanning check has.
   ["actions/issues.ts", ISSUES_SRC],
   ["actions/comments.ts", COMMENTS_SRC],
-  ["routes/github.ts", GITHUB_SRC],
+  ["actions/github.ts", GITHUB_SRC],
   ["actions/boards.ts", BOARDS_SRC],
   ["actions/sprints.ts", SPRINTS_SRC],
-  ["routes/attachments.ts", ATTACHMENTS_SRC],
+  ["actions/attachments.ts", ATTACHMENTS_SRC],
   ["routes/imports.ts", IMPORTS_SRC],
   ["lib/tide/publish.ts", TIDE_SRC],
 ];
@@ -417,7 +415,7 @@ describe("EFB-63 — every emit callsite names its actor", () => {
   });
 
   it("never names route.caller on the github webhook path", () => {
-    const github = CALLSITES.filter((c) => c.file === "routes/github.ts");
+    const github = CALLSITES.filter((c) => c.file === "actions/github.ts");
     expect(github).toHaveLength(1);
     // The webhook's authenticated caller is GitHub, not the person who moved
     // the card. `actor` is a resolved `github:<login>` the server re-attests.

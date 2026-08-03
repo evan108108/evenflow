@@ -21,12 +21,16 @@ import {
   makeHarness,
   type Harness,
 } from "./harness";
+// EFB-98 — the subscription vocabulary (event kinds, the two body schemas) and
+// the predicate authorization rule are business logic, so they moved to the
+// action module with the handlers that use them. The route file is now the HTTP
+// shell. Same symbols, same rules, one directory over.
 import {
   BOARD_EVENT_KINDS,
   PatchSubscriptionBody,
   PostSubscriptionBody,
   requirePredicateAllowed,
-} from "../src/routes/webhooks";
+} from "../src/actions/webhooks";
 import type { BoardEventKind } from "../src/durable-objects/board-events";
 import {
   BACKOFF_MS,
