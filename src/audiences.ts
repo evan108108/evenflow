@@ -694,8 +694,21 @@ export const emitSecureBoardEvent = (
     // error — so this needs no catch of its own. Uses `event.at_ms` as the
     // enqueue clock so the delivery row carries the same instant the event
     // does, and so this line adds no new dependency to the emit path.
+    //
+    // EFB-62 — TWO events, and the order of the arguments is load-bearing.
+    // `event` is the plaintext one and is used ONLY to evaluate subscription
+    // predicates, which cannot read an encrypted payload. `secured.event` is
+    // what is persisted and POSTed: on a private board that is the same
+    // NIP-44 wrap a member receives over SSE, so a subscriber never gets bytes
+    // their membership could not already decrypt. On a public board the two
+    // are the same object and this is a no-op.
+    //
+    // Passing `event` for both — which is what this line did before EFB-62 —
+    // is precisely the bug: combined with a gate that read private boards as
+    // public, it POSTed a private board's cleartext titles and bodies to any
+    // registered URL.
     if (board !== null) {
-      yield* enqueueOutboundWebhooks(board, event, event.at_ms);
+      yield* enqueueOutboundWebhooks(board, event, secured.event, event.at_ms);
     }
     return secured.substrate_event_id;
   });

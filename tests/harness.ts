@@ -30,6 +30,7 @@ import type { AppHonoEnv } from "../src/http";
 import { optionalAuth } from "../src/middleware/requireAuth";
 import { makeAttachmentsRouter } from "../src/routes/attachments";
 import { makeAudiencesRouter } from "../src/routes/audiences";
+import { makeWebhooksRouter } from "../src/routes/webhooks";
 import { makeBoardsRouter } from "../src/routes/boards";
 import { makeCommentsRouter } from "../src/routes/comments";
 import { makeFeedRouter } from "../src/routes/feed";
@@ -115,6 +116,10 @@ export const makeHarness = () => {
   app.route("/api/v0", makeFeedRouter(() => layer));
   app.route("/api/v0", makeAttachmentsRouter(() => layer));
   app.route("/api/v0", makeAudiencesRouter(() => layer));
+  // EFB-62 mounted this. EFB-13 shipped the router without it because its
+  // tests were all pure-surface, so the CRUD surface — including the
+  // private-board refusal this ticket lifted — was never exercised end to end.
+  app.route("/api/v0", makeWebhooksRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeBoardsRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeIssuesRouter(() => layer));
   app.route("/api/v0/orgs/:org_slug", makeSprintsRouter(() => layer));

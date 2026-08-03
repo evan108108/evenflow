@@ -56,6 +56,14 @@ interface Subscription {
   auth_scheme: string;
   enabled: boolean;
   created_at_ms: number;
+  /** EFB-62 — who the private-board delivery gate checks. */
+  creator_pubkey: string | null;
+  /**
+   * Whether deliveries are actually flowing. Distinct from `enabled`: that is
+   * what the admin set, this is what the server's member gate decided. On a
+   * public board it is always true.
+   */
+  member_ok: boolean;
 }
 
 interface Delivery {
@@ -158,21 +166,24 @@ export const WebhooksSection = (props: { apiBase: string }) => {
       </header>
 
       {/*
-        Private boards cannot subscribe, so the affordance is replaced rather
-        than shown-and-rejected: a button whose only possible outcome is a 400
-        is a worse experience than an explanation. The server enforces this
-        regardless — this is the UI half of the same rule.
+        EFB-62 replaced a hard block here with an explanation. The old copy said
+        webhooks were unavailable on private boards and hid the entire form —
+        which, since boards are born private, meant the feature was unreachable
+        for most boards rather than merely restricted. Private boards now
+        subscribe like any other; what changes is that each delivery is checked
+        against the subscription owner's board membership at send time.
       */}
       <Show when={isPrivate()}>
-        <p class="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-          Outbound webhooks aren't available on private boards yet. A private
-          board's event envelope (which issue moved, and when) is readable even
-          though its payload is encrypted, so delivering it to an external URL
-          would leak board activity. Public boards only for now.
+        <p class="rounded border border-sky-500/40 bg-sky-500/10 p-3 text-sm">
+          This board is private. Webhooks work, with one difference: each
+          delivery is checked against the subscribing member's access at send
+          time, so a subscription stops delivering if its owner leaves the
+          board. Payloads are delivered encrypted — your endpoint needs the
+          board's epoch key to read them.
         </p>
       </Show>
 
-      <Show when={!isPrivate()}>
+      <Show when={true}>
         <Show when={error() !== null}>
           <p class="rounded border border-red-500/40 bg-red-500/10 p-3 text-sm">{error()}</p>
         </Show>
@@ -213,6 +224,26 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                         {s.name}
                         <Show when={!s.enabled}>
                           <span class="ml-2 text-xs opacity-60">(disabled)</span>
+                        </Show>
+                        {/*
+                          EFB-62 — the whole reason `member_ok` is on the wire.
+                          The gate deliberately leaves a lapsed subscription's
+                          row alive and silently drops its deliveries, so
+                          without this badge an admin sees an enabled webhook
+                          that has simply gone quiet, which is indistinguishable
+                          from our cron being broken.
+                        */}
+                        <Show when={s.enabled && !s.member_ok}>
+                          <span
+                            class="ml-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-xs text-amber-200"
+                            title={
+                              "Deliveries are paused: this subscription's owner" +
+                              " is no longer a member of this board. Re-add them" +
+                              " to resume, or delete the subscription."
+                            }
+                          >
+                            not delivering — owner left the board
+                          </span>
                         </Show>
                       </p>
                       <p class="truncate text-sm opacity-70">{s.url}</p>
