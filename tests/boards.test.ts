@@ -343,6 +343,78 @@ describe("issue_prefix", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "conflict", reason: "prefix-locked-issues-exist" });
   });
+
+  // ── EFB-86 ──────────────────────────────────────────────────────────────
+  //
+  // `done_window_days` shared `validateSprintDays` with `default_sprint_days`,
+  // and the validator hardcoded the OTHER field's name as its reason. A caller
+  // who sent a bad done_window_days was told to go fix a field they had not
+  // sent. EFB-61 found it and reproduced it rather than fixing it under cover
+  // of that migration; this pins the standalone fix.
+  //
+  // Route-level, not schema-level, because the field is deliberately Unknown at
+  // the schema — the handler validator is the only place the reason is minted.
+  //
+  // Falsification: revert the reason argument at the callsite (or hardcode any
+  // other string in validateSprintDays) and the first assertion goes red.
+  it("PATCH answers done_window_days — not default_sprint_days — for a bad done window", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    for (const bad of [0, 91, 1.5, "not-a-number", null]) {
+      const res = await h.app.request(
+        "/api/v0/boards/kb",
+        jsonReq("PATCH", { done_window_days: bad }),
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "done_window_days" });
+    }
+  });
+
+  // The other half of the same fix: the sibling field must keep answering its
+  // OWN name. A "fix" that swapped the hardcoded string rather than
+  // parameterizing it would pass the test above and fail this one.
+  it("PATCH still answers default_sprint_days for a bad sprint length", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request(
+      "/api/v0/boards/kb",
+      jsonReq("PATCH", { default_sprint_days: 91 }),
+      {},
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid-body", reason: "default_sprint_days" });
+  });
+
+  // The reason string is the ONLY thing EFB-86 changed. Where the check runs
+  // stays put, and this is why: the prefix conflict is answered before the
+  // done-window value is ever looked at, so typing the field at the schema
+  // would turn this 409 into a 400 — a status-code change the ticket did not
+  // license.
+  it("PATCH keeps answering 409 for a locked prefix even alongside a bad done window", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    h.db.boards[0]!["next_issue_number"] = 2;
+    const res = await h.app.request(
+      "/api/v0/boards/kb",
+      jsonReq("PATCH", { issue_prefix: "ZZ", done_window_days: 999 }),
+      {},
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "conflict", reason: "prefix-locked-issues-exist" });
+  });
+
+  it("PATCH round-trips a valid done_window_days", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const res = await h.app.request(
+      "/api/v0/boards/kb",
+      jsonReq("PATCH", { done_window_days: 30 }),
+      {},
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { board: BoardShape }).board.done_window_days).toBe(30);
+  });
 });
 
 // ── EFB-61: PostBoardBody / PatchBoardBody schemas ────────────────────────
@@ -444,11 +516,12 @@ describe("board request schemas (EFB-61)", () => {
       expect(Exit.isSuccess(decode(PatchBoardBody, { default_sprint_days: 90 }))).toBe(true);
     });
 
-    // done_window_days stays Unknown at the schema so the handler keeps
-    // answering `default_sprint_days` for it — a pre-existing quirk this
-    // ticket reproduces rather than fixes. If a later ticket gives it its own
-    // reason, THIS test is the one that should fail and be updated.
-    it("passes done_window_days through untyped, quirk intact", () => {
+    // done_window_days stays Unknown at the schema — EFB-86 fixed the REASON
+    // STRING the handler answers, not where the check lives. It has to stay in
+    // the handler because the prefix conflict (409) is checked first; see the
+    // note on PatchBoardBody. The reason itself is asserted at the route level,
+    // below, since that is the only place the handler validator runs.
+    it("passes done_window_days through untyped", () => {
       expect(Exit.isSuccess(decode(PatchBoardBody, { done_window_days: "not-a-number" }))).toBe(
         true,
       );

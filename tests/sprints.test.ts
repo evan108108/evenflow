@@ -1,8 +1,21 @@
 // Phase 20: sprint lifecycle + membership over the /api/v0 sprint routes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Effect, Exit } from "effect";
 import type { SprintShape } from "../src/shapes";
-import { bearer, createBoard, createIssue, jsonReq, makeHarness, type Harness } from "./harness";
+import { decodeBody } from "../src/lib/route-body";
+import { CompleteSprintBody, PatchSprintBody, PostSprintBody } from "../src/routes/sprints";
+import { KANBAN_PLAINTEXT_PATH } from "../src/lib/kanban/publish";
+import {
+  bearer,
+  createBoard,
+  createIssue,
+  createPublicBoard,
+  jsonReq,
+  makeHarness,
+  CALLER,
+  type Harness,
+} from "./harness";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -783,5 +796,401 @@ describe("phase 21a — sprint membership audit + delete", () => {
       {},
     );
     expect(completed.status).toBe(409);
+  });
+});
+
+// ── EFB-84: PostSprintBody / PatchSprintBody / CompleteSprintBody ──────────
+//
+// Predicate-inventory tests, same discipline as EFB-61's boards.ts pass. The
+// migration's risk is not that a schema rejects too little — it is that a
+// schema silently reproduces a DIFFERENT predicate than the hand-rolled check
+// it replaced, and every route test above still passes because none of them
+// exercised that exact input.
+//
+// So each of these pins ONE predicate and asserts the WIRE REASON, because the
+// reason string is what a client branches on and it is not recoverable from
+// "the request 400'd".
+describe("sprint request schemas (EFB-84)", () => {
+  const decode = <A, I>(schema: Parameters<typeof decodeBody<A, I>>[0], input: unknown) =>
+    Effect.runSync(Effect.exit(decodeBody(schema, input)));
+
+  const reasonOf = (exit: Exit.Exit<unknown, unknown>): string => {
+    if (Exit.isSuccess(exit)) return "<succeeded>";
+    const err = (exit.cause as { error?: { reason?: string } }).error;
+    return err?.reason ?? "<no reason>";
+  };
+
+  const post = (input: unknown) => reasonOf(decode(PostSprintBody, input));
+  const patch = (input: unknown) => reasonOf(decode(PatchSprintBody, input));
+  const complete = (input: unknown) => reasonOf(decode(CompleteSprintBody, input));
+
+  describe("PostSprintBody", () => {
+    it("accepts the minimum body and every optional field", () => {
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: "S1" }))).toBe(true);
+      expect(
+        Exit.isSuccess(
+          decode(PostSprintBody, { name: "S1", goal: "Ship it", planned_days: 14 }),
+        ),
+      ).toBe(true);
+    });
+
+    it("requires a name", () => {
+      expect(post({})).toBe("name");
+      expect(post({ name: 3 })).toBe("name");
+    });
+
+    // The predicate mismatch this discipline exists to catch. `minLength(1)`
+    // would accept "   "; the check being replaced was `.trim() !== ""`.
+    it("rejects a whitespace-only name — trim, not minLength", () => {
+      expect(post({ name: "   " })).toBe("name");
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: " S " }))).toBe(true);
+    });
+
+    // The second half of the same predicate: the cap measured the UNTRIMMED
+    // string, so 2 spaces + 79 characters was 81 and rejected. A schema that
+    // trimmed before measuring would start accepting it.
+    it("caps the name at 80 characters, measured untrimmed", () => {
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: "x".repeat(80) }))).toBe(true);
+      expect(post({ name: "x".repeat(81) })).toBe("name");
+      expect(post({ name: "  " + "x".repeat(79) })).toBe("name");
+    });
+
+    it("allows a null goal and caps it at 200", () => {
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: "S", goal: null }))).toBe(true);
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: "S", goal: "" }))).toBe(true);
+      expect(post({ name: "S", goal: "x".repeat(201) })).toBe("goal");
+      expect(post({ name: "S", goal: 3 })).toBe("goal");
+    });
+
+    it("allows a null planned_days and bounds it to 1..90", () => {
+      expect(Exit.isSuccess(decode(PostSprintBody, { name: "S", planned_days: null }))).toBe(true);
+      expect(post({ name: "S", planned_days: 0 })).toBe("planned_days");
+      expect(post({ name: "S", planned_days: 91 })).toBe("planned_days");
+      expect(post({ name: "S", planned_days: 1.5 })).toBe("planned_days");
+    });
+
+    it("REJECTS an unknown key", () => {
+      expect(post({ name: "S", bogus: 1 })).toBe("bogus-unknown");
+    });
+  });
+
+  describe("PatchSprintBody", () => {
+    it("requires at least one patchable field", () => {
+      expect(patch({})).toBe("empty-patch");
+      expect(Exit.isSuccess(decode(PatchSprintBody, { name: "S" }))).toBe(true);
+      expect(Exit.isSuccess(decode(PatchSprintBody, { goal: null }))).toBe(true);
+    });
+
+    it("shares the name and goal predicates with POST", () => {
+      expect(patch({ name: "   " })).toBe("name");
+      expect(patch({ name: "x".repeat(81) })).toBe("name");
+      expect(patch({ goal: "x".repeat(201) })).toBe("goal");
+    });
+
+    // Untyped ON PURPOSE — the handler answers 409 for a started sprint BEFORE
+    // it validates the value, and typing the field here would move the 400
+    // ahead of that 409. See the note on PatchSprintBody and the route test
+    // below that pins the 409.
+    it("passes planned_days through untyped", () => {
+      expect(Exit.isSuccess(decode(PatchSprintBody, { planned_days: "nonsense" }))).toBe(true);
+      expect(Exit.isSuccess(decode(PatchSprintBody, { planned_days: 999 }))).toBe(true);
+    });
+
+    // `-immutable` and `-unknown` say different things: the first tells a
+    // caller the field is real and they want a different endpoint, the second
+    // sends them hunting for a typo. `status` is real, and start/complete are
+    // its endpoints.
+    it("names real-but-unwritable fields immutable rather than unknown", () => {
+      expect(patch({ name: "S", status: "active" })).toBe("status-immutable");
+      expect(patch({ name: "S", id: "x" })).toBe("id-immutable");
+      expect(patch({ name: "S", board_id: "x" })).toBe("board_id-immutable");
+    });
+
+    it("counts neither an immutable nor an unknown field as a patch", () => {
+      expect(patch({ status: "active" })).toBe("status-immutable");
+    });
+
+    it("REJECTS an unknown key", () => {
+      expect(patch({ name: "S", bogus: 1 })).toBe("bogus-unknown");
+    });
+  });
+
+  // The one deliberate WIRE CHANGE in this migration. The handler used to
+  // coerce rather than validate, so a typo'd carryOver silently meant
+  // next_planning and a caller watched their issues carry over believing they
+  // had dropped. Previously-silent failures becoming 400 is exactly what
+  // BOUNDARY_DISCIPLINE.md licenses a migration to do.
+  describe("CompleteSprintBody", () => {
+    it("accepts an empty body and both carryOver values", () => {
+      expect(Exit.isSuccess(decode(CompleteSprintBody, {}))).toBe(true);
+      expect(Exit.isSuccess(decode(CompleteSprintBody, { carryOver: "drop" }))).toBe(true);
+      expect(Exit.isSuccess(decode(CompleteSprintBody, { carryOver: "next_planning" }))).toBe(true);
+    });
+
+    it("REJECTS a carryOver outside the vocabulary — no longer coerced", () => {
+      expect(complete({ carryOver: "bogus" })).toBe("carryOver");
+      expect(complete({ carryOver: 123 })).toBe("carryOver");
+      expect(complete({ carryOver: null })).toBe("carryOver");
+    });
+
+    it("REJECTS a non-string nextSprintId — no longer silently ignored", () => {
+      expect(complete({ nextSprintId: 42 })).toBe("nextSprintId");
+      expect(complete({ nextSprintId: {} })).toBe("nextSprintId");
+    });
+
+    // Null stays legal. It is not a typo — it is how a client spells "no
+    // specific next sprint, pick one", which is what the handler already does
+    // with it. carryOver gets no such allowance: null is not a natural
+    // spelling of a member of a two-value enum.
+    it("still accepts a null nextSprintId as auto-pick", () => {
+      expect(Exit.isSuccess(decode(CompleteSprintBody, { nextSprintId: null }))).toBe(true);
+    });
+
+    it("REJECTS an unknown key", () => {
+      expect(complete({ bogus: 1 })).toBe("bogus-unknown");
+    });
+  });
+
+  // The schema tests above run without a Context; these pin that the wire
+  // actually answers what the schema decided, end to end.
+  describe("on the wire", () => {
+    it("POST answers 400 name for a whitespace-only name", async () => {
+      const h = makeHarness();
+      await createBoard(h);
+      const res = await h.app.request("/api/v0/boards/kb/sprints", jsonReq("POST", { name: " " }), {});
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "name" });
+    });
+
+    it("POST rejects an unknown key rather than dropping it", async () => {
+      const h = makeHarness();
+      await createBoard(h);
+      const res = await h.app.request(
+        "/api/v0/boards/kb/sprints",
+        jsonReq("POST", { name: "S", planed_days: 7 }),
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "planed_days-unknown" });
+    });
+
+    it("PATCH still answers 409 for planned_days on a started sprint, even when invalid", async () => {
+      // The ordering this migration had to preserve. A schema-typed
+      // planned_days would answer 400 here instead — a status-code change,
+      // which needs its own ticket rather than riding along on a migration.
+      const h = makeHarness();
+      await createBoard(h);
+      const sprint = await createSprint(h);
+      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+      const res = await h.app.request(
+        `/api/v0/boards/kb/sprints/${sprint.id}`,
+        jsonReq("PATCH", { planned_days: 999 }),
+        {},
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: "conflict", reason: "sprint-active" });
+    });
+
+    it("PATCH still answers 400 planned_days on a PLANNING sprint", async () => {
+      const h = makeHarness();
+      await createBoard(h);
+      const sprint = await createSprint(h);
+      const res = await h.app.request(
+        `/api/v0/boards/kb/sprints/${sprint.id}`,
+        jsonReq("PATCH", { planned_days: 999 }),
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "planned_days" });
+    });
+
+    it("complete still accepts NO body at all", async () => {
+      // The optional-body catch survives the migration: parseRouteBody raises
+      // the same `expected-json` reason the raw reader did, and only that one
+      // reason is swallowed.
+      const h = makeHarness();
+      await createBoard(h);
+      const sprint = await createSprint(h);
+      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+      const res = await h.app.request(
+        `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+        { method: "POST", headers: { ...bearer } },
+        {},
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("complete 400s a typo'd carryOver instead of silently carrying over", async () => {
+      const h = makeHarness();
+      await createBoard(h);
+      const sprint = await createSprint(h);
+      const issue = await createIssue(h);
+      await addIssue(h, sprint.id, issue.id);
+      await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+
+      const res = await h.app.request(
+        `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+        jsonReq("POST", { carryOver: "dropp" }),
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid-body", reason: "carryOver" });
+      // and the sprint is untouched — the 400 happened at the boundary.
+      expect(h.db.sprints.find((s) => s["id"] === sprint.id)!["status"]).toBe("active");
+    });
+  });
+});
+
+// ── EFB-91: sprint-driven moves publish their 30553 ────────────────────────
+//
+// Both sprint callsites wrote a statusChangeCache row with an id minted inline
+// and thrown away — the pre-EFB-33 shape. A 30553 KanbanStatusChange keys on
+// that row (the row id IS the event's `d` tag), so an id that never leaves the
+// INSERT leaves the publish path with nothing to sign against. The rows were
+// there, the substrate audit trail was not.
+//
+// EFB-33 closed this for UI-driven transitions and EFB-66 for github-driven
+// ones. Sprint-driven was the third and last family with the gap.
+//
+// The ticket also named "sprint complete" as a second callsite. It is not one:
+// completing a sprint rewrites `sprint_id` and emits `issue.updated`, which is
+// not in templatesFor's 30553 gate and writes no statusChangeCache row. The
+// real second callsite is the mid-sprint add-issue promote. The last test here
+// pins that reading so a future reader does not go looking for a missing fix.
+describe("EFB-91 — 30553 on sprint-driven container moves", () => {
+  // This file runs on FAKE timers (see the top-level beforeEach), so the
+  // `setTimeout(0)` spelling other publish tests use would never resolve. A
+  // microtask flush is all that is needed anyway: emitSecureBoardEvent AWAITS
+  // publishPlaintextEvent inline rather than forking it, so the publish has
+  // already happened by the time the request promise settles.
+  const settle = () => Promise.resolve();
+
+  const plaintextEvents = (h: Harness) =>
+    h.audience.calls
+      .filter((c) => c.path === KANBAN_PLAINTEXT_PATH)
+      .map(
+        (p) =>
+          (p.body as { event: { id: string; kind: number; tags: string[][]; content: string } })
+            .event,
+      );
+
+  const contentOf = (ev: { content: string }) => JSON.parse(ev.content) as Record<string, unknown>;
+
+  const changeFor = (h: Harness, rowId: unknown) =>
+    plaintextEvents(h).find(
+      (e) => e.kind === 30553 && e.tags.find((t) => t[0] === "d")?.[1] === rowId,
+    );
+
+  /** statusChangeCache rows written by a backlog → active promote. */
+  const promoteRows = (h: Harness) =>
+    h.db.statusChanges.filter(
+      (r) => r["from_container"] === "backlog" && r["to_container"] === "active",
+    );
+
+  it("start with 3 backlog issues publishes 3 30553s and stamps every row", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const sprint = await createSprint(h);
+    for (const title of ["A", "B", "C"]) {
+      const issue = await createIssue(h, { title });
+      await addIssue(h, sprint.id, issue.id);
+    }
+    await settle();
+
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await settle();
+
+    const rows = promoteRows(h);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const change = changeFor(h, row["id"]);
+      expect(change).toBeDefined();
+      // The stamp is the round trip: the publish path wrote the substrate
+      // event id back onto the row it signed.
+      expect(row["substrate_event_id"]).toBe(change!.id);
+      expect(contentOf(change!)).toMatchObject({
+        from_container: "backlog",
+        to_container: "active",
+      });
+    }
+  });
+
+  // Attribution, not just presence. `null` at the callsite would publish these
+  // as `audit.system` — a signed claim that nobody started the sprint.
+  it("attributes the start's 30553s to the caller, not the system", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "A" });
+    await addIssue(h, sprint.id, issue.id);
+    await settle();
+
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await settle();
+
+    const row = promoteRows(h)[0]!;
+    expect(contentOf(changeFor(h, row["id"])!).actor_pubkey).toBe(CALLER);
+  });
+
+  it("mid-sprint add-issue promote publishes its 30553 too", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const sprint = await createSprint(h);
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    const issue = await createIssue(h, { title: "late arrival" });
+    await settle();
+
+    await addIssue(h, sprint.id, issue.id);
+    await settle();
+
+    const row = promoteRows(h).find((r) => r["issue_id"] === issue.id)!;
+    expect(row).toBeDefined();
+    const change = changeFor(h, row["id"]);
+    expect(change).toBeDefined();
+    expect(row["substrate_event_id"]).toBe(change!.id);
+    expect(contentOf(change!).actor_pubkey).toBe(CALLER);
+  });
+
+  // The negative half. An add-issue that does NOT promote (planning sprint,
+  // or an issue already active) writes no status-change row, so there is
+  // nothing to publish — absence here is correct, not a second gap.
+  it("publishes no 30553 when the add does not promote", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const sprint = await createSprint(h); // planning, so no promote
+    const issue = await createIssue(h, { title: "planned" });
+    await settle();
+    const before = plaintextEvents(h).filter((e) => e.kind === 30553).length;
+
+    await addIssue(h, sprint.id, issue.id);
+    await settle();
+
+    expect(plaintextEvents(h).filter((e) => e.kind === 30553).length).toBe(before);
+    expect(promoteRows(h)).toHaveLength(0);
+  });
+
+  // Pins the ticket's misreading so nobody re-opens it. Completing a sprint
+  // is a membership change, not a status change: no statusChangeCache row is
+  // written, and `issue.updated` is not in the 30553 gate.
+  it("sprint complete writes no status-change row and publishes no 30553", async () => {
+    const h = makeHarness();
+    await createPublicBoard(h);
+    const sprint = await createSprint(h);
+    const issue = await createIssue(h, { title: "unfinished" });
+    await addIssue(h, sprint.id, issue.id);
+    await h.app.request(`/api/v0/boards/kb/sprints/${sprint.id}/start`, jsonReq("POST", {}), {});
+    await settle();
+    const rowsBefore = h.db.statusChanges.length;
+    const changesBefore = plaintextEvents(h).filter((e) => e.kind === 30553).length;
+
+    await h.app.request(
+      `/api/v0/boards/kb/sprints/${sprint.id}/complete`,
+      jsonReq("POST", { carryOver: "drop" }),
+      {},
+    );
+    await settle();
+
+    expect(h.db.statusChanges.length).toBe(rowsBefore);
+    expect(plaintextEvents(h).filter((e) => e.kind === 30553).length).toBe(changesBefore);
   });
 });

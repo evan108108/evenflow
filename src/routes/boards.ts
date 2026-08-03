@@ -115,10 +115,25 @@ const validateColumns = (v: unknown): Effect.Effect<Column[], ValidationError> =
     : Effect.fail(new ValidationError({ reason: `columns-${problem}` }));
 };
 
-const validateSprintDays = (v: unknown) =>
+/**
+ * EFB-86: the reason names the FIELD BEING VALIDATED, not this function.
+ *
+ * Both `default_sprint_days` and `done_window_days` are 1..90 day counts, so
+ * they shared a validator — and the validator hardcoded `default_sprint_days`
+ * as its reason string. A caller who sent a bad `done_window_days` was told to
+ * go fix a field they had not sent. EFB-61 found it during the boards.ts
+ * migration and correctly reproduced it rather than fixing it under cover of
+ * that PR; this is the standalone fix.
+ *
+ * The field name is a required parameter rather than one defaulting to
+ * `"default_sprint_days"`. A default would let the next shared callsite
+ * inherit the same wrong answer silently, which is the entire bug — the point
+ * is that adding a third field has to say which field it is.
+ */
+const validateSprintDays = (v: unknown, field: "default_sprint_days" | "done_window_days") =>
   typeof v === "number" && Number.isInteger(v) && v >= MIN_SPRINT_DAYS && v <= MAX_SPRINT_DAYS
     ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "default_sprint_days" }));
+    : Effect.fail(new ValidationError({ reason: field }));
 
 const validatePrefix = (v: unknown) =>
   typeof v === "string" && PREFIX_RE.test(v.toUpperCase())
@@ -158,10 +173,13 @@ const finalizePrefix = (requested: string) =>
 //   issue_prefix — depends on ANOTHER field (derived from title when absent)
 //              and upper-cases what it accepts, so it is a cross-field
 //              transform, not a shape.
-//   done_window_days — reuses validateSprintDays and therefore answers
-//              `default_sprint_days` on failure, not `done_window_days`. That
-//              looks like a bug and is pre-existing; reproducing it is the
-//              point of this ticket, and fixing it belongs in its own.
+//   done_window_days — EFB-86 fixed the reason string (it answers its own
+//              field name now), but the field STAYS untyped here, and the
+//              reason is `issue_prefix`'s: the handler answers 409
+//              `prefix-locked-issues-exist` before it ever reaches this field,
+//              so typing it would turn `{issue_prefix, done_window_days: 999}`
+//              on a board with issues from 409 into 400. Fixing a reason string
+//              is what EFB-86 licensed; changing a status code is not.
 //
 // Every filter below returns a BOOLEAN rather than a message string, matching
 // PatchIssueBody. A bare kebab message would be read as a reason CODE and
@@ -561,13 +579,12 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
         body.default_sprint_days === undefined
           ? current.default_sprint_days
           : body.default_sprint_days;
-      // Phase 21c: Done column window. Same 1..90 bounds as sprint days —
-      // and, because it shares validateSprintDays, the same `reason` on
-      // failure. See the note on PatchBoardBody.
+      // Phase 21c: Done column window. Same 1..90 bounds as sprint days, and
+      // since EFB-86 it answers with its OWN field name on failure.
       const done_window_days =
         body.done_window_days === undefined
           ? current.done_window_days
-          : yield* validateSprintDays(body.done_window_days);
+          : yield* validateSprintDays(body.done_window_days, "done_window_days");
 
       // Privacy is ONE setting since migration 0015: `visibility`. Asking for
       // 'private' on a board whose audience hasn't been minted yet IS the

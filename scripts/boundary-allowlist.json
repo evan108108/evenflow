@@ -119,21 +119,6 @@
       "sunset": "2026-09-30"
     },
     {
-      "route": "POST /boards/:slug/sprints",
-      "file": "src/routes/sprints.ts",
-      "sunset": "2026-10-31"
-    },
-    {
-      "route": "PATCH /boards/:slug/sprints/:id",
-      "file": "src/routes/sprints.ts",
-      "sunset": "2026-10-31"
-    },
-    {
-      "route": "POST /boards/:slug/sprints/:id/complete",
-      "file": "src/routes/sprints.ts",
-      "sunset": "2026-10-31"
-    },
-    {
       "route": "PUT /orgs/:handle/storage",
       "file": "src/routes/storage.ts",
       "sunset": "2026-12-31"

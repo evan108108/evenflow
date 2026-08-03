@@ -28,7 +28,13 @@ import {
   resolveBoardScope,
   type BoardOwnershipError,
 } from "../authz";
-import { parseRouteBody } from "../lib/route-body";
+import {
+  ImmutableField,
+  ProvenanceFromCaller,
+  parseRouteBody,
+  requireAnyOf,
+} from "../lib/route-body";
+import { insertStatusChange } from "../lib/status-change";
 import { parseBoardRow, parseIssueRow, parseSprintRow, type BoardShape, type SprintShape } from "../shapes";
 import { isDoneStatus } from "../columns";
 import {
@@ -91,33 +97,118 @@ const errorResponse = (c: Context<AppHonoEnv>, cause: Cause.Cause<SprintsFailure
   return c.json({ error: "internal", reason: "defect" }, 500);
 };
 
-const readJsonBody = (c: Context<AppHonoEnv>) =>
-  Effect.tryPromise({
-    try: () => c.req.json() as Promise<Record<string, unknown>>,
-    catch: () => new ValidationError({ reason: "expected-json" }),
-  }).pipe(
-    Effect.filterOrFail(
-      (b): b is Record<string, unknown> => typeof b === "object" && b !== null && !Array.isArray(b),
-      () => new ValidationError({ reason: "expected-json-object" }),
-    ),
-  );
-
-const validateName = (v: unknown) =>
-  typeof v === "string" && v.trim() !== "" && v.length <= MAX_NAME_LENGTH
-    ? Effect.succeed(v)
-    : Effect.fail(new ValidationError({ reason: "name" }));
-
-const validateGoal = (v: unknown) =>
-  v === null || (typeof v === "string" && v.length <= MAX_GOAL_LENGTH)
-    ? Effect.succeed(v as string | null)
-    : Effect.fail(new ValidationError({ reason: "goal" }));
-
 /** null = use the board's default_sprint_days. */
 const validatePlannedDays = (v: unknown) =>
   v === null ||
   (typeof v === "number" && Number.isInteger(v) && v >= MIN_SPRINT_DAYS && v <= MAX_SPRINT_DAYS)
     ? Effect.succeed(v as number | null)
     : Effect.fail(new ValidationError({ reason: "planned_days" }));
+
+// ── EFB-84 request shapes ─────────────────────────────────────────────────
+//
+// The four invariants come from parseRouteBody, not from anything here:
+// unknown keys 400, wrong types 400, missing-required 400, canonical output.
+// See docs/BOUNDARY_DISCIPLINE.md.
+//
+// Filters return BOOLEANS, not message strings, for the same reason boards.ts
+// records: a bare kebab message is read as a reason CODE and would surface as
+// `name-<slug>`, where a boolean false falls back to the bare field name —
+// which is the string these routes already answer.
+
+/**
+ * A sprint name.
+ *
+ * `.trim() !== ""` is NOT `minLength(1)` — the latter accepts "   ". And the
+ * length cap measures the UNTRIMMED string, exactly as `validateName` did:
+ * two leading spaces plus 79 characters is 81 and rejected today. Both halves
+ * are load-bearing predicate fidelity, not incidental phrasing.
+ */
+const SprintName = Schema.String.pipe(
+  Schema.filter((s) => s.trim() !== "" && s.length <= MAX_NAME_LENGTH),
+);
+
+/** null is a real value here — "use the board's default", not "absent". */
+const SprintGoal = Schema.NullOr(
+  Schema.String.pipe(Schema.filter((s) => s.length <= MAX_GOAL_LENGTH)),
+);
+
+const PlannedDays = Schema.NullOr(
+  Schema.Int.pipe(Schema.between(MIN_SPRINT_DAYS, MAX_SPRINT_DAYS)),
+);
+
+export const PostSprintBody = Schema.Struct({
+  name: SprintName,
+  goal: Schema.optional(SprintGoal),
+  planned_days: Schema.optional(PlannedDays),
+});
+
+/** Mutable via PATCH — the list `empty-patch` is computed from. */
+const PATCHABLE_SPRINT_FIELDS = ["name", "goal", "planned_days"] as const;
+
+export const PatchSprintBody = Schema.Struct({
+  name: Schema.optional(SprintName),
+  goal: Schema.optional(SprintGoal),
+  /**
+   * Deliberately `Unknown`, keeping `validatePlannedDays` in the handler.
+   *
+   * Not an oversight and not laziness — it is the only way to preserve a
+   * STATUS CODE. Length is a planning-time decision, so the handler answers
+   * 409 `sprint-active` for any `planned_days` sent against a started sprint,
+   * and it does that check BEFORE validating the value. Typing the field here
+   * would move validation ahead of the conflict check, turning
+   * `{planned_days: 999}` on an active sprint from 409 into 400.
+   *
+   * BOUNDARY_DISCIPLINE.md draws exactly this line: previously-SILENT failures
+   * become 400, but a migration that changes a status code needs its own
+   * ticket. A loud 409 is not a silent failure. Same shape as `issue_prefix`
+   * in boards.ts, which stays untyped for the same conflict-before-validate
+   * reason.
+   */
+  planned_days: Schema.optional(Schema.Unknown),
+  /**
+   * Real sprint columns this route may not write. Declared rather than left to
+   * the unknown-key rule so a caller reaching for the wrong endpoint is told
+   * `status-immutable` ("real field, wrong endpoint" — start/complete are the
+   * endpoints) instead of `status-unknown` ("no such field"), which would send
+   * them hunting for a typo.
+   *
+   * The metric columns (points_*, adds_mid_sprint, substrate_event_id) and the
+   * timestamps are deliberately NOT listed: nothing writes them but the server,
+   * so a client sending one has not confused an endpoint, and `-unknown` is the
+   * honest answer.
+   */
+  id: ImmutableField,
+  board_id: ImmutableField,
+  status: ImmutableField,
+}).pipe(Schema.filter(requireAnyOf(PATCHABLE_SPRINT_FIELDS)));
+
+/**
+ * Body for POST /boards/:slug/sprints/:id/complete — every field optional,
+ * and the whole body optional (see the handler's `expected-json` catch).
+ *
+ * STRICT, and that is a deliberate wire change. The handler used to COERCE
+ * rather than validate: `carryOver === "drop" ? "drop" : "next_planning"` and
+ * `typeof nextSprintId === "string" ? … : null`. So `{"carryOver":"bogus"}`
+ * and `{"carryOver":123}` both silently meant next_planning, and
+ * `{"nextSprintId":42}` silently meant "auto-pick the oldest planning sprint" —
+ * a caller with a typo watched their issues carry over and concluded the drop
+ * had happened. Those are previously-silent failures, which is precisely the
+ * category BOUNDARY_DISCIPLINE.md says a migration converts to 400.
+ *
+ * `nextSprintId` keeps NULL as an accepted spelling. Null is not a typo here —
+ * it is how a client says "no specific next sprint, pick one", which is what
+ * the handler already does with it. Rejecting it would break a shape that
+ * works today for no safety gain. `carryOver` gets no such allowance: null is
+ * not a natural spelling of a member of a two-value enum.
+ *
+ * `Schema.String`, not `NonEmptyString`, matching MembershipBody below: an
+ * empty id reaches the lookup and answers 404 `sprint` today, and turning that
+ * into a 400 is the status-code change this ticket does not get to make.
+ */
+export const CompleteSprintBody = Schema.Struct({
+  carryOver: Schema.optional(Schema.Literal("next_planning", "drop")),
+  nextSprintId: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 /** Fetch a sprint scoped to its board — an id on another board is a 404. */
 const fetchSprint = (boardId: string, sprintId: string) =>
@@ -207,11 +298,10 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
-      const body = yield* readJsonBody(c);
-      const name = yield* validateName(body["name"]);
-      const goal = body["goal"] === undefined ? null : yield* validateGoal(body["goal"]);
-      const planned_days =
-        body["planned_days"] === undefined ? null : yield* validatePlannedDays(body["planned_days"]);
+      const body = yield* parseRouteBody(c, PostSprintBody);
+      const name = body.name;
+      const goal = body.goal ?? null;
+      const planned_days = body.planned_days ?? null;
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -265,22 +355,25 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const { board } = yield* boardScope(c, callerPubkey(claims), "contributor");
-      const body = yield* readJsonBody(c);
-      if (body["name"] === undefined && body["goal"] === undefined && body["planned_days"] === undefined) {
-        return yield* new ValidationError({ reason: "empty-patch" });
-      }
+      // `empty-patch` now comes off the schema's struct-level filter, so it is
+      // raised before the sprint is fetched rather than after. Same reason,
+      // same status, and the ordering is invisible: an empty body answered 400
+      // before reaching fetchSprint under the old code too.
+      const body = yield* parseRouteBody(c, PatchSprintBody);
       const current = yield* fetchSprint(board.id, c.req.param("id"));
-      const name = body["name"] === undefined ? current.name : yield* validateName(body["name"]);
-      const goal = body["goal"] === undefined ? current.goal : yield* validateGoal(body["goal"]);
+      const name = body.name === undefined ? current.name : body.name;
+      const goal = body.goal === undefined ? current.goal : body.goal;
       // Length is a planning-time decision: once started, the countdown is
-      // already running against it; once completed, it's history.
-      if (body["planned_days"] !== undefined && current.status !== "planning") {
+      // already running against it; once completed, it's history. Checked
+      // BEFORE the value is validated, which is why `planned_days` is still
+      // `Unknown` at the schema — see the note on PatchSprintBody.
+      if (body.planned_days !== undefined && current.status !== "planning") {
         return yield* new ConflictError({ reason: `sprint-${current.status}` });
       }
       const planned_days =
-        body["planned_days"] === undefined
+        body.planned_days === undefined
           ? current.planned_days
-          : yield* validatePlannedDays(body["planned_days"]);
+          : yield* validatePlannedDays(body.planned_days);
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -343,10 +436,22 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           now,
           issue.id,
         ]);
-        yield* db.execute(
-          "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [crypto.randomUUID(), issue.id, board.id, pubkey, null, null, "backlog", "active", null, now],
-        );
+        // EFB-91: through the shared writer, and the returned id is the point.
+        // This callsite used to mint the uuid inline and drop it, which is the
+        // pre-EFB-33 shape lib/status-change.ts was written to delete — an id
+        // that never leaves the INSERT leaves the publish path with nothing to
+        // sign against, so the 30553 never fired for a sprint start.
+        const statusChangeId = yield* insertStatusChange({
+          issue_id: issue.id,
+          board_id: board.id,
+          actor_pubkey: pubkey,
+          from_status: null,
+          to_status: null,
+          from_container: "backlog",
+          to_container: "active",
+          container_at_completion: null,
+          occurred_at_ms: now,
+        });
         yield* emitSecureBoardEvent(
           board.id,
           {
@@ -354,13 +459,18 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
             board_id: board.id,
             issue_id: issue.id,
             at_ms: now,
+            status_change_id: statusChangeId,
             payload: {
               issue: { ...issue, container: "active", updated_at_ms: now },
               from_container: "backlog",
               to_container: "active",
             },
           },
-          null,
+          // Starting a sprint is user-initiated — `requireCaller` ran above, so
+          // the Claims are genuinely in scope and `route.caller` is an honest
+          // assertion. `null` here would have published every sprint-driven
+          // move as `audit.system`.
+          ProvenanceFromCaller(claims),
         );
       }
 
@@ -482,15 +592,20 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       if (current.status !== "active") {
         return yield* new ConflictError({ reason: `sprint-${current.status}` });
       }
-      const body = yield* readJsonBody(c).pipe(
+      // The body is OPTIONAL on this route — `POST .../complete` with no body
+      // at all is the common case — and parseRouteBody raises the identical
+      // `expected-json` reason the raw reader did, so the catch that made the
+      // body optional carries over unchanged. Only that one reason is
+      // swallowed: a body that IS present and malformed still 400s.
+      const body = yield* parseRouteBody(c, CompleteSprintBody).pipe(
         Effect.catchTag("ValidationError", (e) =>
-          e.reason === "expected-json" ? Effect.succeed({} as Record<string, unknown>) : Effect.fail(e),
+          e.reason === "expected-json"
+            ? Effect.succeed({} as Schema.Schema.Type<typeof CompleteSprintBody>)
+            : Effect.fail(e),
         ),
       );
-      const carryOver: "next_planning" | "drop" =
-        body["carryOver"] === "drop" ? "drop" : "next_planning";
-      const requestedNext =
-        typeof body["nextSprintId"] === "string" ? (body["nextSprintId"] as string) : null;
+      const carryOver: "next_planning" | "drop" = body.carryOver ?? "next_planning";
+      const requestedNext = body.nextSprintId ?? null;
 
       const db = yield* Db;
       const audit = yield* AuditLog;
@@ -832,6 +947,9 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
           issue.id,
         ]);
         let promotedContainer: "active" | null = null;
+        // EFB-91: null unless the add promoted the issue out of the backlog —
+        // the only branch here that appends a statusChangeCache row at all.
+        let statusChangeId: string | null = null;
         if (verb === "add-issue") {
           yield* db.execute(
             "INSERT INTO sprintMembership (id, sprint_id, issue_id, added_at_ms) VALUES (?, ?, ?, ?)",
@@ -851,10 +969,17 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
                 "UPDATE issueCache SET container = ? WHERE id = ?",
                 ["active", issue.id],
               );
-              yield* db.execute(
-                "INSERT INTO statusChangeCache (id, issue_id, board_id, actor_pubkey, from_status, to_status, from_container, to_container, container_at_completion, occurred_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [crypto.randomUUID(), issue.id, board.id, callerPubkey(claims), null, null, "backlog", "active", null, now],
-              );
+              statusChangeId = yield* insertStatusChange({
+                issue_id: issue.id,
+                board_id: board.id,
+                actor_pubkey: callerPubkey(claims),
+                from_status: null,
+                to_status: null,
+                from_container: "backlog",
+                to_container: "active",
+                container_at_completion: null,
+                occurred_at_ms: now,
+              });
               promotedContainer = "active";
             }
           }
@@ -887,12 +1012,20 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
             board_id: board.id,
             issue_id: issue.id,
             at_ms: now,
+            // Absent on the plain-update branch, and absence is the correct
+            // state there rather than a missing field: nothing was appended to
+            // statusChangeCache, so there is no status change to describe.
+            ...(statusChangeId === null ? {} : { status_change_id: statusChangeId }),
             payload:
               promotedContainer !== null
                 ? { issue: updated, from_container: "backlog", to_container: "active" }
                 : { issue: updated },
           },
-          null,
+          // Named only on the branch that publishes a 30553, matching the
+          // issues.ts precedent for the same shape. `issue.updated` never reads
+          // the actor (only the comment family does), so naming one there would
+          // change no bytes while implying this emit attributes something.
+          statusChangeId === null ? null : ProvenanceFromCaller(claims),
         );
         return { issue: updated };
       });
