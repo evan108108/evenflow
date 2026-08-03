@@ -42,6 +42,9 @@ export interface DbMock {
   /** EFB-15 — CSV import audit + the 24h idempotency window. */
   readonly issueImports: Row[];
   readonly issueImportDedup: Row[];
+  /** EFB-13 substrate, EFB-62 member gate. */
+  readonly webhookSubscriptions: Row[];
+  readonly webhookDeliveries: Row[];
   readonly layer: Layer.Layer<Db>;
 }
 
@@ -104,6 +107,9 @@ export const makeDbMock = (): DbMock => {
   const githubAudit: Row[] = [];
   const githubDedup: Row[] = [];
   const estimateHistory: Row[] = [];
+  // EFB-13 outbound webhooks; EFB-62 added creator_pubkey to subscriptions.
+  const webhookSubscriptions: Row[] = [];
+  const webhookDeliveries: Row[] = [];
   // EFB-15 — CSV import audit + the 24h idempotency window.
   const issueImports: Row[] = [];
   const issueImportDedup: Row[] = [];
@@ -1097,6 +1103,91 @@ export const makeDbMock = (): DbMock => {
           }
           return;
         }
+        // ── EFB-13 / EFB-62 outbound webhooks ──────────────────────────────
+        // Both of these bind FEWER params than they name columns — `enabled`
+        // and `attempt_count`/`terminal` are inline literals — so the generic
+        // `insertRows` splitter cannot serve them: it divides params by column
+        // count and throws on the remainder. Mapped by hand instead.
+        if (sql.startsWith("INSERT INTO webhookSubscriptionDeliveries")) {
+          webhookDeliveries.push({
+            id: params[0],
+            subscription_id: params[1],
+            board_id: params[2],
+            event_kind: params[3],
+            event_json: params[4],
+            created_at_ms: params[5],
+            attempt_count: 0,
+            attempted_at_ms: null,
+            status_code: null,
+            response_body_snippet: null,
+            next_retry_at_ms: params[6],
+            terminal: 0,
+          });
+          return;
+        }
+        if (sql.startsWith("INSERT INTO webhookSubscriptions")) {
+          webhookSubscriptions.push({
+            id: params[0],
+            board_id: params[1],
+            name: params[2],
+            url: params[3],
+            event_kinds: params[4],
+            predicate: params[5],
+            auth_scheme: params[6],
+            hmac_secret_ciphertext: params[7],
+            enabled: 1,
+            created_at_ms: params[8],
+            updated_at_ms: params[9],
+            creator_pubkey: params[10] ?? null,
+          });
+          return;
+        }
+        if (sql.startsWith("UPDATE webhookSubscriptions")) {
+          const row = webhookSubscriptions.find((r) => r["id"] === params[params.length - 1]);
+          if (row !== undefined) {
+            row["name"] = params[0];
+            row["url"] = params[1];
+            row["event_kinds"] = params[2];
+            row["predicate"] = params[3];
+            row["auth_scheme"] = params[4];
+            row["enabled"] = params[5];
+            row["updated_at_ms"] = params[6];
+          }
+          return;
+        }
+        // EFB-62 — the membership-denied terminal write. Distinguished from the
+        // delivery-outcome UPDATE below by its NULL status_code literal, which
+        // is the shape the gate uses and the delivery path never does.
+        if (
+          sql.startsWith("UPDATE webhookSubscriptionDeliveries") &&
+          sql.includes("status_code = NULL")
+        ) {
+          const row = webhookDeliveries.find((r) => r["id"] === params[2]);
+          if (row !== undefined) {
+            row["attempted_at_ms"] = params[0];
+            row["status_code"] = null;
+            row["response_body_snippet"] = params[1];
+            row["terminal"] = 1;
+          }
+          return;
+        }
+        if (sql.startsWith("UPDATE webhookSubscriptionDeliveries")) {
+          const row = webhookDeliveries.find((r) => r["id"] === params[6]);
+          if (row !== undefined) {
+            row["attempted_at_ms"] = params[0];
+            row["attempt_count"] = params[1];
+            row["status_code"] = params[2];
+            row["response_body_snippet"] = params[3];
+            row["next_retry_at_ms"] = params[4];
+            row["terminal"] = params[5];
+          }
+          return;
+        }
+        if (sql.startsWith("DELETE FROM webhookSubscriptions WHERE id = ?")) {
+          const i = webhookSubscriptions.findIndex((r) => r["id"] === params[0]);
+          if (i >= 0) webhookSubscriptions.splice(i, 1);
+          return;
+        }
         throw new Error(`DbMock: unexpected execute: ${sql}`);
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
@@ -1432,6 +1523,29 @@ export const makeDbMock = (): DbMock => {
             (x) => x["sprint_id"] === params[0] && x["day_start_ms"] === params[1],
           );
           return (r ? { id: r["id"] } : null) as R | null;
+        }
+        if (sql.startsWith("SELECT * FROM webhookSubscriptions WHERE id = ?")) {
+          // The board-scoped variant is the PATCH route's 404 guard — honour
+          // the scoping rather than matching on id alone, or a cross-board
+          // edit would pass here and fail only in production.
+          const scoped = sql.includes("AND board_id = ?");
+          const row = webhookSubscriptions.find(
+            (r) => r["id"] === params[0] && (!scoped || r["board_id"] === params[1]),
+          );
+          return row === undefined ? null : ({ ...row } as R);
+        }
+        if (sql.startsWith("SELECT id FROM webhookSubscriptions WHERE id = ?")) {
+          const row = webhookSubscriptions.find(
+            (r) => r["id"] === params[0] && r["board_id"] === params[1],
+          );
+          return row === undefined ? null : ({ id: row["id"] } as R);
+        }
+        if (sql.startsWith("SELECT COUNT(*) AS n FROM webhookSubscriptionDeliveries")) {
+          return {
+            n: webhookDeliveries.filter(
+              (r) => r["attempted_at_ms"] == null && num(r["created_at_ms"]) < num(params[0]),
+            ).length,
+          } as R;
         }
         throw new Error(`DbMock: unexpected queryFirst: ${sql}`);
       }),
@@ -1959,17 +2073,12 @@ export const makeDbMock = (): DbMock => {
               created_at_ms: i["created_at_ms"],
             })) as R[];
         }
-        // EFB-13's enqueue path runs on EVERY board mutation, and without this
-        // it threw "unexpected queryAll", which `enqueueOutboundWebhooks`
-        // catches and logs as `webhook-enqueue-defect`. The result was a wall of
-        // defect warnings on unrelated passing tests — noise that trains a
-        // reader to ignore the word "defect", which is the opposite of what a
-        // warning is for. No board in these tests has subscriptions, so the
-        // honest answer is an empty list, and the enqueue path now actually
-        // runs instead of failing.
-        if (sql.startsWith("SELECT id, board_id, url, event_kinds, predicate")) {
-          return [] as R[];
-        }
+        // (EFB-13's blanket `return []` for the enqueue's subscription query
+        // used to sit here. EFB-62 replaced it with a real table below — it
+        // shadowed the honest handler and made every member-gate test read as
+        // "no subscriptions", which is a silent pass-shaped failure. The
+        // property it was protecting still holds: a board with no rows gets an
+        // empty list, so unrelated tests stay quiet.)
         // ── EFB-15 CSV import ─────────────────────────────────────────────
         //
         // The dedup pre-check, chunked at 99 urls + 1 board_id because of D1's
@@ -1991,6 +2100,52 @@ export const makeDbMock = (): DbMock => {
           return issueImports
             .filter((r) => r["board_id"] === params[0])
             .sort((a, b) => num(b["imported_at_ms"]) - num(a["imported_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
+        // ── EFB-13 / EFB-62 outbound webhooks ──────────────────────────────
+        if (sql.includes("FROM webhookSubscriptions") && sql.includes("WHERE board_id = ?")) {
+          const rows = webhookSubscriptions.filter((r) => r["board_id"] === params[0]);
+          const enabledOnly = sql.includes("enabled = 1")
+            ? rows.filter((r) => num(r["enabled"]) === 1)
+            : rows;
+          return enabledOnly
+            .slice()
+            .sort((a, b) => num(b["created_at_ms"]) - num(a["created_at_ms"]))
+            .map((r) => ({ ...r })) as R[];
+        }
+        // The sweep's due-row join. Mirrors the real ORDER BY / LIMIT so a
+        // starvation regression shows up here rather than in production.
+        if (
+          sql.includes("FROM webhookSubscriptionDeliveries d") &&
+          sql.includes("JOIN webhookSubscriptions s")
+        ) {
+          return webhookDeliveries
+            .filter((d) => num(d["terminal"]) === 0 && num(d["next_retry_at_ms"]) <= num(params[0]))
+            .sort((a, b) => num(a["next_retry_at_ms"]) - num(b["next_retry_at_ms"]))
+            .slice(0, num(params[1]))
+            .flatMap((d) => {
+              const s = webhookSubscriptions.find((x) => x["id"] === d["subscription_id"]);
+              if (s === undefined) return [];
+              return [
+                {
+                  id: d["id"],
+                  subscription_id: d["subscription_id"],
+                  board_id: d["board_id"],
+                  event_json: d["event_json"],
+                  attempt_count: d["attempt_count"],
+                  url: s["url"],
+                  auth_scheme: s["auth_scheme"],
+                  hmac_secret_ciphertext: s["hmac_secret_ciphertext"],
+                  creator_pubkey: s["creator_pubkey"] ?? null,
+                },
+              ];
+            }) as R[];
+        }
+        if (sql.includes("FROM webhookSubscriptionDeliveries") && sql.includes("subscription_id = ?")) {
+          return webhookDeliveries
+            .filter((r) => r["subscription_id"] === params[0] && r["board_id"] === params[1])
+            .sort((a, b) => num(b["created_at_ms"]) - num(a["created_at_ms"]))
+            .slice(0, 50)
             .map((r) => ({ ...r })) as R[];
         }
         throw new Error(`DbMock: unexpected queryAll: ${sql}`);
@@ -2025,6 +2180,8 @@ export const makeDbMock = (): DbMock => {
     tideSnapshots,
     issueImports,
     issueImportDedup,
+    webhookSubscriptions,
+    webhookDeliveries,
     layer: Layer.succeed(Db, service),
   };
 };

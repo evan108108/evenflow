@@ -21,7 +21,9 @@
 import { Effect } from "effect";
 import { Db } from "../effects";
 import type { BoardEvent } from "../durable-objects/board-events";
-import type { BoardShape } from "../shapes";
+import { parseBoardRow, type BoardShape } from "../shapes";
+import { effectiveBoardRole } from "../authz";
+import { publishesPlaintext } from "./kanban/publish";
 import { openWebhookSecret, signGithubBody } from "../github/secret";
 
 /**
@@ -65,17 +67,61 @@ export interface SubscriptionRow {
   readonly predicate: string | null;
   readonly auth_scheme: string;
   readonly hmac_secret_ciphertext: string;
+  /** EFB-62 — the identity the member gate checks. NULL on pre-0028 rows. */
+  readonly creator_pubkey: string | null;
 }
 
 export interface DeliveryRow {
   readonly id: string;
   readonly subscription_id: string;
+  readonly board_id: string;
   readonly event_json: string;
   readonly attempt_count: number;
   readonly url: string;
   readonly auth_scheme: string;
   readonly hmac_secret_ciphertext: string;
+  readonly creator_pubkey: string | null;
 }
+
+/**
+ * EFB-62 — may this subscription's owner still receive this board's events?
+ *
+ * THE GATE. Read this before changing either caller.
+ *
+ * `publishesPlaintext` decides whether a gate is needed at all, and it is
+ * reused rather than reproduced for the reason its own header gives: the
+ * obvious spelling, `!board.encryption_active`, is WRONG, and wrong in the
+ * direction that leaks. `encryption_active` is derived as `visibility ===
+ * "private" && audience_pubkey !== null`, so its negation covers three states —
+ * public, private-with-no-audience, and board-not-loadable — and treats the
+ * last two as public. Private is the default create visibility and audiences
+ * are only minted on an explicit PATCH, so private-with-no-audience is not a
+ * corner case: it is where every new board sits. EFB-13 gated on
+ * `encryption_active` and therefore delivered those boards' cleartext to any
+ * registered URL. Reusing the one primitive is what keeps that fix from
+ * rotting back in.
+ *
+ * Membership is resolved through `effectiveBoardRole`, NOT a direct
+ * `boardMemberCache` lookup. The roster is explicit grants ∪ org-member
+ * projection ∪ board creator (authz.ts), so the bare-table query — the one
+ * this ticket's brief proposed — would silently drop every subscriber whose
+ * access comes from org membership rather than an explicit board row. Same
+ * function the HTTP read path gates on, so a subscriber's webhook goes quiet
+ * exactly when their API reads would start 404-ing, and never before.
+ *
+ * NULL `creator_pubkey` (a pre-0028 subscription) fails CLOSED on a private
+ * board: an unknown subscriber cannot be shown to be a member.
+ */
+export const subscriberMayReceive = (
+  board: BoardShape,
+  creatorPubkey: string | null,
+): Effect.Effect<boolean, never, Db> =>
+  Effect.gen(function* () {
+    if (publishesPlaintext(board)) return true;
+    if (creatorPubkey === null) return false;
+    const role = yield* effectiveBoardRole(board, creatorPubkey);
+    return role !== null;
+  }).pipe(Effect.catchAll(() => Effect.succeed(false)));
 
 /**
  * Does this subscription want this event?
@@ -104,8 +150,16 @@ export const matchesSubscription = (sub: SubscriptionRow, event: BoardEvent): bo
 
   // v1 grammar is exactly one field: {"assignee": "<canonical ref>"}. The
   // payload is `unknown` by contract (board-events.ts), so this reads
-  // defensively rather than casting — and a private board never reaches here
-  // at all, since subscriptions cannot be registered on one.
+  // defensively rather than casting.
+  //
+  // EFB-62 — this now runs for private boards too, and it must be handed the
+  // PLAINTEXT event to keep working: on a private board the delivered event's
+  // payload is a NIP-44 ciphertext envelope with no `assignee_pubkey` to read,
+  // so matching against it would answer false for every subscription and
+  // silently disable predicates on exactly the boards that most want them.
+  // Hence the enqueue path's two-event signature — match on one, deliver the
+  // other. Matching on cleartext leaks nothing: it happens inside the worker,
+  // against a board row we already hold.
   const wanted = (predicate as Record<string, unknown>)["assignee"];
   if (typeof wanted !== "string") return false;
   const payload = event.payload;
@@ -120,24 +174,32 @@ export const matchesSubscription = (sub: SubscriptionRow, event: BoardEvent): bo
  * path, and a webhook bookkeeping problem must not turn a successful board
  * mutation into an error. Failures are logged and swallowed.
  *
- * Private boards are skipped wholesale. The route refuses to create
- * subscriptions on them, so this is defence in depth for a board that was
- * flipped private AFTER subscriptions existed — in which case the right
- * behaviour is to stop delivering, silently, rather than to start leaking the
- * cleartext envelope (kind, issue_id, timing) that a private board's event
- * still carries.
+ * EFB-62 — private boards are no longer skipped wholesale. Each matching
+ * subscription is gated individually through `subscriberMayReceive`, and what
+ * gets persisted is `deliverEvent` (the encrypted-payload event on a private
+ * board), never the plaintext one used for predicate matching.
+ *
+ * Two events, because the two questions differ. `event` answers "does this
+ * subscription want this?" and must be cleartext to answer it. `deliverEvent`
+ * answers "what bytes leave the building?" and must be the same wrap a member
+ * would have received over SSE — so a subscriber never gets bytes their
+ * membership could not already decrypt.
+ *
+ * A drop here writes NO delivery row, deliberately. A revoked subscriber on a
+ * busy board would otherwise mint one identical audit row per event, forever.
+ * The transition worth auditing — queued while a member, refused when due —
+ * is caught by the sweep, where the row already exists (migration 0028).
  */
 export const enqueueOutboundWebhooks = (
   board: BoardShape,
   event: BoardEvent,
+  deliverEvent: BoardEvent,
   nowMs: number,
 ): Effect.Effect<number, never, Db> =>
   Effect.gen(function* () {
-    if (board.encryption_active) return 0;
-
     const db = yield* Db;
     const subs = yield* db.queryAll<SubscriptionRow>(
-      `SELECT id, board_id, url, event_kinds, predicate, auth_scheme, hmac_secret_ciphertext
+      `SELECT id, board_id, url, event_kinds, predicate, auth_scheme, hmac_secret_ciphertext, creator_pubkey
          FROM webhookSubscriptions
         WHERE board_id = ? AND enabled = 1`,
       [board.id],
@@ -146,8 +208,35 @@ export const enqueueOutboundWebhooks = (
     const matching = subs.filter((s) => matchesSubscription(s, event));
     if (matching.length === 0) return 0;
 
-    const eventJson = JSON.stringify(event);
+    // Resolved once per distinct subscriber, not once per subscription: a
+    // board with several webhooks owned by one admin should cost one roster
+    // read, and `effectiveBoardRole` is two queries every time it is called.
+    const roleCache = new Map<string, boolean>();
+    const allowed: SubscriptionRow[] = [];
     for (const sub of matching) {
+      const key = sub.creator_pubkey ?? " null";
+      let ok = roleCache.get(key);
+      if (ok === undefined) {
+        ok = yield* subscriberMayReceive(board, sub.creator_pubkey);
+        roleCache.set(key, ok);
+      }
+      if (ok) allowed.push(sub);
+      else {
+        console.log(
+          JSON.stringify({
+            debug: "webhook-enqueue-membership-denied",
+            board_id: board.id,
+            subscription_id: sub.id,
+            kind: event.kind,
+            creator_known: sub.creator_pubkey !== null,
+          }),
+        );
+      }
+    }
+    if (allowed.length === 0) return 0;
+
+    const eventJson = JSON.stringify(deliverEvent);
+    for (const sub of allowed) {
       yield* db.execute(
         `INSERT INTO webhookSubscriptionDeliveries
            (id, subscription_id, board_id, event_kind, event_json,
@@ -156,7 +245,7 @@ export const enqueueOutboundWebhooks = (
         [crypto.randomUUID(), sub.id, board.id, event.kind, eventJson, nowMs, nowMs],
       );
     }
-    return matching.length;
+    return allowed.length;
   }).pipe(
     Effect.catchAll((e) =>
       Effect.sync(() => {
@@ -329,12 +418,16 @@ export const stuckDeliveryCount = (nowMs: number): Effect.Effect<number, never, 
 export const sweepOutboundWebhooks = (
   nowMs: number,
   masterSecret: string | undefined,
-): Effect.Effect<{ attempted: number; delivered: number; stuck: number }, never, Db> =>
+): Effect.Effect<
+  { attempted: number; delivered: number; denied: number; stuck: number },
+  never,
+  Db
+> =>
   Effect.gen(function* () {
     const db = yield* Db;
     const due = yield* db.queryAll<DeliveryRow>(
-      `SELECT d.id, d.subscription_id, d.event_json, d.attempt_count,
-              s.url, s.auth_scheme, s.hmac_secret_ciphertext
+      `SELECT d.id, d.subscription_id, d.board_id, d.event_json, d.attempt_count,
+              s.url, s.auth_scheme, s.hmac_secret_ciphertext, s.creator_pubkey
          FROM webhookSubscriptionDeliveries d
          JOIN webhookSubscriptions s ON s.id = d.subscription_id
         WHERE d.terminal = 0 AND d.next_retry_at_ms <= ?
@@ -343,8 +436,58 @@ export const sweepOutboundWebhooks = (
       [nowMs, SWEEP_BATCH],
     );
 
+    // EFB-62 — the second half of the gate, and the half that closes the
+    // window the first half cannot. The backoff ladder runs to twelve hours, so
+    // a delivery queued while its subscriber was a member can come due long
+    // after they were removed. Re-checking here is what makes revocation take
+    // effect on the next tick rather than on the next event.
+    //
+    // Boards are loaded once per tick, not once per delivery: a busy board's
+    // fifty due rows share one board read.
+    const boards = new Map<string, BoardShape | null>();
+    const boardOf = (boardId: string) =>
+      Effect.gen(function* () {
+        const cached = boards.get(boardId);
+        if (cached !== undefined) return cached;
+        const row = yield* db
+          .queryFirst("SELECT * FROM boardCache WHERE id = ?", [boardId])
+          .pipe(Effect.catchAll(() => Effect.succeed(null)));
+        let board: BoardShape | null = null;
+        if (row !== null) {
+          try {
+            board = parseBoardRow(row);
+          } catch {
+            board = null;
+          }
+        }
+        boards.set(boardId, board);
+        return board;
+      });
+
     let delivered = 0;
+    let denied = 0;
     for (const row of due) {
+      const board = yield* boardOf(row.board_id);
+      // A board that will not load is not evidence of a public board — the
+      // same reading `publishesPlaintext` takes of its third state. Terminal
+      // rather than skipped, because a skipped row never increments
+      // attempt_count and would be retried until the end of time; a deleted
+      // board's pending deliveries have to stop somewhere.
+      const mayReceive =
+        board === null ? false : yield* subscriberMayReceive(board, row.creator_pubkey);
+      if (!mayReceive) {
+        denied += 1;
+        yield* db
+          .execute(
+            `UPDATE webhookSubscriptionDeliveries
+                SET attempted_at_ms = ?, status_code = NULL,
+                    response_body_snippet = ?, terminal = 1
+              WHERE id = ?`,
+            [nowMs, board === null ? "board_unavailable" : "membership_revoked", row.id],
+          )
+          .pipe(Effect.catchAll(() => Effect.void));
+        continue;
+      }
       if (yield* deliverOne(row, masterSecret, nowMs)) delivered += 1;
     }
 
@@ -355,16 +498,17 @@ export const sweepOutboundWebhooks = (
           info: "webhook-sweep-complete",
           attempted: due.length,
           delivered,
+          denied,
           stuck,
         }),
       );
     }
-    return { attempted: due.length, delivered, stuck };
+    return { attempted: due.length, delivered, denied, stuck };
   }).pipe(
     Effect.catchAll((e) =>
       Effect.sync(() => {
         console.log(JSON.stringify({ warn: "webhook-sweep-failed", error: String(e) }));
-        return { attempted: 0, delivered: 0, stuck: 0 };
+        return { attempted: 0, delivered: 0, denied: 0, stuck: 0 };
       }),
     ),
   );

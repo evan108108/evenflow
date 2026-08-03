@@ -27,6 +27,7 @@ import {
 import { ValidationError } from "./errors";
 import { parseRouteBody, IdentityRefFromInput, NonEmptyString, Uuid } from "../lib/route-body";
 import { mintWebhookSecret, sealWebhookSecret } from "../github/secret";
+import { subscriberMayReceive } from "../lib/webhook-dispatch";
 import { Schema } from "effect";
 
 /** The 16 frozen kinds from src/durable-objects/board-events.ts. */
@@ -99,11 +100,6 @@ export const PatchSubscriptionBody = Schema.Struct({
   enabled: Schema.optional(Schema.Boolean),
 });
 
-/** Board is private; outbound webhooks are public-board-only in v1. */
-class PrivateBoardError extends Data.TaggedError("PrivateBoardError")<{
-  readonly reason: string;
-}> {}
-
 /** Caller tried to filter on somebody else's activity. */
 class PredicateForbiddenError extends Data.TaggedError("PredicateForbiddenError")<{
   readonly reason: string;
@@ -115,7 +111,6 @@ class ConfigError extends Data.TaggedError("ConfigError")<{ readonly reason: str
 
 type WebhookFailure =
   | ValidationError
-  | PrivateBoardError
   | PredicateForbiddenError
   | NotFoundError
   | ConfigError
@@ -135,10 +130,19 @@ interface SubscriptionRecord {
   readonly enabled: number;
   readonly created_at_ms: number;
   readonly updated_at_ms: number;
+  /** EFB-62 — NULL on subscriptions created before migration 0028. */
+  readonly creator_pubkey: string | null;
 }
 
-/** The secret ciphertext never leaves the server — not even to a board admin. */
-const subscriptionWire = (r: SubscriptionRecord) => ({
+/**
+ * The secret ciphertext never leaves the server — not even to a board admin.
+ *
+ * `creator_pubkey` does go out: it is a board member's identity shown to a
+ * board admin, who can already read the full roster, and withholding it would
+ * make `member_ok: false` unactionable — an admin needs to know WHOSE
+ * membership lapsed to fix it.
+ */
+const subscriptionWire = (r: SubscriptionRecord, memberOk: boolean) => ({
   id: r.id,
   board_id: r.board_id,
   name: r.name,
@@ -149,6 +153,10 @@ const subscriptionWire = (r: SubscriptionRecord) => ({
   enabled: r.enabled === 1,
   created_at_ms: r.created_at_ms,
   updated_at_ms: r.updated_at_ms,
+  creator_pubkey: r.creator_pubkey,
+  // Whether deliveries are actually flowing. `enabled` is what the admin set;
+  // this is what the gate decides. They differ exactly when membership lapsed.
+  member_ok: memberOk,
 });
 
 /**
@@ -190,7 +198,7 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
       return c.json({ reason }, 403);
     }
     if (tag === "NotFoundError" || tag === "BoardOwnershipError") return c.json({ reason }, 404);
-    if (tag === "ValidationError" || tag === "PrivateBoardError") return c.json({ reason }, 400);
+    if (tag === "ValidationError") return c.json({ reason }, 400);
     return c.json({ reason: "internal" }, 500);
   };
 
@@ -217,22 +225,13 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
       return { ...scope, caller: callerPubkey(claims) };
     });
 
-  /**
-   * Outbound webhooks are unavailable on private boards in v1.
-   *
-   * Not merely "encryption is inconvenient": on a private board only `payload`
-   * is encrypted, and the BoardEvent envelope — kind, board_id, issue_id,
-   * sprint_id, at_ms — is cleartext by design so un-granted SSE clients can
-   * read it. Delivering that to a subscriber URL would be a real-time metadata
-   * feed of a private board (which issues exist, when they move, how often)
-   * to anyone who can register a URL, without decrypting anything.
-   */
-  const requirePublicBoard = (board: { encryption_active: boolean }) =>
-    board.encryption_active
-      ? Effect.fail(
-          new PrivateBoardError({ reason: "outbound-webhooks-private-boards-unsupported-v1" }),
-        )
-      : Effect.void;
+  // EFB-62 lifted the v1 private-board refusal that used to live here
+  // (`outbound-webhooks-private-boards-unsupported-v1`). Nothing replaces it at
+  // create time ON PURPOSE: a create-time check cannot see a membership change
+  // that happens afterwards, which is the entire failure this ticket exists to
+  // close. The gate lives at enqueue and at sweep instead — see
+  // `subscriberMayReceive` in src/lib/webhook-dispatch.ts. What create time
+  // does now is capture the identity that gate will check.
 
   // ── list ────────────────────────────────────────────────────────────────
   app.get("/boards/:slug/webhooks", (c) =>
@@ -245,11 +244,39 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
           `SELECT * FROM webhookSubscriptions WHERE board_id = ? ORDER BY created_at_ms DESC`,
           [board.id],
         );
+
+        // EFB-62 — why a silent drop needs a loud surface.
+        //
+        // The gate deliberately does NOT delete or disable a subscription whose
+        // owner lost membership: they may be re-added, and deleting would force
+        // them to re-register from scratch. But "row still here, deliveries
+        // silently stopping" is indistinguishable from "our cron is broken"
+        // unless we say which it is. `member_ok: false` is that answer, so an
+        // admin looking at a quiet webhook sees the reason instead of filing a
+        // bug against the sweep.
+        //
+        // Computed through the same `subscriberMayReceive` the dispatch path
+        // uses. Reusing it rather than restating the rule is what stops this
+        // display from drifting into a comfortable lie about what will be
+        // delivered.
+        const memberOk = new Map<string, boolean>();
+        for (const r of rows) {
+          const key = r.creator_pubkey ?? " null";
+          if (!memberOk.has(key)) {
+            memberOk.set(key, yield* subscriberMayReceive(board, r.creator_pubkey));
+          }
+        }
+
         return {
-          subscriptions: rows.map(subscriptionWire),
-          // Surfaced so the UI can say "private board" instead of offering an
-          // affordance whose only outcome is a 400.
-          private_board: board.encryption_active,
+          subscriptions: rows.map((r) =>
+            subscriptionWire(r, memberOk.get(r.creator_pubkey ?? " null") ?? false),
+          ),
+          // Retained for the UI, now purely informational rather than the
+          // reason an affordance is hidden. Note this is `visibility`, not
+          // `encryption_active`: a board that is private with no audience minted
+          // is still a private board, and EFB-13 telling the UI otherwise is
+          // the same three-state confusion that produced the leak.
+          private_board: board.visibility !== "public",
         };
       }),
       (v) => c.json(v),
@@ -262,7 +289,6 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
       c,
       Effect.gen(function* () {
         const { board, role, caller } = yield* boardScope(c, "admin");
-        yield* requirePublicBoard(board);
         const body = yield* parseRouteBody(c, PostSubscriptionBody);
         yield* requirePredicateAllowed(body.predicate, caller, role);
 
@@ -282,8 +308,8 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
         yield* db.execute(
           `INSERT INTO webhookSubscriptions
              (id, board_id, name, url, event_kinds, predicate, auth_scheme,
-              hmac_secret_ciphertext, enabled, created_at_ms, updated_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+              hmac_secret_ciphertext, enabled, created_at_ms, updated_at_ms, creator_pubkey)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
           [
             id,
             board.id,
@@ -297,11 +323,18 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
             sealed,
             now,
             now,
+            // EFB-62 — the subscription's bound identity, captured here because
+            // here is the only place it exists. `boardScope` already proved this
+            // caller is an admin of the board; what the gate re-checks later is
+            // that they are still a MEMBER at all, which is the weaker and
+            // correct bar: a demoted admin can still read the board, so their
+            // webhook is not carrying anything they lost access to.
+            caller,
           ],
         );
         const row = yield* db.queryFirst("SELECT * FROM webhookSubscriptions WHERE id = ?", [id]);
         return {
-          subscription: subscriptionWire(row as SubscriptionRecord),
+          subscription: subscriptionWire(row as SubscriptionRecord, true),
           // THIS RESPONSE ONLY, mirroring the GitHub secret route: the
           // plaintext is never retrievable again, so a subscriber that loses
           // it rotates rather than reads.
@@ -318,7 +351,6 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
       c,
       Effect.gen(function* () {
         const { board, role, caller } = yield* boardScope(c, "admin");
-        yield* requirePublicBoard(board);
         const body = yield* parseRouteBody(c, PatchSubscriptionBody);
         yield* requirePredicateAllowed(body.predicate, caller, role);
 
@@ -355,7 +387,16 @@ export const makeWebhooksRouter = (layerFor?: LayerFor) => {
           ],
         );
         const row = yield* db.queryFirst("SELECT * FROM webhookSubscriptions WHERE id = ?", [id]);
-        return { subscription: subscriptionWire(row as SubscriptionRecord) };
+        const updated = row as SubscriptionRecord;
+        // NOT rebound to the patching caller. A second admin editing someone
+        // else's webhook would otherwise silently transfer the gate's identity
+        // to themselves, which is an authorization change disguised as a rename.
+        return {
+          subscription: subscriptionWire(
+            updated,
+            yield* subscriberMayReceive(board, updated.creator_pubkey),
+          ),
+        };
       }),
       (v) => c.json(v),
     ),
