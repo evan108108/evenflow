@@ -12,6 +12,7 @@ import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardSettings } from "./pages/BoardSettings";
 import { ArchivedBoardsList, BoardsList } from "./pages/BoardsList";
+import { CapturePage } from "./pages/CapturePage";
 import { DeveloperKeys } from "./pages/DeveloperKeys";
 import { Docs } from "./pages/Docs";
 import { DocsSection } from "./pages/DocsSection";
@@ -72,6 +73,7 @@ export const App = () => (
     <Route path="/profile" component={Profile} />
     <Route path="/docs" component={Docs} />
     <Route path="/docs/:section" component={DocsSection} />
+    <Route path="/capture" component={CapturePage} />
     <Route path="/settings/keys" component={DeveloperKeys} />
     <Route path="/settings/notifications" component={NotificationsSettings} />
     <Route path="/boards" component={() => <BoardsList />} />

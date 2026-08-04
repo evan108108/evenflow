@@ -187,21 +187,44 @@ export const OceanBackground = () => {
     if (stopLoop) stopLoop();
   });
 
+  // Fallback still — same two camera targets baked to WebP by /capture and
+  // shipped from web/public/. When WebGL is off (older Safari, hostile GPU
+  // policy, headless bots) we paint one of these as a fixed background so
+  // the page still reads as "on the water" instead of collapsing to cream.
+  const fallbackUrl = () =>
+    isHome(location.pathname) ? "/ocean-home.webp" : "/ocean-horizon.webp";
+
   return (
-    <Show when={!failed()}>
-      <div
-        aria-hidden="true"
-        style={{
-          position: "fixed",
-          inset: "0",
-          "z-index": "-1",
-          "pointer-events": "none",
-          opacity: ready() ? "1" : "0",
-          transition: "opacity 600ms ease",
-        }}
-      >
-        <canvas ref={canvas} style={{ display: "block", width: "100%", height: "100%" }} />
-      </div>
-    </Show>
+    <>
+      <Show when={!failed()}>
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            inset: "0",
+            "z-index": "-1",
+            "pointer-events": "none",
+            opacity: ready() ? "1" : "0",
+            transition: "opacity 600ms ease",
+          }}
+        >
+          <canvas ref={canvas} style={{ display: "block", width: "100%", height: "100%" }} />
+        </div>
+      </Show>
+      <Show when={failed()}>
+        <div
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            inset: "0",
+            "z-index": "-1",
+            "pointer-events": "none",
+            "background-image": `url("${fallbackUrl()}")`,
+            "background-size": "cover",
+            "background-position": "center",
+          }}
+        />
+      </Show>
+    </>
   );
 };
