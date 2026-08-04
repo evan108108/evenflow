@@ -254,8 +254,15 @@ button:disabled {
    and the whole point of the band is that it reads as checkable fact. */
 .landing-free {
   max-width: 54rem;
-  margin: 0 auto;
-  padding: 0 1.5rem 7rem;
+  /* Was 0 auto — added top+bottom margin so the section becomes a paper card
+     with breathing room around it, floating over the ocean. */
+  margin: 0 auto 5rem;
+  padding: 3.5rem 2.4rem 4.5rem;
+  /* Ocean shows through body: this section owns its own cream so ink text
+     stays legible instead of sitting on water. */
+  background: var(--color-cream);
+  border-radius: var(--radius-chamfer);
+  box-shadow: 0 30px 80px -20px rgba(23, 35, 59, 0.35);
 }
 
 .landing-free-head {
