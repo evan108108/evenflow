@@ -431,6 +431,13 @@ select:disabled {
   -webkit-user-select: none;
   touch-action: none;
   transition: box-shadow 180ms ease, transform 180ms ease, border-color 120ms ease;
+  /* EFB-115 A — cards must never overflow their container. On the mobile
+     single-column layout the horizontal-kanban rail is narrower than a
+     desktop viewport, so any long chip or unbroken title used to spill past
+     the right edge. Cap width to whatever the parent gives us and let long
+     words wrap. */
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .issue-card:hover {
@@ -447,6 +454,7 @@ select:disabled {
   font-size: 0.95rem;
   line-height: 1.35;
   margin-bottom: 0.45rem;
+  overflow-wrap: anywhere;
 }
 
 /* external_state pill (phase 21) — the card's one report from outside the
@@ -2733,6 +2741,17 @@ input.sprint-name:focus {
   overflow-x: hidden;
   padding: 0.5rem 0.4rem 0;
   scrollbar-width: thin;
+}
+
+/* EFB-115 A — rail sections need their own paper-glass tint on top of the
+   ocean; the Icebox especially, since collapsed it's just a header line and
+   was near-invisible on dark water. Same recipe as .kanban-column so the
+   two column families read the same way in the vertical split. */
+.rail-section {
+  background: rgba(23, 35, 59, 0.07);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-radius: var(--radius-chamfer);
 }
 
 /* Collapsed (the Icebox at rest): a closed strip whose header stays a
