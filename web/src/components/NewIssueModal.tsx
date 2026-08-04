@@ -34,6 +34,10 @@ export const NewIssueModal = (props: {
    *  no sprint picker is rendered (defensive — the shell always passes []
    *  or better). */
   sprints?: ReadonlyArray<Sprint>;
+  /** EFB-107 — full assignee roster {pubkey,label}. Board members + any
+   *  pubkey seen assigned on a loaded issue, deduped. Empty is fine; self
+   *  still renders as an option if the caller is signed in. */
+  members?: ReadonlyArray<{ pubkey: string; label: string }>;
   onClose: () => void;
   onCreate: (
     input: NewIssueInput,
@@ -96,6 +100,22 @@ export const NewIssueModal = (props: {
   const pickableSprints = createMemo(() =>
     (props.sprints ?? []).filter((s) => s.status === "active" || s.status === "planning"),
   );
+
+  // Assignee roster: whatever the shell passed, plus self if missing. Self
+  // sorted first so the common case is one click. Alphabetical below that
+  // matches the filter picker's ordering — same source, same order.
+  const assigneeChoices = createMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of props.members ?? []) seen.set(m.pubkey, m.label);
+    if (me !== null && !seen.has(me.pubkey)) seen.set(me.pubkey, meLabel());
+    const entries = [...seen.entries()].map(([pubkey, label]) => ({ pubkey, label }));
+    entries.sort((a, b) => {
+      if (me !== null && a.pubkey === me.pubkey) return -1;
+      if (me !== null && b.pubkey === me.pubkey) return 1;
+      return a.label.localeCompare(b.label);
+    });
+    return entries;
+  });
 
   return (
     <div class="modal-overlay" onClick={(e) => e.target === e.currentTarget && props.onClose()}>
@@ -162,7 +182,7 @@ export const NewIssueModal = (props: {
           <option value="">—</option>
           <For each={ESTIMATES}>{(n) => <option value={String(n)}>{n}</option>}</For>
         </select>
-        <Show when={me !== null}>
+        <Show when={me !== null || assigneeChoices().length > 0}>
           <label for="ni-assignee">Assignee</label>
           <select
             id="ni-assignee"
@@ -170,7 +190,9 @@ export const NewIssueModal = (props: {
             onInput={(e) => setAssignee(e.currentTarget.value)}
           >
             <option value="">Unassigned</option>
-            <option value={me!.pubkey}>{meLabel()}</option>
+            <For each={assigneeChoices()}>
+              {(m) => <option value={m.pubkey}>{m.label}</option>}
+            </For>
           </select>
         </Show>
         <label for="ni-labels">Labels (comma-separated)</label>

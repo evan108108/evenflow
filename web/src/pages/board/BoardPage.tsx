@@ -778,6 +778,12 @@ export const BoardPage = () => {
                 <NewIssueModal
                   board={board()}
                   sprints={store.sprints()}
+                  // EFB-107 — same roster the filter picker already computes,
+                  // minus the UNASSIGNED sentinel (an assignee choice, not
+                  // "no assignee").
+                  members={assigneeOptions()
+                    .filter((o) => o.value !== UNASSIGNED)
+                    .map((o) => ({ pubkey: o.value, label: o.label }))}
                   onClose={() => setShowNewIssue(false)}
                   onCreate={createIssue}
                 />
