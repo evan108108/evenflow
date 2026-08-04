@@ -480,6 +480,7 @@ export const BoardPage = () => {
         >
           {(board) => (
             <>
+              <div class="board-header-glass">
               <TopBar
                 crumbs={[
                   { label: "Boards", href: "/boards" },
@@ -498,7 +499,6 @@ export const BoardPage = () => {
                   signed-out / read-only conditions into MobileBoardHeader is
                   the deliberate cost of that; signedOutBoard.test.tsx asserts
                   both together so they cannot drift apart silently. */}
-              <div class="board-header-glass">
               <header class="board-header board-header-desktop">
                 <h1>{board().title}</h1>
                 <Show when={board().issue_prefix}>
