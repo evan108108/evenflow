@@ -481,7 +481,11 @@ select:disabled {
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: none;
+  /* EFB-115 C — allow browser scroll on touch. The DND handler waits for a
+     long-press (LONG_PRESS_MS) before claiming the pointer via
+     setPointerCapture; anything shorter reads as a tap or swipe and the
+     browser scrolls the column / page as usual. */
+  touch-action: manipulation;
   transition: box-shadow 180ms ease, transform 180ms ease, border-color 120ms ease;
   /* EFB-115 A — cards must never overflow their container. On the mobile
      single-column layout the horizontal-kanban rail is narrower than a

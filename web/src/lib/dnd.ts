@@ -13,6 +13,12 @@
 import { createSignal } from "solid-js";
 
 const DRAG_THRESHOLD_PX = 6;
+// EFB-115 C — touch pointers must hold for LONG_PRESS_MS before drag arms.
+// Below that, a touch is a tap or swipe, and the browser scrolls the page /
+// column instead of trying to drag a card off it. Any pre-arm travel above
+// DRAG_THRESHOLD_PX also cancels arming — the user was scrolling, not
+// preparing to lift.
+const LONG_PRESS_MS = 320;
 // Edge-scroll: while dragging, if the pointer sits within EDGE_PX of the top
 // or bottom of the viewport, scroll the page by up to MAX_SPEED_PX per frame
 // (scaled by how close to the edge the pointer is). Same for the nearest
@@ -53,10 +59,37 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
     if (e.button !== 0) return;
     const startX = e.clientX;
     const startY = e.clientY;
+    const startTarget = e.currentTarget as Element | null;
+    const pointerId = e.pointerId;
+    const isTouch = e.pointerType === "touch";
     let active = false;
+    // EFB-115 C — mouse arms immediately; touch waits for a long press so
+    // tap/swipe gestures keep working as scroll. `armed` gates the move
+    // handler from setting draggingId until the timer fires.
+    let armed = !isTouch;
+    let armTimer: number | null = null;
     let lastY = e.clientY;
     let lastX = e.clientX;
     let scrollRaf: number | null = null;
+
+    if (isTouch) {
+      armTimer = window.setTimeout(() => {
+        armTimer = null;
+        armed = true;
+        // Claim the pointer once armed — subsequent moves are ours, and
+        // the browser stops trying to interpret them as a scroll. Guarded
+        // in case the target is gone (unmounted mid-press).
+        if (startTarget !== null && "setPointerCapture" in startTarget) {
+          try {
+            (startTarget as Element & { setPointerCapture: (n: number) => void })
+              .setPointerCapture(pointerId);
+          } catch {
+            // Pointer capture is best-effort; a stray failure isn't fatal.
+          }
+        }
+        if ("vibrate" in navigator) navigator.vibrate?.(15);
+      }, LONG_PRESS_MS);
+    }
 
     const stopScroll = () => {
       if (scrollRaf !== null) {
@@ -92,7 +125,24 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
     };
 
     const move = (ev: PointerEvent) => {
-      if (!active && Math.hypot(ev.clientX - startX, ev.clientY - startY) > DRAG_THRESHOLD_PX) {
+      const traveled = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+      // EFB-115 C — pre-arm travel on touch means the user is scrolling,
+      // not preparing to drag. Cancel the timer and detach so the browser
+      // can take the gesture back. On mouse we skip this branch (armed is
+      // already true).
+      if (!armed) {
+        if (traveled > DRAG_THRESHOLD_PX) {
+          if (armTimer !== null) {
+            clearTimeout(armTimer);
+            armTimer = null;
+          }
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          stopScroll();
+        }
+        return;
+      }
+      if (!active && traveled > DRAG_THRESHOLD_PX) {
         active = true;
         setDraggingId(id);
       }
@@ -126,6 +176,12 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      // EFB-115 C — release before long-press = tap. Clear the timer so it
+      // doesn't arm a phantom drag after the finger's already lifted.
+      if (armTimer !== null) {
+        clearTimeout(armTimer);
+        armTimer = null;
+      }
       stopScroll();
       const zone = overZone();
       const wasDrag = active;
