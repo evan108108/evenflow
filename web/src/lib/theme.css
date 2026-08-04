@@ -4,9 +4,11 @@
 
 :root {
   --color-cream: #f5f2ec;
-  --color-ink: #17233b;
-  --color-ink-soft: rgba(23, 35, 59, 0.68);
-  --color-ink-faint: rgba(23, 35, 59, 0.14);
+  /* Ink used to be navy (#17233b) — read bluish over the ocean shader.
+     Pure black keeps the editorial contrast without the color cast. */
+  --color-ink: #000000;
+  --color-ink-soft: rgba(0, 0, 0, 0.68);
+  --color-ink-faint: rgba(0, 0, 0, 0.14);
   --color-paper-raised: #fbf9f5;
   /* Empty-field placeholders on cards (EFB-37). Quieter than ink-soft so a
      placeholder never competes with real data, but well above ink-faint,
@@ -63,20 +65,6 @@ html { background: var(--color-cream); }
   flex: 1;
 }
 
-/* Inner-page text color: pure black instead of the ink-navy that read
-   bluish against the ocean's blue-tinted water. Ink navy stays as the
-   theme color for borders, fills, buttons — this only affects text. */
-main:not(.landing-hero-over-ocean),
-main:not(.landing-hero-over-ocean) h1,
-main:not(.landing-hero-over-ocean) h2,
-main:not(.landing-hero-over-ocean) h3,
-main:not(.landing-hero-over-ocean) p,
-main:not(.landing-hero-over-ocean) li,
-main:not(.landing-hero-over-ocean) a,
-main:not(.landing-hero-over-ocean) span,
-main:not(.landing-hero-over-ocean) label {
-  color: #000;
-}
 
 
 h1,
