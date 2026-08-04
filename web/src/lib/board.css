@@ -376,7 +376,7 @@ select:disabled {
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  background: rgba(245, 242, 236, 0.9);
+  background: transparent;
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
@@ -396,7 +396,12 @@ select:disabled {
 .kanban-column h3,
 .rail-section > h3 {
   font-size: 1.02rem;
-  padding: 0.3rem 0.4rem 0.6rem;
+  /* Semi-opaque cream on the header only so the column-name row reads
+     against the ocean; the drop-target body below stays transparent
+     so ocean shows through where cards will sit. */
+  background: rgba(245, 242, 236, 0.9);
+  border-radius: var(--radius-chamfer);
+  padding: 0.55rem 0.75rem 0.65rem;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
