@@ -376,7 +376,12 @@ select:disabled {
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  background: transparent;
+  /* Frosted glass — 35% cream + 18px backdrop blur. Ocean colors tint
+     through and the shader's brightness variance is smoothed so cards
+     read consistently across the whole viewport. */
+  background: rgba(245, 242, 236, 0.35);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
