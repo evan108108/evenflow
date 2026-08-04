@@ -136,6 +136,21 @@ select:disabled {
   flex: 1;
 }
 
+/* Docs link in the topbar — sits between the spacer and UserNav.
+   Same subtle treatment as the crumbs so it's discoverable without
+   competing with the brand or the account controls. */
+.topbar-nav-link {
+  color: var(--color-ink-soft);
+  text-decoration: none;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  padding: 0 0.4rem;
+  transition: color 140ms ease;
+}
+.topbar-nav-link:hover {
+  color: var(--color-ink);
+}
+
 /* Row that carries view tabs on the left + The Current on the right. */
 .tabs-row {
   display: flex;

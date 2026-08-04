@@ -56,6 +56,7 @@ export const TopBar = (props: { crumbs?: readonly Crumb[]; home?: string }) => (
       </nav>
     </Show>
     <div class="topbar-spacer" />
+    <a class="topbar-nav-link" href="/docs">Docs</a>
     <UserNav />
   </div>
 );
