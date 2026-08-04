@@ -1,6 +1,12 @@
-// /docs — the public developer reference (phase 19). No auth, no app
-// chrome dependencies: getting started, the REST reference generated from
-// docs/rest-spec.ts, the MCP tool reference, and the /evenflow skill.
+// /docs — the public documentation. No auth: getting started, the REST
+// reference generated from docs/rest-spec.ts, the MCP tool reference, and the
+// /evenflow skill, plus the EFB-103 sections below.
+//
+// NOT "developer docs", which is what this page called itself through phase
+// 19 and what it stopped being here. The audience is anyone using Evenflow —
+// pointing an agent at the MCP endpoint, or reading what a sprint is, takes
+// no more expertise than using the app does. Naming it for developers tells
+// everyone else the page is not for them.
 
 import { For } from "solid-js";
 import { SECTIONS } from "@docs-content/sections";
@@ -46,9 +52,10 @@ export const Docs = () => (
         so it is not duplicated. */}
     <TopBar home="/" crumbs={[{ label: "Docs" }]} />
     <header class="docs-header">
-      <h1>Developer docs</h1>
+      <h1>Documentation</h1>
       <p class="muted">
-        One REST API, one MCP endpoint, one slash command — all riding the same auth.
+        How Evenflow works, and how to drive it — from the app, the REST API, or an AI
+        agent over MCP. Public, and no account needed to read any of it.
       </p>
       <nav class="docs-nav">
         <a href="#getting-started">Getting started</a>
@@ -64,10 +71,10 @@ export const Docs = () => (
     </header>
 
     {/* EFB-103 — the full documentation set. This page keeps the original
-        developer reference below; these are the sections written for people
-        (and agents) who arrive knowing nothing about Evenflow. */}
+        reference below; these are the sections written for people (and agents)
+        who arrive knowing nothing about Evenflow. */}
     <section class="docs-section docs-index">
-      <h2>Documentation</h2>
+      <h2>Start here</h2>
       <ul class="docs-index-list">
         <For each={SECTIONS}>
           {(section) => (

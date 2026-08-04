@@ -120,14 +120,14 @@ const RenderBlock = (props: { block: Block }) => (
 
 /** Sidebar shared by every docs page, so a reader can always reach the rest. */
 export const DocsNav = (props: { current?: string | undefined }) => (
-  <nav class="docs-nav" aria-label="Documentation">
-    <a class="docs-nav-item" href="/docs" classList={{ current: props.current === undefined }}>
+  <nav class="docs-sidebar" aria-label="Documentation">
+    <a class="docs-sidebar-item" href="/docs" classList={{ current: props.current === undefined }}>
       Overview
     </a>
     <For each={SECTIONS}>
       {(s) => (
         <a
-          class="docs-nav-item"
+          class="docs-sidebar-item"
           href={`/docs/${s.id}`}
           classList={{ current: props.current === s.id }}
         >
@@ -135,12 +135,12 @@ export const DocsNav = (props: { current?: string | undefined }) => (
         </a>
       )}
     </For>
-    <a class="docs-nav-item docs-nav-llms" href="/docs/llms.txt">
+    <a class="docs-sidebar-item docs-sidebar-llms" href="/docs/llms.txt">
       llms.txt ↓
     </a>
     {/* The way into the product. TopBar's brand points at /boards, which is
         behind auth, so a signed-out reader needs this explicitly. */}
-    <a class="docs-nav-item docs-nav-signin" href="/signin">
+    <a class="docs-sidebar-item docs-sidebar-signin" href="/signin">
       Sign in →
     </a>
   </nav>

@@ -69,7 +69,7 @@ describe("docs are public", () => {
 
   it("puts every section in the sidebar of every section page", async () => {
     const { container, cleanup } = await mount(DocsSection, "/docs/concepts", "/docs/:section");
-    const links = [...container.querySelectorAll(".docs-nav a")].map((a) => a.getAttribute("href"));
+    const links = [...container.querySelectorAll(".docs-sidebar a")].map((a) => a.getAttribute("href"));
     for (const section of SECTIONS) expect(links).toContain(`/docs/${section.id}`);
     // And the single-document form, which is the whole point for agents.
     expect(links).toContain("/docs/llms.txt");

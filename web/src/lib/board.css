@@ -3378,7 +3378,7 @@ input.sprint-name:focus {
   }
 }
 
-.docs-nav {
+.docs-sidebar {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -3387,23 +3387,23 @@ input.sprint-name:focus {
   top: 2rem;
 }
 
-.docs-nav-item {
+.docs-sidebar-item {
   padding: 0.35rem 0.6rem;
   border-radius: 6px;
   text-decoration: none;
   font-size: 0.95rem;
 }
 
-.docs-nav-item:hover {
+.docs-sidebar-item:hover {
   background: rgba(0, 0, 0, 0.04);
 }
 
-.docs-nav-item.current {
+.docs-sidebar-item.current {
   background: rgba(0, 0, 0, 0.06);
   font-weight: 600;
 }
 
-.docs-nav-llms {
+.docs-sidebar-llms {
   margin-top: 0.6rem;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 0.85rem;
