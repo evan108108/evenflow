@@ -193,6 +193,14 @@ export const BacklogView = (props: {
 
   const backlogZone = moveZone("promote_to_backlog");
   const iceboxZone = moveZone("send_to_icebox");
+  // EFB-118 — drop-strip at the very top for the running sprint (if any).
+  // Sprint zones are already handled in BoardPage's DND handler; this just
+  // gives the user a drag target instead of forcing the IssueSheet round-trip.
+  const activeSprint = () => props.store.sprints().find((s) => s.status === "active") ?? null;
+  const activeSprintZone = () => {
+    const s = activeSprint();
+    return s === null ? null : sprintZone(s.id);
+  };
 
   const newSprint = () => {
     void props.store.createSprint(`Sprint ${props.store.sprints().length + 1}`);
@@ -202,6 +210,21 @@ export const BacklogView = (props: {
 
   return (
     <div>
+      <Show when={activeSprint() !== null}>
+        {(_ok) => {
+          const s = activeSprint()!;
+          const zone = activeSprintZone()!;
+          return (
+            <div
+              class="drop-strip drop-strip-active-sprint"
+              classList={{ "drop-over": props.dnd.overZone() === zone }}
+              data-dropzone={zone}
+            >
+              Drag here to add to <strong>{s.name}</strong> · active
+            </div>
+          );
+        }}
+      </Show>
       <Show when={planningSprints().length > 0}>
         <div class="sprints-block">
           <For each={planningSprints()}>
