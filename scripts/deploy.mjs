@@ -39,6 +39,19 @@ if (dirty !== "" && process.env["DEPLOY_ALLOW_DIRTY"] !== "1") {
 }
 
 const passthrough = process.argv.slice(2);
+
+// Rebuild the SPA before wrangler picks up ./dist/web. Skipping this is how the
+// Worker ships against a stale bundle: /healthz agrees, the SPA hash on the
+// served HTML still points at the pre-fix chunk, and prod stays broken while
+// the deploy looks green. dist/web is gitignored, so this cannot dirty the
+// tree — the ancestry check above stays honest.
+console.log(`→ building web SPA`);
+const webBuild = spawnSync("npm", ["--prefix", "web", "run", "build"], { stdio: "inherit" });
+if (webBuild.status !== 0) {
+  console.error("\n✘ deploy: web build failed — aborting before wrangler runs.");
+  process.exit(webBuild.status ?? 1);
+}
+
 const args = ["wrangler", "deploy", "--var", `GIT_SHA:${sha}`, ...passthrough];
 
 console.log(`→ deploying ${sha.slice(0, 7)}${dirty === "" ? "" : " (DIRTY — stamp is approximate)"}`);
