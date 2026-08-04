@@ -152,6 +152,28 @@ export const CapturePage = () => {
           pmrem.dispose();
         };
         setStatus("Ready. Pick a preset to bake a still.");
+
+        // Automation door: /capture?auto exposes each preset as a data URL
+        // on `window.__stills` so an external driver (eyebrowse) can pull
+        // them without triggering the file-download branch. Fires once,
+        // sequentially, waiting the same SETTLE_MS between camera snap and
+        // encode as the manual path.
+        (window as any).__captureStill = async (targetY: number): Promise<string> => {
+          smooth.y = targetY;
+          camera.lookAt(0, targetY, 0);
+          await new Promise((r) => setTimeout(r, SETTLE_MS));
+          return canvas!.toDataURL("image/webp", STILL_QUALITY);
+        };
+        if (new URLSearchParams(window.location.search).has("auto")) {
+          setStatus("Auto-mode: baking both presets…");
+          const stills: Record<string, string> = {};
+          for (const p of PRESETS) {
+            setStatus(`Auto: ${p.label}…`);
+            stills[p.filename] = await (window as any).__captureStill(p.y);
+          }
+          (window as any).__stills = stills;
+          setStatus(`Auto: done. window.__stills has ${Object.keys(stills).length} entries.`);
+        }
       } catch (err) {
         console.error("[capture] failed to init", err);
         setStatus(`Failed: ${err instanceof Error ? err.message : String(err)}`);
