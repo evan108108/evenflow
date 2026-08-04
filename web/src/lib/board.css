@@ -623,7 +623,9 @@ select:disabled {
   text-align: center;
   font-size: 0.85rem;
   color: var(--color-ink-soft);
-  margin-bottom: 1rem;
+  /* Inset by .list-section's 0.8rem padding so the strip's outer edges align
+     with the backlog cards above it, not the section's outer box. */
+  margin: 0 0.8rem 1rem;
 }
 
 .empty-state {
