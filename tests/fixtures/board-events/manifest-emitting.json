@@ -1,0 +1,10 @@
+[
+  {
+    "id": "synthetic.emitting",
+    "method": "POST",
+    "path": "/synthetic/emitting",
+    "orgScoped": false,
+    "file": "issues.ts",
+    "auth": "contributor"
+  }
+]

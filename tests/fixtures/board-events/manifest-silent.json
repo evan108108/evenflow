@@ -1,0 +1,10 @@
+[
+  {
+    "id": "synthetic.silent",
+    "method": "POST",
+    "path": "/synthetic/silent",
+    "orgScoped": false,
+    "file": "issues.ts",
+    "auth": "contributor"
+  }
+]

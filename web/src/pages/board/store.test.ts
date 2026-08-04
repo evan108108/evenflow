@@ -1,7 +1,7 @@
 // Board store tests over a capturing ApiClient layer: endpoint dispatch,
 // optimistic updates + rollback.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { url } from "@routes-manifest";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { ApiClient, ApiError } from "../../effects";
@@ -40,6 +40,16 @@ const makeTestRun = (routes: Record<string, unknown>) => {
       }
       if (canned === undefined || canned === FAIL) {
         return Effect.fail(new ApiError({ reason: "http", status: canned === FAIL ? 500 : 404 }));
+      }
+      // EFB-104: a canned value may be a thunk returning a promise the test
+      // resolves by hand. The self-heal races are all about WHEN a response
+      // lands relative to a write, and a stub that answers immediately cannot
+      // express "this poll was issued before the write and returns after it".
+      if (typeof canned === "function") {
+        return Effect.tryPromise({
+          try: () => (canned as () => Promise<T>)(),
+          catch: () => new ApiError({ reason: "http", status: 500 }),
+        });
       }
       return Effect.succeed(canned as T);
     });
@@ -272,5 +282,186 @@ describe("createBoardStore", () => {
     await store.startSprint("s1");
     expect(calls.map((c) => c.path)).toContain(url("sprint.start", { slug: "kb", id: "s1" }));
     expect(store.sprints()[0]!.status).toBe("active");
+  });
+});
+
+// ── EFB-104: poll self-heal + shadow set ──────────────────────────────────
+//
+// Every test here is a TIMELINE, because every bug in this area is one. The
+// stub answers a gated route only when the test resolves it by hand, so a
+// response can be made to land before, during, or after a local write.
+//
+// The pair that matters:
+//   - "poll heals ..." is the POSITIVE CONTROL. It proves a poll response
+//     really does reach and overwrite issues[]. Without it, every assertion
+//     below would also pass against a poll that silently did nothing.
+//   - the two "cannot clobber" tests are the guard.
+// Read them together; either alone proves nothing.
+describe("EFB-104 self-heal", () => {
+  /** A route whose response the test releases by hand. */
+  const gated = <T>() => {
+    let release!: (value: T) => void;
+    const promise = new Promise<T>((resolve) => {
+      release = resolve;
+    });
+    return { thunk: () => promise, release };
+  };
+
+  const C1 = `GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c1`;
+  const C2 = `GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c2`;
+  const C3 = `GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c3`;
+
+  it("poll heals drift the SSE stream never reported (positive control)", async () => {
+    const { store, routes } = await loadedStore();
+    expect(store.issues()[0]!.column_id).toBe("c1");
+
+    // Someone transitioned the issue through the REST API — the exact EFB-102
+    // shape. No BoardEvent reached us; the tab still shows the old column.
+    const moved = issue({ status: "Done", column_id: "c3", updated_at_ms: 9 });
+    routes[C1] = page([]);
+    routes[C3] = page([moved]);
+
+    await store.pollRefresh();
+
+    expect(store.issues()).toHaveLength(1);
+    expect(store.issues()[0]!.column_id).toBe("c3");
+    expect(store.issues()[0]!.status).toBe("Done");
+  });
+
+  it("a poll landing mid-drag cannot pull the card back", async () => {
+    const post = gated<{ issue: Issue }>();
+    const { store, routes } = await loadedStore({
+      [`POST ${url("issue.transition", { id: "i1" })}`]: post.thunk,
+    });
+
+    // t0 — user drops the card on Done. Optimistic write lands, shadow set,
+    // POST fires. The SERVER still has it in c1 (LOAD_ROUTES is unchanged),
+    // which is the whole point: the write has not been processed yet.
+    const dropped = store.transition(store.issues()[0]!, COLUMNS[2]!);
+    expect(store.issues()[0]!.column_id).toBe("c3");
+
+    // t1..t3 — the poll runs and returns while the POST is still in flight.
+    await store.pollRefresh();
+
+    // Without the shadow set this is "c1" and the card visibly snaps back to
+    // In Progress under the user's cursor.
+    expect(store.issues()[0]!.column_id).toBe("c3");
+    expect(store.issues()[0]!.status).toBe("Done");
+
+    // t4 — the API confirms, and the server now agrees the card is in c3
+    // (transition re-primes both streams' cursors, so those pages are read).
+    const moved = issue({ status: "Done", column_id: "c3", updated_at_ms: 9 });
+    routes[C1] = page([]);
+    routes[C3] = page([moved]);
+    post.release({ issue: moved });
+    await dropped;
+    expect(store.issues()[0]!.column_id).toBe("c3");
+  });
+
+  it("another user's SSE refetch mid-drag cannot clobber the drop either", async () => {
+    const post = gated<{ issue: Issue }>();
+    const { store } = await loadedStore({
+      [`POST ${url("issue.transition", { id: "i1" })}`]: post.thunk,
+    });
+
+    const dropped = store.transition(store.issues()[0]!, COLUMNS[2]!);
+    expect(store.issues()[0]!.column_id).toBe("c3");
+
+    // BoardPage calls refetchIssues() on any issue.* event from another user.
+    // It carries no epoch guard by design — their change must not be dropped —
+    // so the shadow merge is the only thing protecting our in-flight cell.
+    // This path predates EFB-104 and clobbered the same way a poll would.
+    await store.refetchIssues();
+
+    expect(store.issues()[0]!.column_id).toBe("c3");
+    expect(store.issues()[0]!.status).toBe("Done");
+
+    post.release({ issue: issue({ status: "Done", column_id: "c3", updated_at_ms: 9 }) });
+    await dropped;
+  });
+
+  // The epoch guard's job is the half the shadow set CANNOT do: discard a
+  // response about issues the write never touched, because that response
+  // describes a board state that no longer exists.
+  //
+  // So the discriminator is a SECOND issue. i2 is never written to, so nothing
+  // shadows it — if the response were merely shadow-merged, i2's stale title
+  // would land. Only a wholesale discard keeps it out. Asserting on i1 instead
+  // would prove nothing: the shadow set alone would satisfy it.
+  const withTwoIssues = async (extra: Record<string, unknown> = {}) => {
+    const i2 = issue({ id: "i2", short_id: "KB-2", title: "Second issue", status: "In Progress", column_id: "c2" });
+    const loaded = await loadedStore({
+      [`GET ${url("issue.list", { slug: "kb" })}?container=active&limit=50&column_id=c2`]: page([i2]),
+      ...extra,
+    });
+    expect(loaded.store.issues()).toHaveLength(2);
+    return loaded;
+  };
+
+  it("epoch guard discards a whole poll response overtaken by a write", async () => {
+    const c2 = gated<unknown>();
+    const { store, routes } = await withTwoIssues({
+      [`POST ${url("issue.transition", { id: "i1" })}`]: {
+        issue: issue({ status: "Done", column_id: "c3" }),
+      },
+    });
+    // Gate c2 — the column the mid-flight write does NOT touch, so the write
+    // can complete while the poll is still in the air.
+    routes[C2] = c2.thunk;
+
+    const polling = store.pollRefresh();
+
+    // A drag lands while the poll is in flight. transition() re-primes c1 and
+    // c3 only, so it does not block on the gate.
+    routes[C1] = page([]);
+    routes[C3] = page([issue({ status: "Done", column_id: "c3" })]);
+    await store.transition(store.issues().find((i) => i.id === "i1")!, COLUMNS[2]!);
+
+    c2.release(page([issue({ id: "i2", short_id: "KB-2", title: "STALE TITLE", column_id: "c2" })]));
+    await polling;
+
+    const i2After = store.issues().find((i) => i.id === "i2")!;
+    expect(i2After.title).toBe("Second issue");
+  });
+
+  it("...and lets that same response through when no write overtook it", async () => {
+    // Positive twin of the test above, identical but for the mid-flight write.
+    // Without this, the assertion above would also pass against a poll that
+    // silently dropped every response.
+    const c2 = gated<unknown>();
+    const { store, routes } = await withTwoIssues();
+    routes[C2] = c2.thunk;
+
+    const polling = store.pollRefresh();
+    c2.release(page([issue({ id: "i2", short_id: "KB-2", title: "RENAMED ELSEWHERE", column_id: "c2" })]));
+    await polling;
+
+    expect(store.issues().find((i) => i.id === "i2")!.title).toBe("RENAMED ELSEWHERE");
+  });
+
+  it("the shadow releases on its TTL — a stuck write cannot freeze the board", async () => {
+    const post = gated<{ issue: Issue }>();
+    const { store, routes } = await loadedStore({
+      [`POST ${url("issue.transition", { id: "i1" })}`]: post.thunk,
+    });
+
+    const real = Date.now();
+    void store.transition(store.issues()[0]!, COLUMNS[2]!);
+    expect(store.isFieldShadowed("i1", "column_id")).toBe(true);
+
+    // The request never comes back. 5s later the cell is the server's again,
+    // otherwise one hung POST would pin a card in place indefinitely.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(real + 6000);
+    try {
+      expect(store.isFieldShadowed("i1", "column_id")).toBe(false);
+
+      const moved = issue({ status: "Done", column_id: "c3" });
+      routes[C1] = page([]);
+      routes[C3] = page([moved]);
+      await store.pollRefresh();
+      expect(store.issues()[0]!.column_id).toBe("c3");
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

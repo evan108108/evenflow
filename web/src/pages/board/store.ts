@@ -130,7 +130,11 @@ export const createBoardStore = (
   const mergeIssues = (incoming: Issue[]) =>
     setIssues((list) => {
       const byId = new Map(list.map((i) => [i.id, i]));
-      for (const i of incoming) byId.set(i.id, i);
+      // EFB-104: shadow-aware, for the same reason refetchIssues is. This is
+      // the paging path AND the post-mutation stream re-prime, so a page that
+      // was fetched before a local write can still land after it and would
+      // otherwise overwrite the cell the user just set.
+      for (const i of mergeWithShadow(list, incoming)) byId.set(i.id, i);
       return [...byId.values()];
     });
 
@@ -246,28 +250,128 @@ export const createBoardStore = (
   const replaceIssue = (updated: Issue) =>
     setIssues((list) => list.map((i) => (i.id === updated.id ? updated : i)));
 
-  // Track issues we just mutated locally so the board-stream SSE echo of our
-  // own write doesn't fire a full refetchIssues() (which wipes streams and
-  // re-primes — visible flash). 2s TTL is well past round-trip.
-  const localMutationDeadlines = new Map<string, number>();
-  const LOCAL_MUTATION_TTL_MS = 2000;
-  const noteLocalMutation = (id: string) => {
-    localMutationDeadlines.set(id, Date.now() + LOCAL_MUTATION_TTL_MS);
-  };
-  const isLocalMutation = (id: string): boolean => {
-    const until = localMutationDeadlines.get(id);
-    if (until === undefined) return false;
-    if (Date.now() > until) {
-      localMutationDeadlines.delete(id);
-      return false;
+  // ── shadow set (EFB-104) ────────────────────────────────────────────────
+  //
+  // Two consumers, one map. This started as `localMutationDeadlines`, keyed
+  // by issue id with a 2s TTL, and its only job was to stop the board-stream
+  // SSE echo of our own write from firing a full refetchIssues() (which
+  // re-primes every stream — visible flash after every drag). EFB-104 needs
+  // the same fact at CELL granularity: "is this issue's `status` right now a
+  // local value the server has not confirmed?" That lets the 60s poll refresh
+  // every other field of a card the user just dropped without yanking the
+  // card back to the column the server still believes it is in.
+  //
+  // ONE map rather than a second poll-specific one, deliberately. Two
+  // suppression maps with different key granularities and different TTLs
+  // drift apart, and the drift stays invisible until it surfaces as a race.
+  //
+  // THE TTL IS THE ONLY RELEASE. Clearing on the API's 200 reads as tidier
+  // and reopens the exact race this exists to close:
+  //
+  //   t0  user drops a card    → shadow (id, status) set, POST fires
+  //   t1  poll request issued  → server still holds the OLD column
+  //   t2  POST returns 200     → shadow cleared
+  //   t3  t1's response lands  → nothing guards it, the stale value wins,
+  //                              card jumps back, stays wrong until the next
+  //                              poll a full 60s later
+  //
+  // 5s covers the round trip, and optimistic() already writes the server's
+  // authoritative row on 200 via replaceIssue(), so nothing is lost by
+  // letting the entry age out rather than clearing it.
+  const SHADOW_TTL_MS = 5000;
+  /** Sentinel field: every field of this issue is locally owned. */
+  const ALL_FIELDS = "*";
+  /** issue id → field → epoch-ms deadline. */
+  const shadow = new Map<string, Map<string, number>>();
+
+  /**
+   * Monotonic count of local writes. A poll stamps this before it fetches and
+   * discards its response if it moved — the coarse half of the defense, where
+   * the shadow set is the per-cell half. They cover different failures: the
+   * shadow set protects a field whose local value is newer than the server's,
+   * the epoch protects against a response that predates a write entirely.
+   */
+  let mutationEpoch = 0;
+
+  /**
+   * Mark fields of `id` as locally owned for the next 5s.
+   *
+   * Omit `fields` for a write whose server-side effects we cannot enumerate
+   * (a PATCH that also moves the card, say) — that shadows the whole row,
+   * which is what the id-keyed original did for every caller.
+   */
+  const noteLocalMutation = (id: string, fields: readonly string[] = [ALL_FIELDS]) => {
+    const until = Date.now() + SHADOW_TTL_MS;
+    let byField = shadow.get(id);
+    if (byField === undefined) {
+      byField = new Map<string, number>();
+      shadow.set(id, byField);
     }
-    return true;
+    for (const f of fields) byField.set(f, until);
+    // Every local write moves the epoch. A poll response that was already in
+    // flight when this happened is answering a question about a board state
+    // that no longer exists, so it is discarded wholesale rather than merged.
+    mutationEpoch += 1;
+  };
+
+  /** Live (unexpired) deadlines for `id`, pruned. Deletes the id when empty. */
+  const liveFields = (id: string): Map<string, number> | null => {
+    const byField = shadow.get(id);
+    if (byField === undefined) return null;
+    const now = Date.now();
+    for (const [field, until] of byField) if (now > until) byField.delete(field);
+    if (byField.size === 0) {
+      shadow.delete(id);
+      return null;
+    }
+    return byField;
+  };
+
+  /** Did we mutate this issue in the last 5s? Gates SSE echo suppression. */
+  const isLocalMutation = (id: string): boolean => liveFields(id) !== null;
+
+  /** Is this specific cell locally owned? Gates the poll/refetch merge. */
+  const isFieldShadowed = (id: string, field: string): boolean => {
+    const byField = liveFields(id);
+    if (byField === null) return false;
+    return byField.has(ALL_FIELDS) || byField.has(field);
+  };
+
+  /**
+   * Fold a freshly fetched page union into the issues we already have,
+   * keeping locally-owned cells.
+   *
+   * This is the whole of the poll's self-heal: everything the server says is
+   * taken EXCEPT cells the user has just written and the server has not yet
+   * acknowledged. It also protects the SSE path — before EFB-104 another
+   * user's issue.* event mid-drag called refetchIssues() and clobbered the
+   * dragger's optimistic write the same way a poll would.
+   */
+  const mergeWithShadow = (prev: readonly Issue[], incoming: readonly Issue[]): Issue[] => {
+    const localById = new Map(prev.map((i) => [i.id, i]));
+    return incoming.map((next) => {
+      const local = localById.get(next.id);
+      if (local === undefined) return next;
+      let merged: Issue | null = null;
+      for (const field of Object.keys(next) as Array<keyof Issue & string>) {
+        if (Object.is(local[field], next[field])) continue;
+        if (!isFieldShadowed(next.id, field)) continue;
+        merged ??= { ...next };
+        Object.assign(merged, { [field]: local[field] });
+      }
+      return merged ?? next;
+    });
   };
 
   /** Optimistically apply `patch` to one issue, run the API call, roll back on failure. */
   const optimistic = async (id: string, patch: Partial<Issue>, call: () => Promise<Issue>) => {
     const snapshot = issues();
-    noteLocalMutation(id);
+    // Shadow exactly the cells this write owns, so a poll landing mid-flight
+    // still refreshes everything else about the card. reorderIssue passes an
+    // empty patch when it has no position to guess — no named cell to protect,
+    // but the row is still ours, so fall back to whole-row.
+    const fields = Object.keys(patch);
+    noteLocalMutation(id, fields.length > 0 ? fields : undefined);
     setIssues((list) => list.map((i) => (i.id === id ? ({ ...i, ...patch } as Issue) : i)));
     try {
       replaceIssue(await call());
@@ -336,7 +440,14 @@ export const createBoardStore = (
 
   const primeStreams = (b: Board | null) => refreshStreams(allStreamKeys(b));
 
-  const refetchIssues = async () => {
+  /**
+   * @param guardEpoch When given, the response is DISCARDED if any local write
+   *   landed while it was in flight. Passed by the poll (see pollRefresh) and
+   *   deliberately NOT by the SSE path: an SSE refresh carries another user's
+   *   change, and dropping it wholesale would lose their edit until the next
+   *   poll. The shadow merge below already protects our own cells there.
+   */
+  const refetchIssues = async (guardEpoch?: number) => {
     // Non-destructive refresh: fetch every stream's first page in parallel
     // FIRST, then swap issues[] to the union in a single setIssues() call.
     // Previously we wiped issues[] + cleared streams and awaited the reprime
@@ -349,6 +460,10 @@ export const createBoardStore = (
       const pages = await Promise.all(
         keys.map(([container, columnId]) => fetchPage(container, columnId, null)),
       );
+      // A write landed while these pages were in flight, so they describe a
+      // board state that no longer exists. Drop them — including the cursor
+      // updates, which would otherwise pin streams to stale positions.
+      if (guardEpoch !== undefined && guardEpoch !== mutationEpoch) return;
       const collected: Issue[] = [];
       const seen = new Set<string>();
       keys.forEach(([container, columnId], idx) => {
@@ -368,13 +483,30 @@ export const createBoardStore = (
         }
       });
       // Single reactive write — a transitioned card visibly jumps to its
-      // new column in one frame, no empty intermediate state.
-      setIssues(collected);
+      // new column in one frame, no empty intermediate state. The merge keeps
+      // cells the user owns right now (EFB-104); everything else is the
+      // server's answer.
+      setIssues((prev) => mergeWithShadow(prev, collected));
       setStreamTick((n) => n + 1);
     } catch {
       // Quiet refresh — a failed background refetch keeps the current view.
     }
   };
+
+  /**
+   * EFB-104 — the 60s/tab-focus self-heal.
+   *
+   * Exists because a board can go stale through paths SSE never covers: an
+   * API-driven transition (a coordinator script, a worker, a GitHub rule, any
+   * integration holding a scoped key) mutates state whose route emits no
+   * BoardEvent, so the stream stays silent and the tab keeps rendering a
+   * snapshot from page load. EFB-102 sat in the wrong column for minutes that
+   * way. Part 2 of this ticket closes the missing emits; this closes the class.
+   *
+   * Silent by design — no banner, no interaction. A self-healed card looks
+   * exactly like a collaborator's move, which is what Evan ratified.
+   */
+  const pollRefresh = () => refetchIssues(mutationEpoch);
 
   /** Move to a column by stable id (column_id survives renames). If the
    *  issue is in the backlog or icebox (rail drop → status column), promote
@@ -718,7 +850,9 @@ export const createBoardStore = (
     lastError,
     load,
     refetchIssues,
+    pollRefresh,
     isLocalMutation,
+    isFieldShadowed,
     refetchSprints,
     createSprint,
     patchSprint,
