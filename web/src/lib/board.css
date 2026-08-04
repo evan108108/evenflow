@@ -2743,10 +2743,14 @@ input.sprint-name:focus {
 }
 
 /* Icon-only layout toggle in the tabs-row.
-   theme.css sets the house button default at padding: 0.55rem 1.1rem, and
-   with box-sizing: border-box that padding eats the declared 32×32 box and
-   knocks the icon off-center to the right and down. Override to 0. */
+   This is its own class of thing — a bare icon in a round pill, not a house
+   button. The default `button` rule in theme.css sets padding, letter-spacing,
+   font-size, and an ink-fill hover, none of which apply here; without an
+   explicit reset the padding shoves the icon off-center and hover paints the
+   whole pill dark. The `all: revert` line resets every property back to the
+   UA default, and then this rule paints the pill from scratch. */
 .layout-toggle {
+  all: revert;
   display: inline-grid;
   place-items: center;
   width: 32px;
@@ -2756,11 +2760,14 @@ input.sprint-name:focus {
   border-radius: 999px;
   background: transparent;
   color: var(--color-ink-soft);
+  font: inherit;
+  letter-spacing: normal;
   cursor: pointer;
   transition: all 140ms ease;
 }
 
 .layout-toggle:hover {
+  background: transparent;
   border-color: var(--color-ink);
   color: var(--color-ink);
 }
