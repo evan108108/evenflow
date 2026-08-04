@@ -611,6 +611,12 @@ select:disabled {
 }
 
 .drop-strip {
+  /* Paper-glass tint so the ink label reads over the ocean shader — otherwise
+     the muted ink sits on dark water and disappears. Keeps the dashed border
+     as the drop-zone affordance. */
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   border: 1.5px dashed var(--color-ink-faint);
   border-radius: var(--radius-chamfer);
   padding: 0.7rem;
