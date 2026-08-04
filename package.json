@@ -11,6 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "postinstall": "npm --prefix web install",
     "predeploy": "node scripts/predeploy-ancestry-check.mjs",
     "deploy": "bin/deploy",
     "deploy:raw": "node scripts/deploy.mjs",
