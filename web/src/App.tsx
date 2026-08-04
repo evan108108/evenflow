@@ -49,8 +49,11 @@ const Drifting = () => (
  * page; putting it in shared chrome that eight pages do not use would have
  * looked like compliance without being it.
  */
+import { OceanBackground } from "./components/OceanBackground";
+
 export const Shell = (props: { children?: unknown }) => (
   <>
+    <OceanBackground />
     {props.children as never}
     <SiteFooter />
   </>

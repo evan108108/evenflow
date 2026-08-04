@@ -172,7 +172,20 @@ describe("the docs link is on every page", () => {
   it("is rendered by the router shell that wraps every route", () => {
     const container = document.createElement("div");
     document.body.appendChild(container);
-    const dispose = render(() => <Shell>{"a page that knows nothing about docs"}</Shell>, container);
+    // Shell reads location for the ocean background, so it must be tested
+    // in a Router context — exactly the context it lives in. The claim the
+    // test is asserting (Shell wraps arbitrary children with docs link) is
+    // unchanged; only the wrapping is added.
+    const history = createMemoryHistory();
+    history.set({ value: "/" });
+    const dispose = render(
+      () => (
+        <MemoryRouter history={history} root={Shell}>
+          <Route path="/" component={() => <>a page that knows nothing about docs</>} />
+        </MemoryRouter>
+      ),
+      container,
+    );
     expect(container.textContent).toContain("a page that knows nothing about docs");
     const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(links).toContain("/docs");

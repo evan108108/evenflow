@@ -40,10 +40,17 @@ body {
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.6;
-  background: var(--color-cream);
+  /* Transparent so the fixed OceanBackground canvas at z:-1 shows through.
+     The cream cards, columns and topbar all declare their own backgrounds,
+     so the "editorial paper on cream" reads the same on inner routes; the
+     background just switches from a flat wash to a live ocean shader. */
+  background: transparent;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
+/* Fallback for pages where the shader hasn't mounted yet (or WebGL is off) —
+   the cream stays on the html element so we never flash a black frame. */
+html { background: var(--color-cream); }
 
 h1,
 h2,
@@ -158,6 +165,47 @@ button:disabled {
 .btn-solid:hover {
   background: transparent;
   color: var(--color-ink);
+}
+
+/* Landing hero + buttons over the ocean shader.
+   The homepage camera pitches the ocean down so the sun is out of frame and
+   the water reads near-black; the hero swaps to cream text so the Bodoni
+   wordmark and tagline don't blow out. Every inner route keeps the standard
+   ink-on-cream palette — this override is scoped to Landing's hero. */
+.landing-hero-over-ocean,
+.landing-hero-over-ocean h1,
+.landing-hero-over-ocean .muted {
+  color: var(--color-cream);
+}
+.landing-hero-over-ocean h1 {
+  text-shadow: 0 2px 32px rgba(0, 0, 0, 0.4);
+}
+.landing-hero-over-ocean .muted {
+  color: rgba(245, 242, 236, 0.72);
+}
+.landing-hero-over-ocean a {
+  color: inherit;
+}
+.landing-hero-over-ocean .landing-mark svg path {
+  stroke: var(--color-cream);
+}
+
+.btn-over-ocean {
+  border-color: var(--color-cream);
+  background: transparent;
+  color: var(--color-cream);
+}
+.btn-over-ocean:hover {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+.btn-over-ocean-primary {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+.btn-over-ocean-primary:hover {
+  background: transparent;
+  color: var(--color-cream);
 }
 
 .muted {
