@@ -491,6 +491,25 @@ export const BoardPage = () => {
   const countdownFor = (sprint: { planned_days?: number | null; started_at_ms: number | null }) =>
     sprintCountdown(sprint, store.board()?.default_sprint_days, Date.now());
 
+  // EFB-115 B2 — measure the sticky header height and expose it as
+  // --board-header-h on :root. Per-column scroll regions clamp their
+  // max-height against this so they fill exactly what's left of the
+  // viewport without the header pushing them off. ResizeObserver keeps it
+  // honest on viewport resize, breakpoint changes, and filter-chip wraps.
+  const mountStickyMeasurer = (el: HTMLDivElement) => {
+    const publish = () => {
+      const h = el.getBoundingClientRect().height;
+      document.documentElement.style.setProperty("--board-header-h", `${Math.ceil(h)}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    onCleanup(() => {
+      ro.disconnect();
+      document.documentElement.style.removeProperty("--board-header-h");
+    });
+  };
+
   const createIssue = async (
     input: NewIssueInput,
     files: ReadonlyArray<File>,
@@ -546,8 +565,10 @@ export const BoardPage = () => {
             <>
               {/* EFB-115 B — the whole header block sticks to the top of the
                   viewport so the wordmark, crumbs, view tabs, sprint chip,
-                  and filter chips stay in reach as the page scrolls. */}
-              <div class="board-sticky">
+                  and filter chips stay in reach as the page scrolls. Its
+                  live height is broadcast as --board-header-h so per-column
+                  scroll regions below can size themselves correctly. */}
+              <div class="board-sticky" ref={mountStickyMeasurer}>
               <TopBar
                 crumbs={[
                   { label: "Boards", href: "/boards" },

@@ -396,6 +396,12 @@ select:disabled {
      hiding it entirely; ocean tints through subtly. Dashed outline still
      reveals on hover to signal drop-target intent. */
   min-height: 60vh;
+  /* EFB-115 B2 — cap the column's height to the viewport minus the sticky
+     header, and let cards scroll inside instead of pushing the page. The
+     min-height above still holds when the deck is shorter than the cap;
+     `max-height` only bites when the column would otherwise exceed it. */
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
+  overflow-y: auto;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
   /* The drop-over recipe as default: heavy backdrop blur + faint dark
@@ -427,6 +433,23 @@ select:disabled {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+}
+
+/* EFB-115 B2 — column header pins to the top of its scrollable column so
+   the title + count stay visible while cards scroll behind them. Matches
+   the column's glass tint (not paper-cream) so it reads as an extension of
+   the column, not a card. Vertical layout keeps its normal flow (the whole
+   stack scrolls as one). */
+.kanban:not(.layout-vertical) .kanban-column > h3 {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -0.5rem 0.4rem;
+  padding-left: 0.9rem;
+  padding-right: 0.9rem;
+  background: rgba(23, 35, 59, 0.08);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
 .kanban-column h3 .count,
@@ -2711,6 +2734,10 @@ input.sprint-name:focus {
   /* Columns reserve 60vh as a drop runway; stacked sections must not.
      A slim floor keeps an empty section's header a usable drop target. */
   min-height: 0;
+  /* EFB-115 B2 — vertical layout keeps a single page-scroll (one long
+     stack), so undo the horizontal-layout per-column cap + overflow. */
+  max-height: none;
+  overflow-y: visible;
 }
 
 .kanban.layout-vertical .kanban-column-content {
