@@ -63,20 +63,19 @@ html { background: var(--color-cream); }
   flex: 1;
 }
 
-/* Every inner-page main is a frosted glass panel over the ocean — 70% cream
-   plus a heavy backdrop blur so ocean tints subtly through but everything
-   BEHIND main is blurred, keeping text crisp regardless of what part of the
-   shader is underneath. Landing's hero opts out (below) so the wordmark
-   sits directly on the water. */
-main {
-  background: rgba(245, 242, 236, 0.72);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+/* No background on main — content sits directly on the ocean, as intended.
+   Inner-page text gets a soft cream halo instead so ink navy stays readable
+   against the darker parts of the water without needing a container. */
+main:not(.landing-hero-over-ocean) {
+  text-shadow: 0 0 12px rgba(245, 242, 236, 0.55), 0 0 3px rgba(245, 242, 236, 0.4);
 }
-main.landing-hero-over-ocean {
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+main:not(.landing-hero-over-ocean) input,
+main:not(.landing-hero-over-ocean) textarea,
+main:not(.landing-hero-over-ocean) select,
+main:not(.landing-hero-over-ocean) button,
+main:not(.landing-hero-over-ocean) .card,
+main:not(.landing-hero-over-ocean) .kanban-column {
+  text-shadow: none;
 }
 
 

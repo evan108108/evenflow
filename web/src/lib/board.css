@@ -369,13 +369,6 @@ select:disabled {
 .kanban-column {
   flex: 1 1 260px;
   min-width: 260px;
-  /* Semi-opaque cream so the column reads as a paper card floating on
-     the ocean. Without this the darker left-side water bled through and
-     the ink text on top read bluish/dim; the 88% wash pins contrast to
-     the normal ink-on-cream palette while still letting the ocean subtly
-     tint through. */
-  background: rgba(245, 242, 236, 0.88);
-  border-radius: var(--radius-chamfer);
   /* Reserve real drop-target height even when a column is empty. The
      outer column is invisible at rest — dashed outline reveals on
      hover (matching the previous always-visible weight, just on
