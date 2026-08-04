@@ -71,6 +71,55 @@ export class SseError extends Data.TaggedError("SseError")<{
   readonly status?: number;
 }> {}
 
+/** Longest a tab will ever wait before trying to reconnect. */
+export const MAX_RECONNECT_DELAY = "30 seconds";
+
+/**
+ * EFB-104 — the reconnect policy, and the root cause of EFB-102.
+ *
+ * This was `Schedule.exponential("1 second")`, uncapped. Its delay sequence is
+ *
+ *     1s 2s 4s 8s 16s 32s 64s 128s 256s 512s 1024s 2048s …
+ *
+ * so the 9th consecutive failure waits 4m16s and the 12th waits 34m, growing
+ * without bound. That is the whole of EFB-102: an issue was transitioned
+ * through the REST API, the board UI still showed the old column minutes
+ * later, and a cache-busted read confirmed the server was right. The audit in
+ * this same ticket proved the emit was never missing — `transitionIssue` emits
+ * `issue.transitioned`, and 25 of 30 board-domain routes emit. Nothing was
+ * wrong on the write side. The tab simply was not connected to hear it.
+ *
+ * WHY A LONG-LIVED TAB GETS THERE, which is the part that surprised me:
+ * `Stream.retry` resets its schedule driver on every OUTPUT the stream emits
+ * (`channel.mapOutEffect(out => Effect.as(driver.reset, out))` in Effect's
+ * internal/stream). The pull loop below consumes heartbeats and the
+ * `: connected` comment WITHOUT emitting — only a real BoardEvent produces a
+ * chunk. So on a quiet board, every reconnect succeeds and none of them reset
+ * the backoff. The exponential stops meaning "consecutive failures" and starts
+ * meaning "failures for the lifetime of this tab", which on a board with
+ * little traffic is a one-way ratchet.
+ *
+ * WHY THE CAP AND NOT A RESET-ON-CONNECT: resetting the moment a connection is
+ * established would make a FLAPPING connection retry every second forever,
+ * which is how a client-side reconnect turns into a self-inflicted outage on
+ * the server it is trying to reach. Resetting only once a connection has
+ * proven itself is the correct shape, and "proven itself" is exactly what
+ * receiving an event demonstrates. So the reset stays where it is and the
+ * unbounded growth — the actual defect — is bounded instead.
+ *
+ * WHAT THIS DOES NOT FIX, and why the poll is still load-bearing rather than
+ * belt-and-braces: BoardDO's subscriber set is in-memory with no replay, so an
+ * event emitted while a tab is disconnected is gone for that tab even after it
+ * reconnects. The cap shrinks that window from unbounded to ≤30s; it cannot
+ * close it. Backfill-on-reconnect would, and EFB-104 explicitly scoped it out
+ * because the 60s poll covers the same ground for every cause at once —
+ * including causes nobody has diagnosed yet. See web/src/lib/boardPoll.ts.
+ */
+export const RECONNECT_POLICY = Schedule.union(
+  Schedule.exponential("1 second"),
+  Schedule.spaced(MAX_RECONNECT_DELAY),
+);
+
 export interface SseStreamService {
   readonly subscribe: (path: string) => Stream.Stream<BoardEvent, SseError>;
 }
@@ -159,8 +208,7 @@ export const SseStreamLive: Layer.Layer<SseStream, never, ApiConfig | AuthManage
       );
 
     return {
-      subscribe: (path) =>
-        connect(path).pipe(Stream.retry(Schedule.exponential("1 second"))),
+      subscribe: (path) => connect(path).pipe(Stream.retry(RECONNECT_POLICY)),
     };
   }),
 );

@@ -1,5 +1,27 @@
 // EFB-104 — when the board re-checks the server, and when it deliberately does not.
 //
+// WHY THIS EXISTS AT ALL, now that EFB-102's cause is known.
+//
+// The ticket assumed the drift came from a route that mutated board state and
+// emitted no BoardEvent. It did not: the audit behind `npm run check:board-events`
+// proved every board-domain mutating route either emits or is exempt for a
+// stated reason, `transitionIssue` among the emitters. The real cause was on
+// the client — an uncapped `Schedule.exponential` reconnect whose delay ratchets
+// past 4 minutes on a long-lived tab, so the tab was not listening when the
+// event went out. That is fixed at source in effects/SseStream.ts.
+//
+// This poll is NOT redundant now, and the reason is worth stating rather than
+// assumed: BoardDO holds subscribers in memory with no replay, so ANY window in
+// which a tab is not connected loses the events emitted during it. Capping the
+// backoff bounds that window to 30s; it cannot remove it. Sleep/wake, a deploy,
+// a dropped network, an evicted DO — each still costs whatever was emitted
+// while the tab was away, and the tab has no way to learn it missed anything.
+//
+// So the poll is the only mechanism that converges the UI on server truth
+// without depending on the delivery path being healthy — including for causes
+// nobody has diagnosed yet. The self-heal is load-bearing; the SSE fix makes it
+// rare that it has anything to do.
+//
 // This is three lines of wiring in BoardPage's onMount, and it lives here for
 // the reason signedOutBoard.test.tsx states about the redirect rule it also
 // extracted: asserting anything inside BoardPage costs a router, the Effect
