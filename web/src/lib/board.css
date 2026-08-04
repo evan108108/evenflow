@@ -440,16 +440,23 @@ select:disabled {
    the column's glass tint (not paper-cream) so it reads as an extension of
    the column, not a card. Vertical layout keeps its normal flow (the whole
    stack scrolls as one). */
-.kanban:not(.layout-vertical) .kanban-column > h3 {
+.kanban:not(.layout-vertical) .kanban-column .kanban-column-content h3 {
   position: sticky;
-  top: 0;
+  /* Compensate for .kanban-column-content's own top padding so the sticky
+     h3 hugs the column's inner top edge instead of leaving a strip of
+     cards visible above it. */
+  top: -0.6rem;
   z-index: 5;
-  margin: 0 -0.5rem 0.4rem;
-  padding-left: 0.9rem;
-  padding-right: 0.9rem;
+  margin: -0.6rem -0.6rem 0.4rem;
+  padding: 0.9rem 0.9rem 0.6rem;
   background: rgba(23, 35, 59, 0.08);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+/* Column-content also needs overflow visible so the sticky h3's stretched
+   backdrop doesn't clip along the padding line. */
+.kanban:not(.layout-vertical) .kanban-column .kanban-column-content {
+  overflow: visible;
 }
 
 .kanban-column h3 .count,
