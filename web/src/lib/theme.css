@@ -51,12 +51,12 @@ body {
    the cream stays on the html element so we never flash a black frame. */
 html { background: var(--color-cream); }
 
-/* Every inner-page <main> is an opaque cream sheet floating over the ocean.
-   Landing's hero opts out (.landing-hero-over-ocean below) so the ocean
-   fills the viewport behind the wordmark. Everything else keeps the exact
-   ink-on-cream palette it already had — only what's BEHIND main changes. */
+/* Every inner-page <main> is a translucent cream wash over the ocean —
+   88% cream so text stays readable and the palette reads unchanged, with
+   just enough ocean bleeding through to feel like there's water beneath.
+   Landing's hero opts out so the wordmark sits directly on the shader. */
 main {
-  background: var(--color-cream);
+  background: rgba(245, 242, 236, 0.88);
 }
 main.landing-hero-over-ocean {
   background: transparent;
