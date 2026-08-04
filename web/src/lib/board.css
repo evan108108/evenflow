@@ -405,15 +405,12 @@ select:disabled {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  /* Cream over the ocean — title, count and points all read against the
-     dark-tinted column wash instead of using the ink palette. */
-  color: var(--color-cream);
 }
 
 .kanban-column h3 .count,
 .rail-section > h3 .count {
   font-size: 0.9rem;
-  color: rgba(245, 242, 236, 0.75);
+  color: var(--color-ink-soft);
 }
 
 /* any dropzone under the pointer during a drag */
