@@ -3155,27 +3155,29 @@ input.sprint-name:focus {
 
 .board-search {
   position: relative;
-  /* Sits inside .filter-chips as the last chip — search is a text filter,
-     not an action. A fixed basis so the input doesn't grow to fill the row. */
-  flex: 0 1 14rem;
+  /* Sits between the title and the action buttons in .board-header. A
+     fixed basis keeps the input from growing into the buttons on a wide
+     viewport or collapsing on a narrow one. */
+  flex: 0 1 16rem;
 }
 
 .board-search-input {
-  /* Match the .filter-chip look — same font, border, background, radius —
-     so the search reads as one of the filters. */
+  /* Same visual weight as the neighboring .btn buttons (Sprints, Settings,
+     New issue): same border stroke, same radius, same padding rhythm so
+     they render at matching height. */
   width: 100%;
-  padding: 0.35rem 1rem;
+  padding: 0.7rem 1.1rem;
   font-family: var(--font-sans);
-  font-size: 0.8rem;
+  font-size: 0.95rem;
   letter-spacing: 0.02em;
   color: var(--color-ink);
   background: transparent;
-  border: 1.5px solid var(--color-ink-faint);
-  border-radius: 999px;
+  border: 1.5px solid var(--color-ink);
+  border-radius: var(--radius-chamfer);
   transition: border-color 140ms ease;
 }
-.board-search-input:hover {
-  border-color: rgba(0, 0, 0, 0.4);
+.board-search-input::placeholder {
+  color: rgba(0, 0, 0, 0.45);
 }
 
 .board-search-input::placeholder {
