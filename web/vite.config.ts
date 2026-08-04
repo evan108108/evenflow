@@ -37,6 +37,12 @@ export default defineConfig({
       // is also what makes it impossible for the picker to offer the `keys`
       // domain: the exclusion is the same constant the server refuses on.
       "@scopes": path.resolve(__dirname, "../src/scopes.ts"),
+      // EFB-103: documentation content, authored once and rendered twice —
+      // as pages here, as one text/plain document by the Worker. Same
+      // dependency-free rule as the modules above.
+      "@docs-content/sections": path.resolve(__dirname, "../src/docs/sections.ts"),
+      "@docs-content/model": path.resolve(__dirname, "../src/docs/model.ts"),
+      "@docs-content/api-reference": path.resolve(__dirname, "../src/docs/api-reference.ts"),
     },
   },
   build: {

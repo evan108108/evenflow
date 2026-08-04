@@ -3,6 +3,7 @@
 // docs/rest-spec.ts, the MCP tool reference, and the /evenflow skill.
 
 import { For } from "solid-js";
+import { SECTIONS } from "@docs-content/sections";
 import { methodOf, pathOf, MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
 import { IMPORT_PROMPTS, IMPORT_PROMPT_PREAMBLE } from "./docs/import-prompts";
 import { CANONICAL_COLUMNS } from "../../../src/lib/csv-canonical";
@@ -54,6 +55,27 @@ export const Docs = () => (
         <a href="#attachment-privacy">Attachment storage</a>
       </nav>
     </header>
+
+    {/* EFB-103 — the full documentation set. This page keeps the original
+        developer reference below; these are the sections written for people
+        (and agents) who arrive knowing nothing about Evenflow. */}
+    <section class="docs-section docs-index">
+      <h2>Documentation</h2>
+      <ul class="docs-index-list">
+        <For each={SECTIONS}>
+          {(section) => (
+            <li>
+              <a href={`/docs/${section.id}`}>{section.title}</a>
+              <span class="muted"> — {section.blurb}</span>
+            </li>
+          )}
+        </For>
+      </ul>
+      <p class="muted">
+        Reading this as an agent? The whole set is one text/plain document at{" "}
+        <a href="/docs/llms.txt">/docs/llms.txt</a> — one request, no JavaScript.
+      </p>
+    </section>
 
     <section id="getting-started" class="docs-section">
       <h2>Getting started</h2>

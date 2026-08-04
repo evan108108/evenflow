@@ -3319,3 +3319,166 @@ input.sprint-name:focus {
   border-radius: 6px;
   margin: 0.6rem 0;
 }
+
+
+/* ── EFB-103: documentation ─────────────────────────────────────────────
+   No focus rings anywhere here, per the house rule. Links are underlined on
+   hover rather than ringed on focus. */
+
+.site-footer {
+  border-top: 1px solid var(--color-rule, rgba(0, 0, 0, 0.08));
+  margin-top: 4rem;
+  padding: 1.6rem 1.5rem 2.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: center;
+  text-align: center;
+}
+
+.site-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  justify-content: center;
+}
+
+.site-footer-links a {
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.site-footer-links a:hover {
+  text-decoration: underline;
+}
+
+.site-footer-note {
+  font-size: 0.82rem;
+  max-width: 34rem;
+}
+
+.docs-main {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 2rem var(--page-inset-left, 3rem);
+}
+
+/* Sidebar beside content on a wide screen; stacked on a narrow one, because
+   a docs page that needs a horizontal scroll to read is not a docs page. */
+.docs-shell {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  gap: 2.5rem;
+  margin-top: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .docs-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.docs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-self: start;
+  position: sticky;
+  top: 2rem;
+}
+
+.docs-nav-item {
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.docs-nav-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.docs-nav-item.current {
+  background: rgba(0, 0, 0, 0.06);
+  font-weight: 600;
+}
+
+.docs-nav-llms {
+  margin-top: 0.6rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+}
+
+.docs-body {
+  min-width: 0;
+}
+
+.docs-blurb {
+  margin-top: -0.4rem;
+  margin-bottom: 1.6rem;
+}
+
+.docs-p {
+  line-height: 1.65;
+  max-width: 46rem;
+  margin: 0 0 1rem;
+}
+
+.docs-h {
+  margin: 2rem 0 0.7rem;
+}
+
+.docs-list {
+  line-height: 1.65;
+  max-width: 46rem;
+  padding-left: 1.2rem;
+}
+
+.docs-list li {
+  margin-bottom: 0.4rem;
+}
+
+/* Tables scroll inside their own box rather than widening the page. */
+.docs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0 1.4rem;
+  font-size: 0.92rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.docs-table th,
+.docs-table td {
+  text-align: left;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--color-rule, rgba(0, 0, 0, 0.08));
+  vertical-align: top;
+}
+
+.docs-table th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.docs-index-list {
+  line-height: 1.9;
+  padding-left: 1.1rem;
+}
+
+.docs-api-family h3 {
+  margin-top: 2.2rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* 108 endpoints is a lot of curl. Collapsed by default so the tables stay
+   scannable; open when you want the runnable form. */
+.docs-curls summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+.docs-curl {
+  margin-bottom: 1rem;
+}
