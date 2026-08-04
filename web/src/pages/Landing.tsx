@@ -81,31 +81,6 @@ export const Landing = () => {
   });
   return (
   <>
-  {/*
-    Docs link in the top-right corner. Landing has no TopBar — the butterfly
-    IS the header — but docs need to be discoverable at a glance the way
-    Stripe/Cloudflare/Linear/Vercel put "Docs" in their headers. A single
-    ink-soft link respects the editorial minimalism while surfacing the
-    page a signed-out reader is most likely to want.
-  */}
-  <a
-    href="/docs"
-    style={{
-      position: "fixed",
-      top: "1.4rem",
-      right: "1.6rem",
-      "font-family": "var(--font-sans)",
-      "font-size": "0.9rem",
-      "letter-spacing": "0.02em",
-      color: "var(--color-ink-soft)",
-      "text-decoration": "none",
-      "z-index": "10",
-    }}
-    onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-ink)")}
-    onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-ink-soft)")}
-  >
-    Docs
-  </a>
   <main
     style={{
       display: "grid",

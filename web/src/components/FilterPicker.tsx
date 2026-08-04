@@ -23,7 +23,23 @@ export const FilterPicker = (props: {
   emptyLine: string;
 }) => {
   const [open, setOpen] = createSignal(false);
+  // Anchor position for the fixed-positioned menu. Recomputed each time the
+  // picker opens from the trigger's bounding rect, because .filter-chips is
+  // a horizontally-scrollable container (overflow-x: auto) which forces
+  // overflow-y to compute to auto too — so an absolutely-positioned menu
+  // gets clipped vertically by the parent's overflow box and never appears.
+  // Fixed positioning escapes that constraint.
+  const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
   let root: HTMLDivElement | undefined;
+  let trigger: HTMLButtonElement | undefined;
+
+  const openMenu = () => {
+    if (trigger) {
+      const r = trigger.getBoundingClientRect();
+      setAnchor({ left: r.left, top: r.bottom + 6 });
+    }
+    setOpen(true);
+  };
 
   const onDocClick = (e: MouseEvent) => {
     if (open() && root && !root.contains(e.target as Node)) setOpen(false);
@@ -32,8 +48,6 @@ export const FilterPicker = (props: {
   onCleanup(() => document.removeEventListener("mousedown", onDocClick));
 
   const count = () => props.selected.length;
-  // The count carries the state, so the chip reads the same whether one or
-  // twelve are picked — no truncated name soup in the header.
   const chipText = () => (count() === 0 ? props.label : `${props.label} · ${count()}`);
 
   return (
@@ -44,12 +58,21 @@ export const FilterPicker = (props: {
         classList={{ on: count() > 0 }}
         aria-haspopup="menu"
         aria-expanded={open()}
-        onClick={() => setOpen(!open())}
+        ref={trigger}
+        onClick={() => (open() ? setOpen(false) : openMenu())}
       >
         {chipText()}
       </button>
       <Show when={open()}>
-        <div class="filter-menu" role="menu">
+        <div
+          class="filter-menu"
+          role="menu"
+          style={{
+            position: "fixed",
+            left: `${anchor()?.left ?? 0}px`,
+            top:  `${anchor()?.top  ?? 0}px`,
+          }}
+        >
           <Show
             when={props.options.length > 0}
             fallback={<div class="filter-menu-empty">{props.emptyLine}</div>}
