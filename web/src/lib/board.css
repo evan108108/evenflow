@@ -379,7 +379,7 @@ select:disabled {
   /* Frosted-glass column: 55% cream + backdrop blur so the ocean's colors
      still tint through but the sharp brightness variance is softened, and
      card/header text reads consistently across the light and dark bands. */
-  background: rgba(245, 242, 236, 0.55);
+  background: rgba(245, 242, 236, 0.35);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1.5px dashed transparent;
