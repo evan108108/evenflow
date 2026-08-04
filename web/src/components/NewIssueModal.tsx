@@ -2,7 +2,7 @@
 // it to store.createIssue and releases the butterfly on success).
 
 import { For, Show, createMemo, createRenderEffect, createSignal } from "solid-js";
-import type { Board } from "../lib/types";
+import type { Board, Sprint } from "../lib/types";
 import type { NewIssueInput } from "../pages/board/store";
 import { decodeJwtClaims, pubkeyOfJwt } from "../lib/jwt";
 import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
@@ -29,8 +29,17 @@ const selfAssignee = (): { pubkey: string; login: string } | null => {
 
 export const NewIssueModal = (props: {
   board: Board;
+  /** Active + planning sprints, in display order. Modal filters and offers
+   *  them; picking one triggers an attach after the create. Undefined means
+   *  no sprint picker is rendered (defensive — the shell always passes []
+   *  or better). */
+  sprints?: ReadonlyArray<Sprint>;
   onClose: () => void;
-  onCreate: (input: NewIssueInput, files: ReadonlyArray<File>) => Promise<void>;
+  onCreate: (
+    input: NewIssueInput,
+    files: ReadonlyArray<File>,
+    sprintId: string | null,
+  ) => Promise<void>;
 }) => {
   const [title, setTitle] = createSignal("");
   const [type, setType] = createSignal<string>(DEFAULT_ISSUE_TYPE);
@@ -42,6 +51,11 @@ export const NewIssueModal = (props: {
   const [estimate, setEstimate] = createSignal("");
   const [labels, setLabels] = createSignal("");
   const [assignee, setAssignee] = createSignal("");
+  // EFB-108 — pick a sprint at create time. Empty string = no sprint. If the
+  // sprint is the active one, EFB-17's server-side auto-promote flips the
+  // container to `active` after attach, so the user does not have to
+  // co-choose it here.
+  const [sprintId, setSprintId] = createSignal("");
   const [busy, setBusy] = createSignal(false);
 
   const me = selfAssignee();
@@ -71,11 +85,17 @@ export const NewIssueModal = (props: {
       ...(assignee() === "" ? {} : { assignee_pubkey: assignee() }),
     };
     try {
-      await props.onCreate(input, files());
+      await props.onCreate(input, files(), sprintId() === "" ? null : sprintId());
     } finally {
       setBusy(false);
     }
   };
+
+  // Only offer sprints the user could reasonably pick — active + planning,
+  // never completed. Completed sprints are archival and can't take issues.
+  const pickableSprints = createMemo(() =>
+    (props.sprints ?? []).filter((s) => s.status === "active" || s.status === "planning"),
+  );
 
   return (
     <div class="modal-overlay" onClick={(e) => e.target === e.currentTarget && props.onClose()}>
@@ -115,6 +135,24 @@ export const NewIssueModal = (props: {
           <option value="active">Active</option>
           <option value="icebox">Icebox</option>
         </select>
+        <Show when={pickableSprints().length > 0}>
+          <label for="ni-sprint">Sprint</label>
+          <select
+            id="ni-sprint"
+            value={sprintId()}
+            onInput={(e) => setSprintId(e.currentTarget.value)}
+          >
+            <option value="">— None</option>
+            <For each={pickableSprints()}>
+              {(s) => (
+                <option value={s.id}>
+                  {s.name}
+                  {s.status === "active" ? " · active" : " · planning"}
+                </option>
+              )}
+            </For>
+          </select>
+        </Show>
         <label for="ni-estimate">Estimate</label>
         <select
           id="ni-estimate"

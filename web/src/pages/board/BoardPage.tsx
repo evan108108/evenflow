@@ -442,8 +442,23 @@ export const BoardPage = () => {
   const countdownFor = (sprint: { planned_days?: number | null; started_at_ms: number | null }) =>
     sprintCountdown(sprint, store.board()?.default_sprint_days, Date.now());
 
-  const createIssue = async (input: NewIssueInput, files: ReadonlyArray<File>) => {
+  const createIssue = async (
+    input: NewIssueInput,
+    files: ReadonlyArray<File>,
+    sprintId: string | null,
+  ) => {
     const issue = await store.createIssue(input);
+    // EFB-108 — sprint attach fires after create. Failure surfaces as a
+    // notice rather than a create failure; the issue exists either way.
+    if (sprintId !== null) {
+      try {
+        await store.addIssueToSprint(issue, sprintId);
+      } catch (e) {
+        setUploadNotice(
+          `Created, but sprint attach failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    }
     setShowNewIssue(false);
     const rect = newIssueButton?.getBoundingClientRect();
     if (rect !== undefined) {
@@ -760,7 +775,12 @@ export const BoardPage = () => {
               </Show>
 
               <Show when={showNewIssue()}>
-                <NewIssueModal board={board()} onClose={() => setShowNewIssue(false)} onCreate={createIssue} />
+                <NewIssueModal
+                  board={board()}
+                  sprints={store.sprints()}
+                  onClose={() => setShowNewIssue(false)}
+                  onCreate={createIssue}
+                />
               </Show>
 
               <Show when={flutter()}>{(at) => <Butterfly x={at().x} y={at().y} />}</Show>

@@ -62,7 +62,7 @@ export const CapturePage = () => {
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(55, 1, 1, 20000);
         camera.position.set(30, 30, 100);
-        const smooth = { y: PRESETS[0].y };
+        const smooth = { y: PRESETS[0]?.y ?? 0 };
         camera.lookAt(0, smooth.y, 0);
         cameraRef = camera;
         smoothRef = smooth;
