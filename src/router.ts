@@ -26,6 +26,7 @@ import { makeAudiencesRouter } from "./routes/audiences";
 import { makeAuthRouter } from "./routes/auth";
 import { makeBoardsRouter } from "./routes/boards";
 import { makeCommentsRouter } from "./routes/comments";
+import { makeDocsRouter } from "./routes/docs";
 import { makeFeedRouter } from "./routes/feed";
 import { makeGithubRouter } from "./routes/github";
 import { makeImportsRouter } from "./routes/imports";
@@ -135,6 +136,8 @@ export const MOUNTS: readonly Mount[] = [
   { prefix: ORG_PREFIX, make: makeAudiencesRouter },
   { prefix: ORG_PREFIX, make: makeGithubRouter },
   { prefix: API_PREFIX, make: makeProfileRouter },
+  // Root mount: /docs/llms.txt is not an API path.
+  { prefix: "/", make: makeDocsRouter },
 ];
 
 /**

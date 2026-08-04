@@ -558,6 +558,17 @@ export const ROUTES = [
 
   // ---- wellknown.ts (mounted at root) -------------------------------------
   {
+    // EFB-103 — the whole documentation set as one text/plain document, so an
+    // agent can read it in a single request instead of crawling the SPA.
+    id: "docs.llms",
+    method: "GET",
+    path: "/docs/llms.txt",
+    orgScoped: false,
+    file: "docs.ts",
+    auth: "public",
+    mount: "root",
+  },
+  {
     id: "wellknown.oauthProtectedResource",
     method: "GET",
     path: "/.well-known/oauth-protected-resource",
