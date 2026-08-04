@@ -183,7 +183,10 @@ button:disabled {
 .landing-hero-over-ocean .muted {
   color: rgba(245, 242, 236, 0.72);
 }
-.landing-hero-over-ocean a {
+/* Inline links inherit the cream, but BUTTON links keep their own color —
+   `.btn-over-ocean-primary` needs to win the cream-fill-plus-ink-text combo
+   or the primary CTA renders cream-on-cream and disappears. */
+.landing-hero-over-ocean a:not(.btn) {
   color: inherit;
 }
 .landing-hero-over-ocean .landing-mark svg path {
