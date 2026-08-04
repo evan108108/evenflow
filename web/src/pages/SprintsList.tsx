@@ -146,19 +146,21 @@ export const SprintsList = () => {
         </Show>
       </header>
       <Show when={!sprints.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
-        <Group title="Active" sprints={active()} basePath={basePath()} empty="No sprint in flight." />
-        <Group
-          title="Planning"
-          sprints={planning()}
-          basePath={basePath()}
-          empty="Nothing planned. Open the Backlog to shape the next one."
-        />
-        <Group
-          title="Completed"
-          sprints={completed()}
-          basePath={basePath()}
-          empty="No history yet."
-        />
+        <div class="paper-glass">
+          <Group title="Active" sprints={active()} basePath={basePath()} empty="No sprint in flight." />
+          <Group
+            title="Planning"
+            sprints={planning()}
+            basePath={basePath()}
+            empty="Nothing planned. Open the Backlog to shape the next one."
+          />
+          <Group
+            title="Completed"
+            sprints={completed()}
+            basePath={basePath()}
+            empty="No history yet."
+          />
+        </div>
       </Show>
     </main>
   );

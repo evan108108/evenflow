@@ -71,8 +71,15 @@ export const OrgSettings = () => {
       .catch(() => [] as PendingInvite[]),
   );
 
-  const isAdmin = () => detail()?.role === "admin" || detail()?.role === "owner";
-  const isOwner = () => detail()?.role === "owner";
+  // Personal orgs don't have a membership row for the owner — the API returns
+  // role: null. But if you can load the org's settings page at all, you own
+  // it (personal org = your user's namespace), so you have every permission.
+  const isAdmin = () =>
+    detail()?.org.kind === "personal" ||
+    detail()?.role === "admin" ||
+    detail()?.role === "owner";
+  const isOwner = () =>
+    detail()?.org.kind === "personal" || detail()?.role === "owner";
   const isPersonal = () => detail()?.org.kind === "personal";
 
   const [displayName, setDisplayName] = createSignal<string | null>(null);

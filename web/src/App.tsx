@@ -12,6 +12,7 @@ import { Route, Router } from "@solidjs/router";
 import { BoardPage } from "./pages/board/BoardPage";
 import { BoardSettings } from "./pages/BoardSettings";
 import { ArchivedBoardsList, BoardsList } from "./pages/BoardsList";
+import { CapturePage } from "./pages/CapturePage";
 import { DeveloperKeys } from "./pages/DeveloperKeys";
 import { Docs } from "./pages/Docs";
 import { DocsSection } from "./pages/DocsSection";
@@ -49,10 +50,19 @@ const Drifting = () => (
  * page; putting it in shared chrome that eight pages do not use would have
  * looked like compliance without being it.
  */
+import { OceanBackground } from "./components/OceanBackground";
+
 export const Shell = (props: { children?: unknown }) => (
   <>
-    {props.children as never}
-    <SiteFooter />
+    <OceanBackground />
+    {/* Flex column occupying at least the viewport, so on short pages the
+        footer pins to the bottom instead of floating up right after the
+        content. `main` gets flex: 1 in theme.css to fill the leftover
+        space. */}
+    <div class="app-shell">
+      {props.children as never}
+      <SiteFooter />
+    </div>
   </>
 );
 
@@ -63,6 +73,7 @@ export const App = () => (
     <Route path="/profile" component={Profile} />
     <Route path="/docs" component={Docs} />
     <Route path="/docs/:section" component={DocsSection} />
+    <Route path="/capture" component={CapturePage} />
     <Route path="/settings/keys" component={DeveloperKeys} />
     <Route path="/settings/notifications" component={NotificationsSettings} />
     <Route path="/boards" component={() => <BoardsList />} />

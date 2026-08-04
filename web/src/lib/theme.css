@@ -4,9 +4,11 @@
 
 :root {
   --color-cream: #f5f2ec;
-  --color-ink: #17233b;
-  --color-ink-soft: rgba(23, 35, 59, 0.68);
-  --color-ink-faint: rgba(23, 35, 59, 0.14);
+  /* Ink used to be navy (#17233b) — read bluish over the ocean shader.
+     Pure black keeps the editorial contrast without the color cast. */
+  --color-ink: #000000;
+  --color-ink-soft: rgba(0, 0, 0, 0.68);
+  --color-ink-faint: rgba(0, 0, 0, 0.14);
   --color-paper-raised: #fbf9f5;
   /* Empty-field placeholders on cards (EFB-37). Quieter than ink-soft so a
      placeholder never competes with real data, but well above ink-faint,
@@ -40,10 +42,43 @@ body {
   font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.6;
-  background: var(--color-cream);
+  /* Transparent so the fixed OceanBackground canvas at z:-1 shows through.
+     Every page's <main> declares an explicit cream so inner-route text stays
+     on paper; only Landing's hero opts out to sit directly on the water. */
+  background: transparent;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
 }
+/* Fallback for pages where the shader hasn't mounted yet (or WebGL is off) —
+   the cream stays on the html element so we never flash a black frame. */
+html { background: var(--color-cream); }
+
+/* Flex column filling the viewport so the site footer pins to the bottom
+   on short pages instead of floating up right below the last bit of
+   content. `main` grows to fill the leftover space. */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.app-shell > main {
+  flex-grow: 1;
+  width: 100%;
+}
+
+/* Content panel for pages that don't read well directly on the ocean —
+   semi-transparent cream + backdrop blur so it reads as a floating paper
+   sheet. Apply on any container that wraps a page's main content. */
+.paper-glass {
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+}
+
+
 
 h1,
 h2,
@@ -160,6 +195,50 @@ button:disabled {
   color: var(--color-ink);
 }
 
+/* Landing hero + buttons over the ocean shader.
+   The homepage camera pitches the ocean down so the sun is out of frame and
+   the water reads near-black; the hero swaps to cream text so the Bodoni
+   wordmark and tagline don't blow out. Every inner route keeps the standard
+   ink-on-cream palette — this override is scoped to Landing's hero. */
+.landing-hero-over-ocean,
+.landing-hero-over-ocean h1,
+.landing-hero-over-ocean .muted {
+  color: var(--color-cream);
+}
+.landing-hero-over-ocean h1 {
+  text-shadow: 0 2px 32px rgba(0, 0, 0, 0.4);
+}
+.landing-hero-over-ocean .muted {
+  color: rgba(245, 242, 236, 0.72);
+}
+/* Inline links inherit the cream, but BUTTON links keep their own color —
+   `.btn-over-ocean-primary` needs to win the cream-fill-plus-ink-text combo
+   or the primary CTA renders cream-on-cream and disappears. */
+.landing-hero-over-ocean a:not(.btn) {
+  color: inherit;
+}
+.landing-hero-over-ocean .landing-mark svg path {
+  stroke: var(--color-cream);
+}
+
+.btn-over-ocean {
+  border-color: var(--color-cream);
+  background: transparent;
+  color: var(--color-cream);
+}
+.btn-over-ocean:hover {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+.btn-over-ocean-primary {
+  background: var(--color-cream);
+  color: var(--color-ink);
+}
+.btn-over-ocean-primary:hover {
+  background: transparent;
+  color: var(--color-cream);
+}
+
 .muted {
   color: var(--color-ink-soft);
 }
@@ -203,8 +282,15 @@ button:disabled {
    and the whole point of the band is that it reads as checkable fact. */
 .landing-free {
   max-width: 54rem;
-  margin: 0 auto;
-  padding: 0 1.5rem 7rem;
+  /* Was 0 auto — added top+bottom margin so the section becomes a paper card
+     with breathing room around it, floating over the ocean. */
+  margin: 0 auto 5rem;
+  padding: 3.5rem 2.4rem 4.5rem;
+  /* Ocean shows through body: this section owns its own cream so ink text
+     stays legible instead of sitting on water. */
+  background: var(--color-cream);
+  border-radius: var(--radius-chamfer);
+  box-shadow: 0 30px 80px -20px rgba(23, 35, 59, 0.35);
 }
 
 .landing-free-head {

@@ -16,7 +16,6 @@ import type { ScopeAccess, ScopeDomain } from "@scopes";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { TopBar } from "../components/TopBar";
-import { UserNav } from "../components/UserNav";
 import "../lib/board.css";
 
 interface KeyView {
@@ -197,11 +196,8 @@ export const DeveloperKeys = () => {
   return (
     <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
       <TopBar crumbs={[{ label: "Boards", href: "/boards" }, { label: "API keys" }]} />
-      <header
-        style={{ display: "flex", "align-items": "center", "justify-content": "space-between", "margin-bottom": "0.4rem" }}
-      >
+      <header style={{ "margin-bottom": "0.4rem" }}>
         <h1 style={{ "font-size": "2.2rem" }}>API keys</h1>
-        <UserNav />
       </header>
       <p class="muted" style={{ "margin-bottom": "1.8rem" }}>
         Keys authenticate the REST API and the MCP endpoint as you. Rotating a key mints a

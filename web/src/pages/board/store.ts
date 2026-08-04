@@ -278,7 +278,11 @@ export const createBoardStore = (
   // 5s covers the round trip, and optimistic() already writes the server's
   // authoritative row on 200 via replaceIssue(), so nothing is lost by
   // letting the entry age out rather than clearing it.
-  const SHADOW_TTL_MS = 5000;
+  // Bumped from 5s to 30s on 2026-08-04 — Evan reproduced a drag-clobber
+  // (card jumps back after drop) on the ocean branch. Code review didn't
+  // find a logic flaw, so this widens the protection window while a proper
+  // diagnostic (EFB-111) figures out what's actually racing.
+  const SHADOW_TTL_MS = 30_000;
   /** Sentinel field: every field of this issue is locally owned. */
   const ALL_FIELDS = "*";
   /** issue id → field → epoch-ms deadline. */

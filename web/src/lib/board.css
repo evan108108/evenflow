@@ -369,14 +369,19 @@ select:disabled {
 .kanban-column {
   flex: 1 1 260px;
   min-width: 260px;
-  /* Reserve real drop-target height even when a column is empty. The
-     outer column is invisible at rest — dashed outline reveals on
-     hover (matching the previous always-visible weight, just on
-     intent), and promotes to solid ink during a drag. */
+  /* Reserve real drop-target height even when a column is empty. Semi-opaque
+     cream so the column reads as a paper card floating on the ocean without
+     hiding it entirely; ocean tints through subtly. Dashed outline still
+     reveals on hover to signal drop-target intent. */
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  background: transparent;
+  /* The drop-over recipe as default: heavy backdrop blur + faint dark
+     ink wash so the shader softens into a glass panel and cards read
+     consistently. Dashed border only shows on hover / during drag. */
+  background: rgba(23, 35, 59, 0.07);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
@@ -606,13 +611,21 @@ select:disabled {
 }
 
 .drop-strip {
+  /* Paper-glass tint so the ink label reads over the ocean shader — otherwise
+     the muted ink sits on dark water and disappears. Keeps the dashed border
+     as the drop-zone affordance. */
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   border: 1.5px dashed var(--color-ink-faint);
   border-radius: var(--radius-chamfer);
   padding: 0.7rem;
   text-align: center;
   font-size: 0.85rem;
   color: var(--color-ink-soft);
-  margin-bottom: 1rem;
+  /* Inset by .list-section's 0.8rem padding so the strip's outer edges align
+     with the backlog cards above it, not the section's outer box. */
+  margin: 0 0.8rem 1rem;
 }
 
 .empty-state {
@@ -1281,6 +1294,15 @@ select:disabled {
 }
 .settings-section {
   margin: 2.4rem 0;
+  /* Same treatment as .paper-glass (theme.css) — semi-transparent cream +
+     backdrop blur so every settings section reads as a floating paper
+     panel over the ocean. */
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
 }
 .settings-section > h2 {
   font-size: 1.35rem;
@@ -3150,21 +3172,29 @@ input.sprint-name:focus {
 
 .board-search {
   position: relative;
-  /* Sits between the title and the action buttons in .board-header, which is
-     flex with a .spacer. A fixed basis keeps the input from growing into the
-     buttons on a wide viewport or collapsing to nothing on a narrow one. */
+  /* Sits between the title and the action buttons in .board-header. A
+     fixed basis keeps the input from growing into the buttons on a wide
+     viewport or collapsing on a narrow one. */
   flex: 0 1 16rem;
 }
 
 .board-search-input {
+  /* Same visual weight as the neighboring .btn buttons (Sprints, Settings,
+     New issue): same border stroke, same radius, same padding rhythm so
+     they render at matching height. */
   width: 100%;
-  padding: 0.45rem 0.75rem;
+  padding: 0.7rem 1.1rem;
   font-family: var(--font-sans);
-  font-size: 0.92rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
   color: var(--color-ink);
-  background: var(--color-paper-raised);
-  border: 1px solid var(--color-ink-faint);
+  background: transparent;
+  border: 1.5px solid var(--color-ink);
   border-radius: var(--radius-chamfer);
+  transition: border-color 140ms ease;
+}
+.board-search-input::placeholder {
+  color: rgba(0, 0, 0, 0.45);
 }
 
 .board-search-input::placeholder {
@@ -3335,7 +3365,10 @@ input.sprint-name:focus {
    hover rather than ringed on focus. */
 
 .site-footer {
-  border-top: 1px solid var(--color-rule, rgba(0, 0, 0, 0.08));
+  /* Sits outside any <main>, directly over the ocean shader. Cream text +
+     a cream-tinted rule up top so the footer reads against the dark water
+     without needing its own paper card. */
+  border-top: 1px solid rgba(245, 242, 236, 0.16);
   margin-top: 4rem;
   padding: 1.6rem 1.5rem 2.4rem;
   display: flex;
@@ -3343,7 +3376,10 @@ input.sprint-name:focus {
   gap: 0.5rem;
   align-items: center;
   text-align: center;
+  color: var(--color-cream);
 }
+.site-footer a { color: var(--color-cream); }
+.site-footer .muted { color: rgba(245, 242, 236, 0.72); }
 
 .site-footer-links {
   display: flex;
@@ -3420,6 +3456,24 @@ input.sprint-name:focus {
 
 .docs-body {
   min-width: 0;
+  /* Same paper-glass panel treatment as .settings-section so docs content
+     floats over the ocean instead of sitting directly on the water. */
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+}
+/* Also on the /docs index page (which uses .docs-section, not .docs-body). */
+.docs-section {
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+  margin-bottom: 1.6rem;
 }
 
 .docs-blurb {

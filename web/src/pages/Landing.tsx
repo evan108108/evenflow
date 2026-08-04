@@ -82,6 +82,7 @@ export const Landing = () => {
   return (
   <>
   <main
+    class="landing-hero-over-ocean"
     style={{
       display: "grid",
       "place-items": "center",
@@ -109,7 +110,7 @@ export const Landing = () => {
           to SPA-route, hit no match, and render the 404 shell.
         */}
         <a
-          class="btn btn-solid"
+          class="btn btn-solid btn-over-ocean btn-over-ocean-primary"
           href={`${url("auth.oauth.start")}?provider=google`}
           rel="external"
           onClick={(e) => {
@@ -120,7 +121,7 @@ export const Landing = () => {
           Sign in with Google
         </a>
         <a
-          class="btn"
+          class="btn btn-over-ocean"
           href={`${url("auth.oauth.start")}?provider=github`}
           rel="external"
           onClick={(e) => {
