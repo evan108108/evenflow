@@ -30,6 +30,9 @@
       ],
       "@apikey-policy": [
         "../src/apikey-policy.ts"
+      ],
+      "@scopes": [
+        "../src/scopes.ts"
       ]
     },
     "baseUrl": "."

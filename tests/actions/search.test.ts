@@ -60,7 +60,7 @@ describe("search action", () => {
     const exit = await run(
       deps,
       searchBoard(
-        actionInput(JWT_TEST_CLAIMS, { slug: "theirs" }, Effect.succeed({ q: "anything" })),
+        actionInput(JWT_TEST_CLAIMS, { slug: "theirs" }, Effect.succeed({ q: "anything" }), { grants: null }),
       ),
     );
 
@@ -86,8 +86,7 @@ describe("search action", () => {
           Effect.sync(() => {
             parseRan = true;
             return { q: "anything" };
-          }),
-        ),
+          }), { grants: null }),
       ),
     );
 
@@ -110,7 +109,7 @@ describe("search action", () => {
     // which is why the action takes a PublicActionInput.
     const exit = await run(
       deps,
-      searchBoard(actionInput(null, { slug: "kb" }, Effect.succeed({ q: "???" }))),
+      searchBoard(actionInput(null, { slug: "kb" }, Effect.succeed({ q: "???" }), { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");

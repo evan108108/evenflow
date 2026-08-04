@@ -37,6 +37,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { defaultNostrLogin } from "../nostr";
 import { verifyChallengeEvent, verifyNip98 } from "../lib/audience/nip98-verify";
 import { actionInput } from "../actions/types";
@@ -78,7 +79,7 @@ export const makeSigninRouter = (layerFor: LayerFor = bootstrap) => {
     runJson(
       c,
       mintNostrChallenge(
-        actionInput(null, c.req.param(), undefined, { query: c.req.query() }),
+        actionInput(null, c.req.param(), undefined, { grants: grantsOf(c), query: c.req.query() }),
         c.env.JWT_SIGNING_KEY,
       ),
     ),

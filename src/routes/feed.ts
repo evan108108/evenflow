@@ -15,6 +15,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { SSE_HEADERS } from "../durable-objects/BoardDO";
 import { actionInput } from "../actions/types";
 import {
@@ -67,6 +68,7 @@ export const makeFeedRouter = (layerFor: LayerFor = bootstrap) => {
     query: Readonly<Record<string, string | undefined>>,
   ) =>
     actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+      grants: grantsOf(c),
       query,
       orgSlug: orgSlugOf(c),
     });

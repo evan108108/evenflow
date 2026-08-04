@@ -83,7 +83,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
     const exit = await run(
       deps,
       createKey(
-        actionInput(JWT_TEST_CLAIMS, {}, unparseableBody(), { token: "evk_abc123" }),
+        actionInput(JWT_TEST_CLAIMS, {}, unparseableBody(), { grants: null, token: "evk_abc123" }),
       ),
     );
 
@@ -97,7 +97,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
     const exit = await run(
       deps,
       createKey(
-        actionInput(JWT_TEST_CLAIMS, {}, unparseableBody(), { token: "header.payload.sig" }),
+        actionInput(JWT_TEST_CLAIMS, {}, unparseableBody(), { grants: null, token: "header.payload.sig" }),
       ),
     );
 
@@ -111,7 +111,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
     const exit = await run(
       deps,
       createKey(
-        actionInput(JWT_TEST_CLAIMS, {}, Effect.succeed({ name: "ci" }), { token: "jwt.a.b" }),
+        actionInput(JWT_TEST_CLAIMS, {}, Effect.succeed({ name: "ci" }), { grants: null, token: "jwt.a.b" }),
       ),
     );
 
@@ -131,7 +131,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
     const exit = await run(
       deps,
       createKey(
-        actionInput(JWT_TEST_CLAIMS, {}, Effect.succeed({ name: "   " }), { token: "jwt.a.b" }),
+        actionInput(JWT_TEST_CLAIMS, {}, Effect.succeed({ name: "   " }), { grants: null, token: "jwt.a.b" }),
       ),
     );
     expect(failureTag(exit)).toBe("ValidationError");
@@ -151,7 +151,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
 
     const listed = await run(
       deps,
-      listKeys(actionInput(JWT_TEST_CLAIMS, {}, undefined, { token: "jwt.a.b" })),
+      listKeys(actionInput(JWT_TEST_CLAIMS, {}, undefined, { grants: null, token: "jwt.a.b" })),
     );
     expect(listed._tag).toBe("Success");
     if (listed._tag === "Success") {
@@ -161,12 +161,12 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
 
     const first = await run(
       deps,
-      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k1" }, undefined, { token: "jwt.a.b" })),
+      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k1" }, undefined, { grants: null, token: "jwt.a.b" })),
     );
     const revokedAt = deps.db.apiKeys[0]!["revoked_at_ms"];
     const second = await run(
       deps,
-      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k1" }, undefined, { token: "jwt.a.b" })),
+      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k1" }, undefined, { grants: null, token: "jwt.a.b" })),
     );
 
     expect(first._tag).toBe("Success");
@@ -185,7 +185,7 @@ describe("key actions — the 403-before-400 order (rule 10)", () => {
 
     const exit = await run(
       deps,
-      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k2" }, undefined, { token: "jwt.a.b" })),
+      deleteKey(actionInput(JWT_TEST_CLAIMS, { id: "k2" }, undefined, { grants: null, token: "jwt.a.b" })),
     );
 
     expect(failureTag(exit)).toBe("NotFoundError");
@@ -200,7 +200,7 @@ describe("signin challenge — the 500-before-400 order (rule 10)", () => {
   it("blames the server when the signing key is missing, even with a bad pubkey", async () => {
     const exit = await Effect.runPromiseExit(
       mintNostrChallenge(
-        actionInput(null, {}, undefined, { query: { pubkey: "not-hex" } }),
+        actionInput(null, {}, undefined, { query: { pubkey: "not-hex" } }, { grants: null }),
         undefined,
       ),
     );
@@ -211,7 +211,7 @@ describe("signin challenge — the 500-before-400 order (rule 10)", () => {
   it("blames the caller for the same bad pubkey once the key IS configured", async () => {
     const exit = await Effect.runPromiseExit(
       mintNostrChallenge(
-        actionInput(null, {}, undefined, { query: { pubkey: "not-hex" } }),
+        actionInput(null, {}, undefined, { query: { pubkey: "not-hex" } }, { grants: null }),
         "a-signing-key",
       ),
     );
@@ -222,7 +222,7 @@ describe("signin challenge — the 500-before-400 order (rule 10)", () => {
   it("mints a ts.pubkey.hmac challenge for a well-formed pubkey", async () => {
     const pubkey = "a".repeat(64);
     const exit = await Effect.runPromiseExit(
-      mintNostrChallenge(actionInput(null, {}, undefined, { query: { pubkey } }), "k"),
+      mintNostrChallenge(actionInput(null, {}, undefined, { query: { pubkey } }, { grants: null }), "k"),
     );
 
     expect(exit._tag).toBe("Success");
@@ -239,7 +239,7 @@ describe("signin challenge — the 500-before-400 order (rule 10)", () => {
 describe("notifications actions", () => {
   it("reads the schema defaults for a user with no row", async () => {
     const deps = makeDeps();
-    const exit = await run(deps, getNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, undefined)));
+    const exit = await run(deps, getNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, undefined, { grants: null })));
 
     expect(exit._tag).toBe("Success");
     if (exit._tag === "Success") {
@@ -251,7 +251,7 @@ describe("notifications actions", () => {
     const deps = makeDeps();
     const exit = await run(
       deps,
-      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_digest: "daily" })),
+      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_digest: "daily" }, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -267,7 +267,7 @@ describe("notifications actions", () => {
     const deps = makeDeps();
     const exit = await run(
       deps,
-      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_digest: "hourly" })),
+      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_digest: "hourly" }, { grants: null })),
     );
 
     expect(failureTag(exit)).toBe("ValidationError");
@@ -277,7 +277,7 @@ describe("notifications actions", () => {
     const deps = makeDeps();
     const exit = await run(
       deps,
-      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_on_mention: "yes" })),
+      setNotificationsConfig(actionInput(JWT_TEST_CLAIMS, {}, { email_on_mention: "yes" }, { grants: null })),
     );
 
     expect(failureTag(exit)).toBe("ValidationError");
@@ -303,7 +303,7 @@ describe("session key registration", () => {
     const exit = await run(
       deps,
       registerSessionKey(
-        actionInput(JWT_TEST_CLAIMS, {}, { session_pubkey: "c".repeat(64) }, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, {}, { session_pubkey: "c".repeat(64) }, { grants: null, token: "t" }),
       ),
     );
 
@@ -320,7 +320,7 @@ describe("session key registration", () => {
     const exit = await run(
       deps,
       registerSessionKey(
-        actionInput(JWT_TEST_CLAIMS, {}, { session_pubkey: "nope" }, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, {}, { session_pubkey: "nope" }, { grants: null, token: "t" }),
       ),
     );
 
@@ -342,7 +342,7 @@ describe("feed — authorization decides before the query shape does", () => {
     const exit = await run(
       deps,
       boardActivity(
-        actionInput(JWT_TEST_CLAIMS, { slug: "theirs" }, undefined, { query: { limit: "0" } }),
+        actionInput(JWT_TEST_CLAIMS, { slug: "theirs" }, undefined, { query: { limit: "0" } }, { grants: null }),
       ),
     );
 

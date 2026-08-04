@@ -100,6 +100,7 @@ describe("board actions", () => {
       deps,
       createBoard(
         actionInput(JWT_TEST_CLAIMS, {}, { slug: "new", title: "New board" }, {
+          grants: null,
           orgSlug: "acme",
           token: "t",
         }),
@@ -121,7 +122,7 @@ describe("board actions", () => {
     const exit = await run(
       deps,
       createBoard(
-        actionInput(JWT_TEST_CLAIMS, {}, { slug: "solo", title: "Solo board" }, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, {}, { slug: "solo", title: "Solo board" }, { grants: null, token: "t" }),
       ),
     );
 
@@ -141,6 +142,7 @@ describe("board actions", () => {
       deps,
       createBoard(
         actionInput(JWT_TEST_CLAIMS, {}, { slug: "kb", title: "Clash" }, {
+          grants: null,
           orgSlug: "acme",
           token: "t",
         }),
@@ -164,7 +166,7 @@ describe("board actions", () => {
 
     const exit = await run(
       deps,
-      getBoard(actionInput(null, { slug: "kb" }, undefined, { orgSlug: "acme" })),
+      getBoard(actionInput(null, { slug: "kb" }, undefined, { grants: null, orgSlug: "acme" })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -177,7 +179,7 @@ describe("board actions", () => {
 
     const exit = await run(
       deps,
-      getBoard(actionInput(null, { slug: "kb" }, undefined, { orgSlug: "acme" })),
+      getBoard(actionInput(null, { slug: "kb" }, undefined, { grants: null, orgSlug: "acme" })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -192,7 +194,7 @@ describe("board actions", () => {
 
     const exit = await run(
       deps,
-      listBoards(actionInput(JWT_TEST_CLAIMS, {}, undefined, { query: { limit: "0" } })),
+      listBoards(actionInput(JWT_TEST_CLAIMS, {}, undefined, { query: { limit: "0" } }, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -205,12 +207,12 @@ describe("board actions", () => {
 
     const hidden = await run(
       deps,
-      listBoards(actionInput(JWT_TEST_CLAIMS, {}, undefined, { query: {} })),
+      listBoards(actionInput(JWT_TEST_CLAIMS, {}, undefined, { grants: null, query: {} })),
     );
     const shown = await run(
       deps,
       listBoards(
-        actionInput(JWT_TEST_CLAIMS, {}, undefined, { query: { include_archived: "1" } }),
+        actionInput(JWT_TEST_CLAIMS, {}, undefined, { query: { include_archived: "1" } }, { grants: null }),
       ),
     );
 
@@ -233,6 +235,7 @@ describe("board actions", () => {
       deps,
       boardVelocity(
         actionInput(null, { slug: "kb" }, undefined, {
+          grants: null,
           query: { days: "banana" },
           orgSlug: "acme",
         }),
@@ -258,7 +261,7 @@ describe("board actions", () => {
     const exit = await run(
       deps,
       updateBoard(
-        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, { issue_prefix: "NEW" }, { orgSlug: "acme" }),
+        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, { issue_prefix: "NEW" }, { grants: null, orgSlug: "acme" }),
       ),
     );
 
@@ -275,7 +278,7 @@ describe("board actions", () => {
     const exit = await run(
       deps,
       updateBoard(
-        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, { issue_prefix: "new" }, { orgSlug: "acme" }),
+        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, { issue_prefix: "new" }, { grants: null, orgSlug: "acme" }),
       ),
     );
 
@@ -293,7 +296,7 @@ describe("board actions", () => {
     const archived = await run(
       deps,
       setBoardArchived(true)(
-        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { orgSlug: "acme" }),
+        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { grants: null, orgSlug: "acme" }),
       ),
     );
     expect(archived._tag).toBe("Success");
@@ -302,7 +305,7 @@ describe("board actions", () => {
     const cleared = await run(
       deps,
       setBoardArchived(false)(
-        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { orgSlug: "acme" }),
+        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { grants: null, orgSlug: "acme" }),
       ),
     );
     expect(cleared._tag).toBe("Success");
@@ -321,7 +324,7 @@ describe("board actions", () => {
 
     const exit = await run(
       deps,
-      deleteBoard(actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { orgSlug: "acme" })),
+      deleteBoard(actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, undefined, { grants: null, orgSlug: "acme" })),
     );
 
     expect(exit._tag).toBe("Success");

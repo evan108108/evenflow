@@ -87,7 +87,7 @@ describe("issue actions", () => {
     const exit = await run(
       deps,
       createIssue(
-        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, Effect.succeed({ title: "first" } as never)),
+        actionInput(JWT_TEST_CLAIMS, { slug: "kb" }, Effect.succeed({ title: "first" } as never), { grants: null }),
       ),
     );
 
@@ -124,8 +124,7 @@ describe("issue actions", () => {
           JWT_TEST_CLAIMS,
           { slug: "kb" },
           // A parse that would fail if it ever ran.
-          Effect.fail(new ValidationError({ reason: "expected-json" })) as never,
-        ),
+          Effect.fail(new ValidationError({ reason: "expected-json" })) as never, { grants: null }),
       ),
     );
 
@@ -145,7 +144,7 @@ describe("issue actions", () => {
     deps.db.boards[0]!["visibility"] = "public";
     seedIssue(deps);
 
-    const exit = await run(deps, getIssue(actionInput(null, { id: "i1" }, undefined, { query: {} })));
+    const exit = await run(deps, getIssue(actionInput(null, { id: "i1" }, undefined, { grants: null, query: {} })));
 
     expect(exit._tag).toBe("Success");
   });
@@ -158,7 +157,7 @@ describe("issue actions", () => {
     const exit = await run(
       deps,
       getIssue(
-        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { query: { include: "sprints" } }),
+        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { query: { include: "sprints" } }, { grants: null }),
       ),
     );
 
@@ -175,7 +174,7 @@ describe("issue actions", () => {
     const exit = await run(
       deps,
       updateIssue(
-        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { duplicate_of_issue_id: "i2" } as never),
+        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { duplicate_of_issue_id: "i2" } as never, { grants: null }),
       ),
     );
 
@@ -192,7 +191,7 @@ describe("issue actions", () => {
       deps,
       transitionIssue(
         // Both spellings present and disagreeing: column_id has to win.
-        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { column_id: "col-done", to: "Todo" } as never),
+        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { column_id: "col-done", to: "Todo" } as never, { grants: null }),
       ),
     );
 
@@ -211,7 +210,7 @@ describe("issue actions", () => {
 
     const exit = await run(
       deps,
-      setIssueContainer(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { container: "backlog" } as never)),
+      setIssueContainer(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, { container: "backlog" } as never, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");

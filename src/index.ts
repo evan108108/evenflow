@@ -65,14 +65,18 @@ app.get("/healthz", async (c) => {
 // /auth, / and /mcp mounts sit outside it by design and are unaffected.
 app.use("/api/v0/*", optionalAuth());
 
-// Placeholder demonstrating the middleware end-to-end: echoes the verified claims.
-app.get("/api/v0/me", (c) => {
-  const claims = c.get("claims");
-  if (claims === undefined) {
-    return c.json({ error: "unauthorized", reason: "missing-authorization" }, 401);
-  }
-  return c.json(claims);
-});
+// EFB-100 removed a `GET /api/v0/me` placeholder that lived here — a phase-16
+// demo that echoed the verified claims, registered directly on the app rather
+// than through the manifest, and called by nothing (tests/auth.test.ts
+// registers its own copy on a test app, so they are unaffected).
+//
+// It had to go before the manifest could be a security perimeter. Scope
+// enforcement fails CLOSED on a route with no manifest entry, so this one
+// would have answered 403 to every scoped key — a route nobody remembered
+// existed, refusing traffic for a reason nobody would think to look for. More
+// to the point, its existence quietly falsified the claim the perimeter rests
+// on, written at the top of routes-manifest.ts: that a route not in the
+// manifest does not exist. Deleting it makes that sentence true.
 
 // EFB-98: every mount, in order, from the one table in src/router.ts. The
 // list that used to live here was copied into three test files and had

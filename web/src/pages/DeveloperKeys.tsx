@@ -8,6 +8,11 @@
 import { For, Show, createResource, createSignal } from "solid-js";
 import { url } from "@routes-manifest";
 import { API_KEY_ROTATION_GRACE_MS } from "@apikey-policy";
+// EFB-100: the SERVER's vocabulary, not a copy of it. GRANTABLE_DOMAINS is
+// what excludes `keys` — the picker cannot offer a domain the server refuses,
+// because it is the same constant on both sides.
+import { BOARD_WILDCARD, GRANTABLE_DOMAINS, OWNER_SCOPE, SCOPE_ACCESS } from "@scopes";
+import type { ScopeAccess, ScopeDomain } from "@scopes";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
 import { TopBar } from "../components/TopBar";
@@ -25,7 +30,32 @@ interface KeyView {
   rotated_at_ms: number | null;
   /** The successor's id, resolved to a prefix against this same list. */
   rotated_to_id: string | null;
+  /**
+   * EFB-100 — the JSON scopes array as stored, or null for a key minted
+   * before scoping existed. Null renders as "full access (legacy)" rather
+   * than as chips: it grants everything, and saying so is the point.
+   */
+  scopes: string | null;
 }
+
+/** A board the caller can name in a board-instance scope. */
+interface BoardOption {
+  slug: string;
+  title: string;
+}
+
+/** What the row shows about a key's reach. */
+const scopeChips = (raw: string | null): readonly string[] => {
+  if (raw === null) return ["full access (legacy)"];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return ["full access"];
+    const list = parsed.filter((x): x is string => typeof x === "string");
+    return list.includes(OWNER_SCOPE) ? ["full access"] : list;
+  } catch {
+    return ["full access"];
+  }
+};
 
 /**
  * Read from the server's own constant rather than written as prose, so the
@@ -49,7 +79,33 @@ export const DeveloperKeys = () => {
     api<{ keys: KeyView[] }>((c) => c.get(url("key.list"))).then((r) => r.keys),
   );
 
+  // Boards the caller can name in a board-instance scope. Fetched lazily; if
+  // it fails the picker still works, it just cannot offer per-board narrowing.
+  const [boards] = createResource(() =>
+    api<{ boards: BoardOption[] }>((c) => c.get(url("board.list")))
+      .then((r) => r.boards)
+      .catch(() => [] as BoardOption[]),
+  );
+
   const [name, setName] = createSignal("");
+  /**
+   * Full access is the DEFAULT, matching what every key did before scoping
+   * existed — a create flow that silently narrowed would break integrations
+   * people already have. It is also the option carrying a warning.
+   */
+  const [fullAccess, setFullAccess] = createSignal(true);
+  const [access, setAccess] = createSignal<Partial<Record<ScopeDomain, ScopeAccess>>>({});
+  const [boardSlug, setBoardSlug] = createSignal<string>(BOARD_WILDCARD);
+
+  /** The scope strings this form currently describes. */
+  const scopes = (): readonly string[] => {
+    if (fullAccess()) return [OWNER_SCOPE];
+    return Object.entries(access()).flatMap(([domain, level]) =>
+      level === undefined
+        ? []
+        : [domain === "board" ? `board:${boardSlug()}:${level}` : `${domain}:${level}`],
+    );
+  };
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   // The one-time plaintext reveal; null once dismissed, gone forever.
@@ -65,11 +121,14 @@ export const DeveloperKeys = () => {
     setError(null);
     try {
       const res = await api<{ key: KeyView; plaintext: string }>((c) =>
-        c.post(url("key.create"), { name: keyName }),
+        c.post(url("key.create"), { name: keyName, scopes: scopes() }),
       );
       setMinted({ plaintext: res.plaintext, name: keyName, rotated: false });
       setCopied(false);
       setName("");
+      setFullAccess(true);
+      setAccess({});
+      setBoardSlug(BOARD_WILDCARD);
       void refetch();
     } catch {
       setError("The current pushed back — no key was created.");
@@ -171,6 +230,15 @@ export const DeveloperKeys = () => {
                   <span class="muted key-meta">
                     created {when(key.created_at_ms)} · last used {when(key.last_used_at_ms)}
                   </span>
+                  {/* What this key can reach. A key with full access says so
+                      in words rather than showing an empty chip list, because
+                      "no restrictions" and "no permissions" must never look
+                      alike. */}
+                  <span class="key-scopes">
+                    <For each={scopeChips(key.scopes)}>
+                      {(chip) => <span class="chip key-scope-chip">{chip}</span>}
+                    </For>
+                  </span>
                   <span class="grow" />
                   {/* Three states, most-final first: revoked wins over
                       rotated, because a rotated key that was then revoked is
@@ -217,6 +285,90 @@ export const DeveloperKeys = () => {
             onInput={(e) => setName(e.currentTarget.value)}
             onKeyDown={(e) => e.key === "Enter" && void createKey()}
           />
+        </div>
+
+        <div class="key-scope-picker">
+          <label class="key-scope-mode">
+            <input
+              type="radio"
+              name="key-scope-mode"
+              checked={fullAccess()}
+              onChange={() => setFullAccess(true)}
+            />
+            <span>Full access</span>
+          </label>
+          <Show when={fullAccess()}>
+            {/* Naming the risk, per the ticket. The wording is deliberately
+                concrete about consequence rather than a generic caution. */}
+            <p class="muted key-scope-warning">
+              Anyone who gets this key can do anything you can — every board, every
+              setting. A narrower key is safer, and you can hold several.
+            </p>
+          </Show>
+
+          <label class="key-scope-mode">
+            <input
+              type="radio"
+              name="key-scope-mode"
+              checked={!fullAccess()}
+              onChange={() => setFullAccess(false)}
+            />
+            <span>Limit what it can reach</span>
+          </label>
+
+          <Show when={!fullAccess()}>
+            <div class="key-scope-grid">
+              <For each={GRANTABLE_DOMAINS}>
+                {(domain) => (
+                  <div class="key-scope-row">
+                    <span class="key-scope-domain">{domain}</span>
+                    <select
+                      value={access()[domain] ?? ""}
+                      onChange={(e) => {
+                        const v = e.currentTarget.value;
+                        setAccess((prev) => ({
+                          ...prev,
+                          [domain]: v === "" ? undefined : (v as ScopeAccess),
+                        }));
+                      }}
+                    >
+                      <option value="">no access</option>
+                      <For each={SCOPE_ACCESS}>{(level) => <option value={level}>{level}</option>}</For>
+                    </select>
+                  </div>
+                )}
+              </For>
+            </div>
+
+            <Show when={access()["board"] !== undefined}>
+              <div class="key-scope-row key-scope-boards">
+                <span class="key-scope-domain">which board</span>
+                <select value={boardSlug()} onChange={(e) => setBoardSlug(e.currentTarget.value)}>
+                  <option value={BOARD_WILDCARD}>every board</option>
+                  <For each={boards() ?? []}>
+                    {(b) => <option value={b.slug}>{b.title || b.slug}</option>}
+                  </For>
+                </select>
+              </div>
+              <Show when={boardSlug() === BOARD_WILDCARD}>
+                {/* The surprising half of the wildcard, said out loud. */}
+                <p class="muted key-scope-warning">
+                  “Every board” includes boards you create later.
+                </p>
+              </Show>
+            </Show>
+
+            {/* Scopes cannot be narrowed after the fact — that would be a
+                downgrade path an attacker could use as easily as an owner.
+                Point at the flow that does exist. */}
+            <p class="muted key-scope-warning">
+              Scopes are fixed when the key is made. To change them, make a new key
+              with the scopes you want and revoke this one.
+            </p>
+          </Show>
+        </div>
+
+        <div class="key-create">
           <button type="button" class="btn btn-solid" disabled={name().trim() === "" || busy()} onClick={() => void createKey()}>
             <Show when={!busy()} fallback={"Catching the current…"}>
               Create key

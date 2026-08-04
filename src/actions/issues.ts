@@ -86,6 +86,7 @@ import {
   type StreamKind,
 } from "../issue-cursor";
 import { asShortId, derivePrefix, uniquePrefix } from "../slug";
+import type { Grant } from "../scopes";
 import type { ActionInput, PublicActionInput } from "./types";
 
 const DEFAULT_LIMIT = 20;
@@ -424,7 +425,12 @@ const assertRosterMember = (
  * true answer was "send auth". The 401 covers the nonexistent case too, on
  * purpose — see the `notVisible` docs in authz.ts.
  */
-export const fetchIssue = (ref: string, pubkey: string | null, minRole: string) =>
+export const fetchIssue = (
+  ref: string,
+  pubkey: string | null,
+  minRole: string,
+  grants: readonly Grant[] | null,
+) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
@@ -434,7 +440,7 @@ export const fetchIssue = (ref: string, pubkey: string | null, minRole: string) 
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
-    const { board } = yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
+    const { board } = yield* authorizeBoardById(issue.board_id, pubkey, minRole, grants).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
       ),
@@ -681,8 +687,7 @@ export const createIssue = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkey,
-      "contributor",
-    );
+      "contributor", input.grants,);
     // EFB-85. Ten hand-rolled field checks became PostIssueBody; what they
     // never did — reject a key we don't recognize — comes free. A create
     // carrying `assignee` or `sprint_id` used to return 201 with the field
@@ -887,8 +892,7 @@ export const listIssues = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       input.claims === null ? null : callerPubkey(input.claims),
-      "viewer",
-    );
+      "viewer", input.grants,);
 
     let limit = DEFAULT_LIMIT;
     if (limitRaw !== undefined) {
@@ -1039,8 +1043,7 @@ export const getIssue = (
     const { issue } = yield* fetchIssue(
       input.params["id"] ?? "",
       input.claims === null ? null : callerPubkey(input.claims),
-      "viewer",
-    );
+      "viewer", input.grants,);
     const unknown = [...include].filter((k) => k !== "comments" && k !== "attachments");
     if (unknown.length > 0) return yield* new ValidationError({ reason: "include" });
     const db = yield* Db;
@@ -1079,8 +1082,7 @@ export const updateIssue = (
     const { issue: current, board } = yield* fetchIssue(
       input.params["id"] ?? "",
       pubkey,
-      "contributor",
-    );
+      "contributor", input.grants,);
     const db = yield* Db;
 
     const title = body.title ?? current.title;
@@ -1258,8 +1260,7 @@ export const deleteIssue = (
     const { issue } = yield* fetchIssue(
       input.params["id"] ?? "",
       callerPubkey(claims),
-      "contributor",
-    );
+      "contributor", input.grants,);
     const db = yield* Db;
     const audit = yield* AuditLog;
     yield* db.execute("DELETE FROM commentCache WHERE issue_id = ?", [issue.id]);
@@ -1302,7 +1303,7 @@ export const transitionIssue = (
     const claims = input.claims;
     const pubkey = callerPubkey(claims);
     const body = input.body;
-    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor");
+    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
     let to: Column;
     if (body.column_id !== undefined) {
       // Still `!== undefined` and not a truthiness test: the schema now
@@ -1382,8 +1383,7 @@ export const setIssueBoard = (
     const { issue, board: source } = yield* fetchIssue(
       input.params["id"] ?? "",
       pubkey,
-      "contributor",
-    );
+      "contributor", input.grants,);
     if (target_board_id === source.id) {
       return yield* new ValidationError({ reason: "target-is-source" });
     }
@@ -1391,6 +1391,7 @@ export const setIssueBoard = (
       target_board_id,
       pubkey,
       "contributor",
+      input.grants,
     ).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "target-board" }) : e,
@@ -1520,7 +1521,7 @@ export const setIssuePosition = (
       return yield* new ValidationError({ reason: "neighbors" });
     }
 
-    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor");
+    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
     if (beforeId === issue.id || afterId === issue.id) {
       return yield* new ValidationError({ reason: "neighbors" });
     }
@@ -1663,7 +1664,7 @@ export const setIssueContainer = (
     const pubkey = callerPubkey(claims);
     const { container: to } = input.body;
     const event = CONTAINER_AUDIT_EVENT[to];
-    const { issue } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor");
+    const { issue } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
     const { issue: updated, statusChangeId } = yield* applyContainerMove(issue, to, pubkey);
     const audit = yield* AuditLog;
     yield* audit.record({

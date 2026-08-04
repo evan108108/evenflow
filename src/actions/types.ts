@@ -34,6 +34,7 @@
  */
 
 import type { Claims } from "../effects";
+import type { Grant } from "../scopes";
 
 /**
  * What an action receives.
@@ -65,6 +66,21 @@ export type ActionInput<Body = undefined> = {
    * same trust domain.
    */
   readonly token: string;
+  /**
+   * EFB-100 — what the caller's API key may do, or null when nothing narrows
+   * them (a JWT session, or a key minted before scoping existed).
+   *
+   * REQUIRED, unlike every other field on the options bag, and deliberately
+   * so. The others are inputs: forgetting one yields a wrong answer, loudly.
+   * This one is AUTHORITY, and a forgotten authority field yields a request
+   * that succeeds when it should not, seen by nobody. Requiring it makes
+   * tsc name every route that has not threaded it.
+   *
+   * The middleware has already enforced the DOMAIN+ACCESS half by the time an
+   * action runs; this is here so `authorizeBoard` can enforce the INSTANCE
+   * half once it has resolved which board is being asked for.
+   */
+  readonly grants: readonly Grant[] | null;
   /**
    * Which org this request is scoped to, or null when it is not scoped to one.
    *
@@ -117,10 +133,13 @@ export const actionInput = <Body = undefined, C extends Claims | null = Claims>(
     readonly query?: Readonly<Record<string, string | undefined>>;
     readonly orgSlug?: string | null;
     readonly token?: string;
-  } = {},
+    /** Required — see the field docs on ActionInput. Route shells pass `grantsOf(c)`. */
+    readonly grants: readonly Grant[] | null;
+  },
 ): Omit<ActionInput<Body>, "claims"> & { readonly claims: C } => ({
   claims,
   token: options.token ?? "",
+  grants: options.grants ?? null,
   orgSlug: options.orgSlug ?? null,
   params,
   query: options.query ?? {},

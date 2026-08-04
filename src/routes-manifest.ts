@@ -621,6 +621,32 @@ export const effectivePaths = (entry: RouteEntry): readonly string[] => {
 };
 
 /**
+ * EFB-100: which entry serves a request Hono has already matched.
+ *
+ * The auth middleware needs the manifest entry to know what scope a route
+ * requires, and the only handle it has at that point is the pattern Hono
+ * matched. `routePath(c, -1)` returns that pattern fully qualified — mount
+ * prefix and org segment included — which is precisely what effectivePaths()
+ * generates, so the two sides are keyed off the same function and cannot
+ * drift. (Verified against hono 4.12.32 rather than assumed: a probe asserted
+ * both `/api/v0/board/:slug/issues` and the org-prefixed spelling come back
+ * exactly as written here.)
+ *
+ * A pattern with no entry returns null, and the middleware treats null as
+ * FAIL CLOSED for a scoped key. That is what makes "every route declares a
+ * scope" a property of routing rather than a linter's opinion: a route
+ * registered outside this file is unreachable by a scoped key, because
+ * nothing here can say what it would take to reach it.
+ */
+const BY_MATCH = new Map<string, RouteEntry>();
+for (const entry of ROUTES) {
+  for (const p of effectivePaths(entry)) BY_MATCH.set(`${entry.method} ${p}`, entry);
+}
+
+export const entryForMatch = (method: string, matchedPath: string): RouteEntry | null =>
+  BY_MATCH.get(`${method} ${matchedPath}`) ?? null;
+
+/**
  * Build a concrete URL for a route.
  *
  * Throws when a required parameter is missing, which is the point: the silent

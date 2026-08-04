@@ -19,6 +19,7 @@ import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -65,6 +66,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
       // parseRouteBody still appears in this file, so check:boundary sees it.
       return yield* createComment(
         actionInput(claims, c.req.param(), parseRouteBody(c, PostCommentBody), {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );
@@ -80,7 +82,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           c.req.param(),
           undefined,
-          { query: c.req.query(), orgSlug: c.req.param("org_slug") ?? null },
+          { grants: grantsOf(c), query: c.req.query(), orgSlug: c.req.param("org_slug") ?? null },
         ),
       ),
     ),
@@ -90,7 +92,7 @@ export const makeCommentsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteComment(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);

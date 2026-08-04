@@ -21,7 +21,7 @@
 // kind:30556 does not make these rows encrypted at rest).
 //
 // So the board gate is the whole of the access control here, and it runs
-// FIRST: `resolveBoardScope(..., "viewer")` resolves the slug and authorizes
+// FIRST: `resolveBoardScope(..., "viewer", input.grants)` resolves the slug and authorizes
 // the caller before a single FTS row is read. A caller who cannot see the
 // board gets 404 — the codebase's standing posture for invisible resources
 // (src/authz.ts header: existence must not leak), so a private board is
@@ -175,8 +175,7 @@ export const searchBoard = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       input.claims === null ? null : callerPubkey(input.claims),
-      "viewer",
-    );
+      "viewer", input.grants,);
 
     // AFTER the board gate, deliberately — see DeferredSearchBody. A caller who
     // cannot see this board gets the gate's 404, not a 400 about their body.

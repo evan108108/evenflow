@@ -52,6 +52,7 @@ import {
   ORG_ROLES,
 } from "../roles";
 import { ConflictError, NotFoundError, RateLimitError, ValidationError } from "../lib/errors";
+import type { Grant } from "../scopes";
 import type { ActionInput, PublicActionInput } from "./types";
 
 const PUBLIC_BASE_URL = "https://evenflow.work";
@@ -104,7 +105,11 @@ const inviteState = (invite: InviteShape, now: number): InviteState => {
  * did not build a router. It closed over nothing, so it is a module-scope
  * declaration now — same body.
  */
-const loadInviteForAdmin = (idOrCode: { id?: string; code?: string }, pubkey: string) =>
+const loadInviteForAdmin = (
+  idOrCode: { id?: string; code?: string },
+  pubkey: string,
+  grants: readonly Grant[] | null,
+) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const row =
@@ -132,7 +137,7 @@ const loadInviteForAdmin = (idOrCode: { id?: string; code?: string }, pubkey: st
       );
       if (boardRow === null) return yield* new NotFoundError({ reason: "invite" });
       const board = parseBoardRow(boardRow);
-      yield* resolveBoardScope({ org_slug: org.slug, slug: board.slug }, pubkey, "admin");
+      yield* resolveBoardScope({ org_slug: org.slug, slug: board.slug }, pubkey, "admin", grants);
       return { invite, org, board };
     }
     yield* authorizeOrgAccess(org.slug, pubkey, "admin");
@@ -224,8 +229,7 @@ export const createInvite = (
       const { board, org } = yield* resolveBoardScope(
         { org_slug: orgSlug, slug: boardSlug },
         pubkey,
-        "admin",
-      );
+        "admin", input.grants,);
       boardId = board.id;
       orgId = org?.id ?? board.org_id ?? "";
       if (orgId === "") return yield* new NotFoundError({ reason: "org" });
@@ -493,8 +497,7 @@ export const sendInviteEmail = (
     const pubkey = callerPubkey(claims);
     const { invite, org, board } = yield* loadInviteForAdmin(
       { id: input.params["id"] ?? "" },
-      pubkey,
-    );
+      pubkey, input.grants,);
     if (invite.invited_email === null) {
       return yield* new ValidationError({ reason: "invite-has-no-email" });
     }
@@ -546,8 +549,7 @@ export const deleteInvite = (
     const claims = input.claims;
     const { invite } = yield* loadInviteForAdmin(
       { id: input.params["id"] ?? "" },
-      callerPubkey(claims),
-    );
+      callerPubkey(claims), input.grants,);
     if (invite.revoked_at_ms !== null) return { revoked: true };
     const db = yield* Db;
     const now = yield* Clock.currentTimeMillis;
@@ -586,8 +588,7 @@ export const listOrgBoardInvites = (
     const { board, org } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       callerPubkey(claims),
-      "admin",
-    );
+      "admin", input.grants,);
     const orgId = org?.id ?? board.org_id;
     if (orgId === null) return yield* new NotFoundError({ reason: "org" });
     return { invites: yield* pendingInvites(orgId, board.id) };

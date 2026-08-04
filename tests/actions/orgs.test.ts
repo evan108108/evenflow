@@ -97,7 +97,7 @@ describe("org actions", () => {
     const exit = await run(
       deps,
       listBoardMembers(
-        actionInput(JWT_TEST_CLAIMS, { orgSlug: "acme", boardSlug: "roadmap" }, undefined),
+        actionInput(JWT_TEST_CLAIMS, { orgSlug: "acme", boardSlug: "roadmap" }, undefined, { grants: null }),
       ),
     );
 
@@ -118,7 +118,7 @@ describe("org actions", () => {
 
     const exit = await run(
       deps,
-      getOrg(actionInput(null, { orgSlug: "acme" }, undefined)),
+      getOrg(actionInput(null, { orgSlug: "acme" }, undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -137,7 +137,7 @@ describe("org actions", () => {
     const exit = await run(
       deps,
       createOrg(
-        actionInput(JWT_TEST_CLAIMS, {}, { kind: "personal", slug: "mine", display_name: "Mine" }),
+        actionInput(JWT_TEST_CLAIMS, {}, { kind: "personal", slug: "mine", display_name: "Mine" }, { grants: null }),
       ),
     );
 
@@ -151,7 +151,7 @@ describe("org actions", () => {
 
     const exit = await run(
       deps,
-      deleteOrg(actionInput(JWT_TEST_CLAIMS, { orgSlug: "tester" }, undefined)),
+      deleteOrg(actionInput(JWT_TEST_CLAIMS, { orgSlug: "tester" }, undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");

@@ -21,6 +21,7 @@ import { AuditLog, Db, DbError } from "../effects";
 import { ForbiddenError, UnauthorizedError, callerPubkey } from "../authz";
 import { NotFoundError, ValidationError } from "../lib/errors";
 import { API_KEY_NAME_MAX, generateApiKey, hashApiKey, isApiKeyToken } from "../apikeys";
+import { OWNER_SCOPE, grantRefusal } from "../scopes";
 import type { ActionInput } from "./types";
 
 export type KeysFailure =
@@ -41,6 +42,13 @@ export interface KeyView {
   readonly created_at_ms: number;
   readonly last_used_at_ms: number | null;
   readonly revoked_at_ms: number | null;
+  /**
+   * EFB-100 — the JSON scopes array as stored, or NULL for a key minted
+   * before scoping existed. NULL and '["owner"]' grant the same thing today;
+   * they are kept distinct so the legacy set stays countable. The UI renders
+   * NULL as "full access (legacy)" and the explicit array as chips.
+   */
+  readonly scopes: string | null;
   /** EFB-99 — when this key was rotated away from. NULL = never rotated. */
   readonly rotated_at_ms: number | null;
   /**
@@ -89,6 +97,27 @@ export const createKey = (
       return yield* new ValidationError({ reason: "name" });
     }
 
+    // EFB-100 — what this key may do. Absent means the caller asked for no
+    // narrowing, which is stored as the EXPLICIT owner grant rather than as
+    // NULL: NULL is reserved for rows that predate scoping, so it stays a
+    // closed set that only migration 0030 can produce and that
+    // `SELECT COUNT(*) ... WHERE scopes IS NULL` can drive to zero. A mint
+    // path that wrote NULL would quietly reopen a fail-open default.
+    const requested = body["scopes"];
+    if (requested !== undefined && !Array.isArray(requested)) {
+      return yield* new ValidationError({ reason: "scopes must be an array of scope strings" });
+    }
+    const scopes: readonly string[] =
+      requested === undefined ? [OWNER_SCOPE] : (requested as readonly unknown[]).map(String);
+    for (const scope of scopes) {
+      const refusal = grantRefusal(scope);
+      // Prose, not a slug — `reasonFor` reads a bare kebab string as a reason
+      // CODE, and the refusal for the keys domain has to be readable: someone
+      // asking for it is trying to do something the API will never allow, and
+      // deserves to be told why rather than handed `scopes-invalid`.
+      if (refusal !== null) return yield* new ValidationError({ reason: refusal });
+    }
+
     const { plaintext, prefix } = generateApiKey();
     const key_hash = yield* Effect.promise(() => hashApiKey(plaintext));
     const db = yield* Db;
@@ -96,13 +125,16 @@ export const createKey = (
     const now = yield* Clock.currentTimeMillis;
     const id = crypto.randomUUID();
     yield* db.execute(
-      "INSERT INTO apiKeys (id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, callerPubkey(claims), name.trim(), key_hash, prefix, now, null, null],
+      "INSERT INTO apiKeys (id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, scopes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, callerPubkey(claims), name.trim(), key_hash, prefix, now, null, null, JSON.stringify(scopes)],
     );
     yield* audit.record({
       event_type: "api_key_created",
       actor: claims.login,
-      details: { key: id, name: name.trim() },
+      // The scopes are in the audit row because "what was this key allowed to
+      // do?" is a question asked AFTER something has gone wrong, by which
+      // point the row may have been revoked or rotated away.
+      details: { key: id, name: name.trim(), scopes },
     });
     const key: KeyView = {
       id,
@@ -111,6 +143,7 @@ export const createKey = (
       created_at_ms: now,
       last_used_at_ms: null,
       revoked_at_ms: null,
+      scopes: JSON.stringify(scopes),
       rotated_at_ms: null,
       rotated_to_id: null,
     };
@@ -156,8 +189,9 @@ export const rotateKey = (
       name: string;
       revoked_at_ms: number | null;
       rotated_at_ms: number | null;
+      scopes: string | null;
     }>(
-      "SELECT id, name, revoked_at_ms, rotated_at_ms FROM apiKeys WHERE id = ? AND pubkey = ?",
+      "SELECT id, name, revoked_at_ms, rotated_at_ms, scopes FROM apiKeys WHERE id = ? AND pubkey = ?",
       [input.params["id"] ?? "", callerPubkey(claims)],
     );
     // Scoped by pubkey, so another owner's key is indistinguishable from one
@@ -180,9 +214,17 @@ export const rotateKey = (
     const id = crypto.randomUUID();
     // Same pubkey, same name: the successor authenticates as the same owner
     // with the same synthesized claims. That equivalence IS the feature.
+    //
+    // EFB-100 — AND THE SAME SCOPES, VERBATIM. Rotation replaces a secret; it
+    // is not a chance to acquire authority. Omitting this column would write
+    // NULL on the successor, and NULL means "minted before scoping" — i.e.
+    // FULL OWNER AUTHORITY. Rotating a `board:*:read` key would then hand back
+    // a key that can do anything, silently, through a flow whose entire
+    // promise is that nothing changes but the secret. The successor is capped
+    // by its parent, always.
     yield* db.execute(
-      "INSERT INTO apiKeys (id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, callerPubkey(claims), row.name, key_hash, prefix, now, null, null],
+      "INSERT INTO apiKeys (id, pubkey, name, key_hash, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, scopes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [id, callerPubkey(claims), row.name, key_hash, prefix, now, null, null, row.scopes],
     );
     // The predecessor is marked AFTER its successor exists, so a failure
     // between the two leaves a live key rather than an orphaned rotation
@@ -204,6 +246,7 @@ export const rotateKey = (
       created_at_ms: now,
       last_used_at_ms: null,
       revoked_at_ms: null,
+      scopes: row.scopes,
       rotated_at_ms: null,
       rotated_to_id: null,
     };
@@ -219,7 +262,7 @@ export const listKeys = (
     yield* rejectKeyCallers(input.token);
     const db = yield* Db;
     const rows = yield* db.queryAll<KeyView>(
-      "SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, rotated_at_ms, rotated_to_id FROM apiKeys WHERE pubkey = ? ORDER BY created_at_ms DESC",
+      "SELECT id, name, prefix, created_at_ms, last_used_at_ms, revoked_at_ms, rotated_at_ms, rotated_to_id, scopes FROM apiKeys WHERE pubkey = ? ORDER BY created_at_ms DESC",
       [callerPubkey(claims)],
     );
     return { keys: rows };

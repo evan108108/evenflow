@@ -33,6 +33,7 @@ import {
   type OrgShape,
 } from "./shapes";
 import { roleAtLeast } from "./roles";
+import { grantsCoverBoard, type Grant } from "./scopes";
 
 // TODO(kms-backfill): provider-qualified stand-in, not a Nostr pubkey.
 // Provider-qualified because a bare oauth_id collides across providers
@@ -217,11 +218,31 @@ export const effectiveBoardRole = (
     return strongest(explicit?.role ?? null, boardRoleFromOrgRole(orgRole), publicFloor, creatorRole);
   });
 
-/** Enforce minRole against an already-loaded board. 404 for invisible, 403 for under-role. */
+/**
+ * Enforce minRole against an already-loaded board. 404 for invisible, 403 for
+ * under-role.
+ *
+ * EFB-100 — AND THE INSTANCE HALF OF SCOPE ENFORCEMENT LIVES HERE, because
+ * this is the only place that knows WHICH board. The middleware has already
+ * settled whether the key may touch boards at all; it could not settle which
+ * one, since half the board surface addresses rows rather than boards
+ * (`/issue/:id`, `/comment/:id`) and at request time there is no slug to
+ * compare — only an id whose board nothing has read yet.
+ *
+ * This function is the universal funnel: authorizeBoardById and
+ * resolveBoardScope both end here, and every board-authorized path in the
+ * codebase reaches one of the three. Putting the check anywhere else would
+ * mean putting it in 33 places and hoping.
+ *
+ * `grants` is REQUIRED for the same reason it is required on ActionInput: on
+ * this surface an absent authority value has always meant "unrestricted", so
+ * a forgotten one must be a compile error rather than a silent widening.
+ */
 export const authorizeBoard = (
   board: BoardShape,
   pubkey: string | null,
   minRole: string,
+  grants: readonly Grant[] | null,
 ): Effect.Effect<
   { board: BoardShape; role: string },
   BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
@@ -236,6 +257,16 @@ export const authorizeBoard = (
     if (!roleAtLeast(role, minRole)) {
       return yield* new ForbiddenError({ reason: `requires-${minRole}` });
     }
+    // AFTER the role check, deliberately. A caller who cannot see this board
+    // must get the board answer (404/403) they would have got before scoping
+    // existed; telling a scoped key "your scope does not cover board X" on a
+    // board it could not otherwise see would confirm X exists. Scopes narrow
+    // what a caller may reach — they never widen what a caller may learn.
+    if (grants !== null && !grantsCoverBoard(grants, board.slug, minRole)) {
+      return yield* new ForbiddenError({
+        reason: `this key is not scoped to the board "${board.slug}"`,
+      });
+    }
     return { board, role };
   });
 
@@ -244,6 +275,7 @@ export const authorizeBoardById = (
   boardId: string,
   pubkey: string | null,
   minRole: string,
+  grants: readonly Grant[] | null,
 ): Effect.Effect<
   { board: BoardShape; role: string },
   BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
@@ -258,7 +290,7 @@ export const authorizeBoardById = (
     // Nonexistent board: 401 for anonymous, same as a private one. Splitting
     // these two is the oracle the module header forbids.
     if (row === null) return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
-    return yield* authorizeBoard(parseBoardRow(row), pubkey, minRole);
+    return yield* authorizeBoard(parseBoardRow(row), pubkey, minRole, grants);
   });
 
 /**
@@ -275,6 +307,7 @@ export const resolveBoardScope = (
   params: { org_slug?: string | undefined; slug: string },
   pubkey: string | null,
   minRole: string,
+  grants: readonly Grant[] | null,
 ): Effect.Effect<
   { board: BoardShape; org: OrgShape | null; role: string },
   BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
@@ -294,7 +327,7 @@ export const resolveBoardScope = (
       if (row === null) {
         return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
       }
-      const authorized = yield* authorizeBoard(parseBoardRow(row), pubkey, minRole);
+      const authorized = yield* authorizeBoard(parseBoardRow(row), pubkey, minRole, grants);
       return { ...authorized, org: resolved.org };
     }
 
@@ -305,12 +338,25 @@ export const resolveBoardScope = (
       [params.slug, pubkey ?? ""],
     );
     let sawForbidden = false;
+    let sawUnscoped: string | null = null;
     for (const row of rows) {
       const board = parseBoardRow(row);
       const role = yield* effectiveBoardRole(board, pubkey);
       if (role === null) continue;
       if (!roleAtLeast(role, minRole)) {
         sawForbidden = true;
+        continue;
+      }
+      // EFB-100 — the instance check, AGAIN, because this branch never reaches
+      // authorizeBoard. It resolves a slug that several boards may carry and
+      // does its own role comparison inline, returning directly. Decision 6
+      // called authorizeBoard "the universal funnel"; that is true of the
+      // CALLERS but not of this function's own internals, and a scoped key
+      // would otherwise read any board it could name here. Skipping rather
+      // than failing keeps the loop's semantics: a key scoped to a different
+      // board carrying the same slug should still find its own.
+      if (grants !== null && !grantsCoverBoard(grants, board.slug, minRole)) {
+        sawUnscoped = board.slug;
         continue;
       }
       const orgRow =
@@ -323,6 +369,15 @@ export const resolveBoardScope = (
       return { board, role, org: orgRow === null ? null : parseOrgRow(orgRow) };
     }
     if (sawForbidden) return yield* new ForbiddenError({ reason: `requires-${minRole}` });
+    if (sawUnscoped !== null) {
+      // Names what was SCANNED, not merely that something failed: a caller
+      // who reads this can fix it without a support round-trip. Naming the
+      // slug leaks nothing — they supplied it. Naming the other boards that
+      // carry it would, so it does not.
+      return yield* new ForbiddenError({
+        reason: `no board matching the slug "${sawUnscoped}" is covered by this key's scopes`,
+      });
+    }
     // No visible board carried this slug — including the case where no board
     // carries it at all. Anonymous gets 401 for both; see module header.
     return yield* notVisible(pubkey, new BoardOwnershipError({ reason: "board" }));
@@ -339,8 +394,9 @@ export const resolveBoardScope = (
 export const assertOwnBoard = (
   slug: string,
   pubkey: string,
+  grants: readonly Grant[] | null,
 ): Effect.Effect<
   BoardShape,
   BoardOwnershipError | ForbiddenError | UnauthorizedError | DbError,
   Db
-> => Effect.map(resolveBoardScope({ slug }, pubkey, "admin"), (r) => r.board);
+> => Effect.map(resolveBoardScope({ slug }, pubkey, "admin", grants), (r) => r.board);

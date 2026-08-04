@@ -33,6 +33,7 @@ import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -86,6 +87,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const body = yield* parseRouteBody(c, PostBoardBody);
       return yield* createBoard(
         actionInput(claims, c.req.param(), body, {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
           token: c.get("token") ?? "",
         }),
@@ -100,6 +102,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listBoards(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           query: c.req.query(),
           orgSlug: orgSlugOf(c),
         }),
@@ -114,6 +117,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       getBoard(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       ),
@@ -126,6 +130,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       boardVelocity(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           query: c.req.query(),
           orgSlug: orgSlugOf(c),
         }),
@@ -139,7 +144,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, PatchBoardBody);
       return yield* updateBoard(
-        actionInput(claims, c.req.param(), body, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);
@@ -152,7 +157,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setBoardArchived(archive)(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);
@@ -165,7 +170,7 @@ export const makeBoardsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteBoard(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);

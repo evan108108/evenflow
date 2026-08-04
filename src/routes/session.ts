@@ -13,6 +13,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -35,7 +36,7 @@ export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
         catch: () => null,
       }).pipe(Effect.catchAll(() => Effect.succeed(null)));
       return yield* bootstrapSession(
-        actionInput(claims, c.req.param(), body, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program);
@@ -47,7 +48,7 @@ export const makeSessionRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
       return yield* registerSessionKey(
-        actionInput(claims, c.req.param(), body, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program, 201);

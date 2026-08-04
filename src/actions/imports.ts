@@ -213,8 +213,7 @@ export const createBulkImport = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       caller,
-      "contributor",
-    );
+      "contributor", input.grants,);
 
     // The ONE door. A row-level shape problem comes back as
     // `issues-rows-7-14-22`, naming the offending indices — the schema
@@ -667,8 +666,7 @@ export const listImports = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       callerPubkey(input.claims),
-      "contributor",
-    );
+      "contributor", input.grants,);
     const db = yield* Db;
     const rows = yield* db.queryAll<ImportRecord>(
       `SELECT * FROM issueImports WHERE board_id = ? ORDER BY imported_at_ms DESC LIMIT 50`,

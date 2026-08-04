@@ -628,8 +628,7 @@ export const listBoardMembers = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.params["orgSlug"], slug: input.params["boardSlug"] ?? "" },
       pubkey,
-      "contributor",
-    );
+      "contributor", input.grants,);
     const db = yield* Db;
     const rows = yield* db.queryAll<Record<string, unknown>>(
       "SELECT * FROM boardMemberCache WHERE board_id = ? ORDER BY added_at_ms ASC",
@@ -670,8 +669,7 @@ export const addBoardMember = (
     const { board } = yield* resolveBoardScope(
       { org_slug: orgSlug, slug: input.params["boardSlug"] ?? "" },
       pubkey,
-      "admin",
-    );
+      "admin", input.grants,);
     const memberPubkey = yield* validatePubkey(body["pubkey"]);
     const role = yield* validateBoardRole(body["role"]);
     yield* upsertMembership({
@@ -698,8 +696,7 @@ export const updateBoardMember = (
     const { board } = yield* resolveBoardScope(
       { org_slug: orgSlug, slug: input.params["boardSlug"] ?? "" },
       pubkey,
-      "admin",
-    );
+      "admin", input.grants,);
     const targetPubkey = yield* validatePubkeyParam(input.params["pubkey"]);
     const role = yield* validateBoardRole(body["role"]);
     const db = yield* Db;
@@ -729,8 +726,7 @@ export const removeBoardMember = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.params["orgSlug"], slug: input.params["boardSlug"] ?? "" },
       pubkey,
-      "admin",
-    );
+      "admin", input.grants,);
     const targetPubkey = yield* validatePubkeyParam(input.params["pubkey"]);
     // Rotate FIRST: if the epoch bump fails, the removal fails with it
     // and stays retryable — a removed member must never keep a live key.

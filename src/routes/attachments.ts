@@ -25,6 +25,7 @@ import { Cause, Effect, Option } from "effect";
 import { path } from "../routes-manifest";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { callerPubkeyOrNull, requireCaller } from "../authz";
 import { ValidationError } from "../lib/errors";
 import { makeRunJson } from "../lib/run-json";
@@ -146,7 +147,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* createAttachment(
-        actionInput(claims, c.req.param(), readUpload(c), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), readUpload(c), { grants: grantsOf(c), orgSlug: orgSlug(c) }),
         c.env.EVENFLOW_STORAGE_SECRET,
       );
     });
@@ -163,7 +164,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           c.req.param(),
           undefined,
-          { orgSlug: orgSlug(c) },
+          { grants: grantsOf(c), orgSlug: orgSlug(c) },
         ),
       ),
     ),
@@ -183,7 +184,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
         catch: () => new ValidationError({ reason: "expected-json" }),
       });
       return yield* updateAttachment(
-        actionInput(claims, c.req.param(), body, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -194,7 +195,7 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteAttachment(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);

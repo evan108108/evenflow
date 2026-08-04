@@ -51,6 +51,7 @@ import {
 import { loadKanbanTideInput, loadSprintTideInput } from "../lib/tide/facts";
 import { rollForwardNow, type TideSubject } from "../lib/tide/snapshot";
 import { publishTide } from "../lib/tide/publish";
+import type { Grant } from "../scopes";
 import type { ActionInput, PublicActionInput } from "./types";
 
 const MAX_NAME_LENGTH = 80;
@@ -243,7 +244,11 @@ const fetchSprint = (boardId: string, sprintId: string) =>
  * rather than something read out of a URL here.
  */
 const boardScope = (
-  input: { readonly orgSlug: string | null; readonly params: Readonly<Record<string, string>> },
+  input: {
+    readonly orgSlug: string | null;
+    readonly params: Readonly<Record<string, string>>;
+    readonly grants: readonly Grant[] | null;
+  },
   pubkey: string | null,
   minRole: string,
 ) =>
@@ -253,8 +258,7 @@ const boardScope = (
       slug: input.params["slug"] ?? "",
     },
     pubkey,
-    minRole,
-  );
+    minRole, input.grants,);
 
 /** The caller's pubkey, or null when the request is anonymous. */
 const pubkeyOf = (claims: PublicActionInput["claims"]): string | null =>

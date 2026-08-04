@@ -19,6 +19,7 @@ import type { Context } from "hono";
 import { Cause, Effect, Option } from "effect";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { ValidationError } from "../lib/errors";
 import { makeRunJson } from "../lib/run-json";
 import { actionInput } from "../actions/types";
@@ -157,7 +158,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
     if (claims === undefined) return unauthorized(c);
     return runJson(
       c,
-      getMyProfile(actionInput(claims, c.req.param(), undefined, { token: bearerOf(c) })),
+      getMyProfile(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token: bearerOf(c) })),
     );
   });
 
@@ -180,6 +181,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       createProfilePicture(
         actionInput(claims, c.req.param(), readUploadedImage(c, contentTypeHeader), {
+          grants: grantsOf(c),
           token: bearerOf(c),
         }),
       ),
@@ -195,7 +197,7 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
     return runJson(
       c,
       setMyProfile(
-        actionInput(claims, c.req.param(), readProfileBody(c), { token: bearerOf(c) }),
+        actionInput(claims, c.req.param(), readProfileBody(c), { grants: grantsOf(c), token: bearerOf(c) }),
       ),
     );
   });
@@ -206,14 +208,14 @@ export const makeProfileRouter = (layerFor: LayerFor = bootstrap) => {
     runJson(
       c,
       listProfiles(
-        actionInput(null, c.req.param(), undefined, { query: c.req.query() }),
+        actionInput(null, c.req.param(), undefined, { grants: grantsOf(c), query: c.req.query() }),
       ),
     ),
   );
 
   // ── GET /profile/:pubkey ────────────────────────────────────────────────
   profile.get(path("profile.get"), async (c) =>
-    runJson(c, getProfile(actionInput(null, c.req.param(), undefined))),
+    runJson(c, getProfile(actionInput(null, c.req.param(), undefined, { grants: grantsOf(c) }))),
   );
 
   return profile;

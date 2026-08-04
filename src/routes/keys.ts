@@ -23,6 +23,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { ValidationError } from "../lib/errors";
 import { actionInput } from "../actions/types";
@@ -71,7 +72,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
             try: () => c.req.json() as Promise<Record<string, unknown>>,
             catch: () => new ValidationError({ reason: "expected-json" }),
           }),
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });
@@ -83,7 +84,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listKeys(
-        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program);
@@ -98,7 +99,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* rotateKey(
-        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program, 201);
@@ -109,7 +110,7 @@ export const makeKeysRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteKey(
-        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program);

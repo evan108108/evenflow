@@ -2271,6 +2271,68 @@ select:disabled {
   flex: 1;
 }
 
+/* EFB-100 — the scope picker. No focus rings anywhere in here: the house
+   rule, and the selects inherit the page's existing input treatment. */
+.key-scope-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.key-scope-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.key-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.2rem 0 0.4rem 1.5rem;
+}
+
+.key-scope-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.key-scope-boards {
+  margin: 0 0 0.4rem 1.5rem;
+  max-width: 26rem;
+}
+
+.key-scope-domain {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted, #6b6b6b);
+}
+
+.key-scope-warning {
+  font-size: 0.85rem;
+  margin: 0 0 0.2rem 1.5rem;
+}
+
+/* Chips on a key row. They wrap rather than truncate — a key with five
+   scopes is exactly the key whose reach you want to be able to read. */
+.key-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.key-scope-chip {
+  font-size: 0.78rem;
+}
+
+.key-row.revoked .key-scope-chip {
+  opacity: 0.6;
+}
+
 .key-warning {
   font-size: 0.88rem;
   color: #7a5c1e;

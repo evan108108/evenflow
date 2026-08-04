@@ -32,6 +32,7 @@ import { Cause, Effect, Exit, Option } from "effect";
 import { path } from "../routes-manifest";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
@@ -127,7 +128,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
         c.get("claims") ?? null,
         c.req.param(),
         { eventType, deliveryId, signature, rawBody },
-        { orgSlug: orgSlug(c) },
+        { grants: grantsOf(c), orgSlug: orgSlug(c) },
       ),
       c.env.EVENFLOW_WEBHOOK_SECRET,
     );
@@ -146,7 +147,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* getGithubConfig(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -160,7 +161,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setGithubConfig(
-        actionInput(claims, c.req.param(), parseRouteBody(c, GithubConfigBody), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubConfigBody), { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -170,7 +171,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setGithubSecret(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
         c.env.EVENFLOW_WEBHOOK_SECRET,
       );
     });
@@ -181,7 +182,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteGithubConfig(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -193,7 +194,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setGithubRules(
-        actionInput(claims, c.req.param(), parseRouteBody(c, GithubRulesBody), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubRulesBody), { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -205,7 +206,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* testGithubConnection(
-        actionInput(claims, c.req.param(), parseRouteBody(c, GithubTestBody), { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), parseRouteBody(c, GithubTestBody), { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -218,6 +219,7 @@ export const makeGithubRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listGithubAudit(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           query: c.req.query(),
           orgSlug: orgSlug(c),
         }),

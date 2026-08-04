@@ -29,6 +29,14 @@ export default defineConfig({
     alias: {
       "@routes-manifest": path.resolve(__dirname, "../src/routes-manifest.ts"),
       "@apikey-policy": path.resolve(__dirname, "../src/apikey-policy.ts"),
+      // EFB-100: the scope vocabulary, so the picker cannot drift from what
+      // the server enforces. Safe to alias for the same reason the manifest
+      // is — its only import is `import type` from the manifest itself, which
+      // is already dependency-free, so nothing Worker-shaped reaches the
+      // browser program at typecheck OR at runtime. Importing GRANTABLE_DOMAINS
+      // is also what makes it impossible for the picker to offer the `keys`
+      // domain: the exclusion is the same constant the server refuses on.
+      "@scopes": path.resolve(__dirname, "../src/scopes.ts"),
     },
   },
   build: {
