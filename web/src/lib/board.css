@@ -3448,6 +3448,24 @@ input.sprint-name:focus {
 
 .docs-body {
   min-width: 0;
+  /* Same paper-glass panel treatment as .settings-section so docs content
+     floats over the ocean instead of sitting directly on the water. */
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+}
+/* Also on the /docs index page (which uses .docs-section, not .docs-body). */
+.docs-section {
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+  margin-bottom: 1.6rem;
 }
 
 .docs-blurb {

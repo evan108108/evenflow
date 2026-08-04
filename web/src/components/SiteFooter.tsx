@@ -20,7 +20,8 @@ export const SiteFooter = () => (
       {/* Served as text/plain by the Worker: the whole documentation set in
           one request, for agents that would rather not crawl seven pages. */}
       <a href="/docs/llms.txt">llms.txt</a>
-      <a href="/settings/keys">API keys</a>
+      {/* API keys removed from footer — it's a settings surface, not a doc.
+          Reachable from /settings/keys via the user nav. */}
     </nav>
     <p class="site-footer-note muted">
       Evenflow — the even flow of work. The API is documented in full and open to
