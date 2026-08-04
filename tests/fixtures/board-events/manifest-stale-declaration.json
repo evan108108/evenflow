@@ -1,0 +1,10 @@
+[
+  {
+    "id": "search.board",
+    "method": "POST",
+    "path": "/synthetic/stale",
+    "orgScoped": false,
+    "file": "issues.ts",
+    "auth": "contributor"
+  }
+]

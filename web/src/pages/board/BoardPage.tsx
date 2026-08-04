@@ -43,6 +43,7 @@ import { TopBar } from "../../components/TopBar";
 import { BoardSearch } from "../../components/BoardSearch";
 import { TideBadge } from "../../components/TideBadge";
 import { IssueSheet } from "../../components/IssueSheet";
+import { startBoardPoll } from "../../lib/boardPoll";
 import { createBoardStore, type NewIssueInput } from "./store";
 import { MobileBoardHeader } from "./MobileBoardHeader";
 import { KanbanView } from "./KanbanView";
@@ -372,8 +373,24 @@ export const BoardPage = () => {
   const onResize = () => setViewportWidth(layoutViewportWidth());
   onMount(() => window.addEventListener("resize", onResize));
 
+  // EFB-104 — poll-and-diff self-heal.
+  //
+  // SSE only reports state changes whose route emits a BoardEvent. An
+  // API-driven transition through a route that emits none leaves the stream
+  // silent and this tab rendering whatever it had at page load; EFB-102 sat
+  // visibly in the wrong column that way. The schedule (and the two cases
+  // where it deliberately does nothing) lives in lib/boardPoll so it can be
+  // tested without mounting this page.
+  //
+  // Lifecycle here, fetching in the store — the same split as the SSE fiber.
+  let stopPoll: (() => void) | undefined;
+  onMount(() => {
+    stopPoll = startBoardPoll({ poll: () => void store.pollRefresh() });
+  });
+
   onCleanup(() => {
     window.removeEventListener("resize", onResize);
+    stopPoll?.();
     if (sseFiber !== undefined) appRuntime.runFork(Fiber.interrupt(sseFiber));
   });
 

@@ -29,7 +29,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "check:rest-conventions": "node scripts/check-rest-conventions.mjs",
     "check:scopes": "node --experimental-strip-types scripts/check-scope-declarations.mjs",
-    "check": "npm run typecheck:src && npm run typecheck:web && npm run check:boundary && npm run check:boundary-query && npm run check:rest-conventions && npm run check:scopes"
+    "check:board-events": "node --experimental-strip-types scripts/check-board-events.mjs",
+    "check": "npm run typecheck:src && npm run typecheck:web && npm run check:boundary && npm run check:boundary-query && npm run check:rest-conventions && npm run check:scopes && npm run check:board-events"
   },
   "dependencies": {
     "@noble/ciphers": "2.1.1",
