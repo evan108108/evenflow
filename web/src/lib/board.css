@@ -376,11 +376,12 @@ select:disabled {
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  /* Subtle dark wash — the same feel as .drop-over during a card drag,
-     just always on. Mutes the bright bands of the shader while keeping
-     the ocean color legible; cards on top read consistently. */
-  background: rgba(23, 35, 59, 0.07);
-  border: 1.5px dashed transparent;
+  /* Match the .drop-over feel at rest: a slightly stronger dark wash so
+     the column reads as a defined unit against the shader's bright bands,
+     plus a faint always-on dashed edge (so the column shape is visible
+     without a card being dragged over it). */
+  background: rgba(23, 35, 59, 0.14);
+  border: 1.5px dashed rgba(23, 35, 59, 0.22);
   transition: border-color 140ms ease, background 140ms ease;
 }
 .kanban-column:hover {
