@@ -63,19 +63,19 @@ html { background: var(--color-cream); }
   flex: 1;
 }
 
-/* No background on main — content sits directly on the ocean, as intended.
-   Inner-page text gets a soft cream halo instead so ink navy stays readable
-   against the darker parts of the water without needing a container. */
-main:not(.landing-hero-over-ocean) {
-  text-shadow: 0 0 12px rgba(245, 242, 236, 0.55), 0 0 3px rgba(245, 242, 236, 0.4);
-}
-main:not(.landing-hero-over-ocean) input,
-main:not(.landing-hero-over-ocean) textarea,
-main:not(.landing-hero-over-ocean) select,
-main:not(.landing-hero-over-ocean) button,
-main:not(.landing-hero-over-ocean) .card,
-main:not(.landing-hero-over-ocean) .kanban-column {
-  text-shadow: none;
+/* Inner-page text color: pure black instead of the ink-navy that read
+   bluish against the ocean's blue-tinted water. Ink navy stays as the
+   theme color for borders, fills, buttons — this only affects text. */
+main:not(.landing-hero-over-ocean),
+main:not(.landing-hero-over-ocean) h1,
+main:not(.landing-hero-over-ocean) h2,
+main:not(.landing-hero-over-ocean) h3,
+main:not(.landing-hero-over-ocean) p,
+main:not(.landing-hero-over-ocean) li,
+main:not(.landing-hero-over-ocean) a,
+main:not(.landing-hero-over-ocean) span,
+main:not(.landing-hero-over-ocean) label {
+  color: #000;
 }
 
 
