@@ -51,6 +51,34 @@ body {
    the cream stays on the html element so we never flash a black frame. */
 html { background: var(--color-cream); }
 
+/* Flex column filling the viewport so the site footer pins to the bottom
+   on short pages instead of floating up right below the last bit of
+   content. `main` grows to fill the leftover space. */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.app-shell > main {
+  flex: 1;
+}
+
+/* Every inner-page main is a frosted glass panel over the ocean — 70% cream
+   plus a heavy backdrop blur so ocean tints subtly through but everything
+   BEHIND main is blurred, keeping text crisp regardless of what part of the
+   shader is underneath. Landing's hero opts out (below) so the wordmark
+   sits directly on the water. */
+main {
+  background: rgba(245, 242, 236, 0.72);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+main.landing-hero-over-ocean {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 
 h1,
 h2,

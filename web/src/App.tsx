@@ -54,8 +54,14 @@ import { OceanBackground } from "./components/OceanBackground";
 export const Shell = (props: { children?: unknown }) => (
   <>
     <OceanBackground />
-    {props.children as never}
-    <SiteFooter />
+    {/* Flex column occupying at least the viewport, so on short pages the
+        footer pins to the bottom instead of floating up right after the
+        content. `main` gets flex: 1 in theme.css to fill the leftover
+        space. */}
+    <div class="app-shell">
+      {props.children as never}
+      <SiteFooter />
+    </div>
   </>
 );
 
