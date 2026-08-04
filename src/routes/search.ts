@@ -19,6 +19,7 @@ import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { actionInput } from "../actions/types";
 import {
   SearchBody,
@@ -81,7 +82,7 @@ export const makeSearchRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           c.req.param(),
           parseRouteBody(c, SearchBody),
-          { orgSlug: orgSlugOf(c) },
+          { grants: grantsOf(c), orgSlug: orgSlugOf(c) },
         ),
       ),
     ),

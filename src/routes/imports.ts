@@ -18,6 +18,7 @@ import type { Context } from "hono";
 import { Cause, Effect, Option } from "effect";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
@@ -87,6 +88,7 @@ export const makeImportsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const result = yield* createBulkImport(
         actionInput(claims, c.req.param(), parseRouteBody(c, PostBulkIssuesBody), {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );
@@ -101,6 +103,7 @@ export const makeImportsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listImports(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );

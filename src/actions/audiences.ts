@@ -88,8 +88,7 @@ export const getKeyGrant = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkey,
-      "viewer",
-    );
+      "viewer", input.grants,);
     if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
     const sessionPub = yield* sessionPubOfCaller(input.token);
     if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });
@@ -115,8 +114,7 @@ export const createRegrantRequest = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkey,
-      "viewer",
-    );
+      "viewer", input.grants,);
     if (!board.encryption_active) return yield* new NotFoundError({ reason: "not-private" });
     const sessionPub = yield* sessionPubOfCaller(input.token);
     if (sessionPub === null) return yield* new NotFoundError({ reason: "session-key" });

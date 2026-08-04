@@ -45,6 +45,7 @@ import {
 } from "../shapes";
 import { asShortId } from "../slug";
 import { ProvenanceFromCaller, ProvenanceFromSystem } from "../lib/route-body";
+import type { Grant } from "../scopes";
 import type { ActionInput, PublicActionInput } from "./types";
 
 const DEFAULT_LIMIT = 50;
@@ -109,7 +110,12 @@ export const PostCommentBody = Schema.Struct({
  * "issue" (no existence leak); a visible board with an under-role caller is
  * 403. For an anonymous caller both are 401 (EFB-76) — see authz.ts.
  */
-export const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: string) =>
+export const fetchIssueForRole = (
+  ref: string,
+  pubkey: string | null,
+  minRole: string,
+  grants: readonly Grant[] | null,
+) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
@@ -119,7 +125,7 @@ export const fetchIssueForRole = (ref: string, pubkey: string | null, minRole: s
         : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
     if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
-    yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
+    yield* authorizeBoardById(issue.board_id, pubkey, minRole, grants).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
       ),
@@ -161,7 +167,7 @@ export const createComment = (
 ): Effect.Effect<{ comment: CommentShape & { attachments: AttachmentShape[] } }, CommentsFailure, CommentServices> =>
   Effect.gen(function* () {
     const pubkey = callerPubkey(input.claims);
-  const issue = yield* fetchIssueForRole(input.params["id"] ?? "", pubkey, "contributor");
+  const issue = yield* fetchIssueForRole(input.params["id"] ?? "", pubkey, "contributor", input.grants);
   // Parsed HERE, after fetchIssueForRole, holding the pre-split order: a
   // malformed body aimed at an issue that does not exist (or that the caller
   // cannot see) is a 404 about the issue, not a 400 about the body. Flatten
@@ -264,8 +270,7 @@ export const listComments = (
   const issue = yield* fetchIssueForRole(
     input.params["id"] ?? "",
     input.claims === null ? null : callerPubkey(input.claims),
-    "viewer",
-  );
+    "viewer", input.grants,);
 
   let limit = DEFAULT_LIMIT;
   if (limitRaw !== undefined) {
@@ -327,7 +332,7 @@ export const deleteComment = (
   ]);
   if (issueRow !== null) {
     const issue = parseIssueRow(issueRow);
-    yield* authorizeBoardById(issue.board_id, pubkey, "contributor").pipe(
+    yield* authorizeBoardById(issue.board_id, pubkey, "contributor", input.grants).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "comment" }) : e,
       ),

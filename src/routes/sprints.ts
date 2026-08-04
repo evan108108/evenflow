@@ -30,6 +30,7 @@ import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -90,6 +91,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       listSprints(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       ),
@@ -101,6 +103,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* createSprint(
         actionInput(claims, c.req.param(), parseRouteBody(c, PostSprintBody), {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       );
@@ -113,6 +116,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* updateSprint(
         actionInput(claims, c.req.param(), parseRouteBody(c, PatchSprintBody), {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       );
@@ -124,7 +128,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* startSprint(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);
@@ -149,7 +153,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
         ),
       );
       return yield* completeSprint(
-        actionInput(claims, c.req.param(), body, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);
@@ -160,6 +164,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       listSprintArchivedIssues(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       ),
@@ -176,6 +181,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       sprintTide(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           query: c.req.query(),
           orgSlug: orgSlugOf(c),
         }),
@@ -188,6 +194,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       c,
       boardTide(
         actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
           query: c.req.query(),
           orgSlug: orgSlugOf(c),
         }),
@@ -219,6 +226,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* attachSprintIssue(
         actionInput(claims, c.req.param(), parseRouteBody(c, MembershipBody), {
+          grants: grantsOf(c),
           orgSlug: orgSlugOf(c),
         }),
       );
@@ -230,7 +238,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* detachSprintIssue(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);
@@ -240,7 +248,7 @@ export const makeSprintsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteSprint(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlugOf(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlugOf(c) }),
       );
     });
     return runJson(c, program);

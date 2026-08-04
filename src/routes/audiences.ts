@@ -16,6 +16,7 @@ import { path } from "../routes-manifest";
 import { Effect } from "effect";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { errorResponse } from "./errors";
 import { makeRunJson } from "../lib/run-json";
@@ -36,6 +37,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* getKeyGrant(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           token: c.get("token") ?? "",
           orgSlug: c.req.param("org_slug") ?? null,
         }),
@@ -49,6 +51,7 @@ export const makeAudiencesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* createRegrantRequest(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           token: c.get("token") ?? "",
           orgSlug: c.req.param("org_slug") ?? null,
         }),

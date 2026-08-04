@@ -133,7 +133,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      createSprint(actionInput(JWT_TEST_CLAIMS, onBoard(), parsed({ name: "S1" }))),
+      createSprint(actionInput(JWT_TEST_CLAIMS, onBoard(), parsed({ name: "S1" }), { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -151,7 +151,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      startSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined)),
+      startSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -169,7 +169,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      startSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined)),
+      startSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -188,7 +188,7 @@ describe("sprint actions", () => {
     const exit = await run(
       deps,
       attachSprintIssue(
-        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), parsed({ issue_id: "i1" })),
+        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), parsed({ issue_id: "i1" }), { grants: null }),
       ),
     );
 
@@ -207,7 +207,7 @@ describe("sprint actions", () => {
     const exit = await run(
       deps,
       attachSprintIssue(
-        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), parsed({ issue_id: "i1" })),
+        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), parsed({ issue_id: "i1" }), { grants: null }),
       ),
     );
 
@@ -235,7 +235,7 @@ describe("sprint actions", () => {
     const exit = await run(
       deps,
       detachSprintIssue(
-        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1", issue_id: "i1" }), undefined),
+        actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1", issue_id: "i1" }), undefined, { grants: null }),
       ),
     );
 
@@ -253,7 +253,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      deleteSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined)),
+      deleteSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -276,7 +276,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      completeSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), unparseable())),
+      completeSprint(actionInput(JWT_TEST_CLAIMS, onBoard({ id: "s1" }), unparseable(), { grants: null })),
     );
 
     // `sprint-planning`, not `bad-body`: if the parse ran first this would be a
@@ -294,7 +294,7 @@ describe("sprint actions", () => {
 
     const exit = await run(
       deps,
-      createSprint(actionInput(JWT_TEST_CLAIMS, onBoard(), unparseable())),
+      createSprint(actionInput(JWT_TEST_CLAIMS, onBoard(), unparseable(), { grants: null })),
     );
 
     // The gate's reason, so the wire answer stays 404 rather than becoming 400.
@@ -310,7 +310,7 @@ describe("sprint actions", () => {
     deps.db.boards[0]!["visibility"] = "public";
     seedSprint(deps, "s1");
 
-    const exit = await run(deps, listSprints(actionInput(null, onBoard(), undefined)));
+    const exit = await run(deps, listSprints(actionInput(null, onBoard(), undefined, { grants: null })));
 
     expect(exit._tag).toBe("Success");
   });

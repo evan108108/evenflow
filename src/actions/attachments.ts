@@ -68,6 +68,7 @@ import {
 import { deriveServerStorageKeys, decryptS3Creds } from "../lib/nostr-keys";
 import { getOrgStorageConfig, type OrgStorageConfigShape } from "../storage-config";
 import { asShortId } from "../slug";
+import type { Grant } from "../scopes";
 import type { ActionInput, PublicActionInput } from "./types";
 
 /** Upload rejections carry user-facing copy + a storage-settings link. */
@@ -122,7 +123,7 @@ export interface UploadInput {
 
 /** Resolve an issue inside the route's board scope at `minRole`. */
 const fetchScopedIssue = (
-  input: Pick<PublicActionInput<unknown>, "orgSlug" | "params">,
+  input: Pick<PublicActionInput<unknown>, "orgSlug" | "params" | "grants">,
   pubkey: string | null,
   minRole: string,
 ) =>
@@ -130,8 +131,7 @@ const fetchScopedIssue = (
     const { board, org } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkey,
-      minRole,
-    );
+      minRole, input.grants,);
     const db = yield* Db;
     const ref = input.params["issue_ref"] ?? "";
     const shortId = asShortId(ref);
@@ -144,7 +144,12 @@ const fetchScopedIssue = (
   });
 
 /** Fetch a live attachment + its issue, proving `minRole` on the board. */
-const fetchAttachment = (id: string, pubkey: string | null, minRole: string) =>
+const fetchAttachment = (
+  id: string,
+  pubkey: string | null,
+  minRole: string,
+  grants: readonly Grant[] | null,
+) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const row = yield* db.queryFirst(
@@ -156,7 +161,7 @@ const fetchAttachment = (id: string, pubkey: string | null, minRole: string) =>
     const issueRow = yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [attachment.issue_id]);
     if (issueRow === null) return yield* new NotFoundError({ reason: "attachment" });
     const issue = parseIssueRow(issueRow);
-    yield* authorizeBoardById(issue.board_id, pubkey, minRole).pipe(
+    yield* authorizeBoardById(issue.board_id, pubkey, minRole, grants).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "attachment" }) : e,
       ),
@@ -410,8 +415,7 @@ export const updateAttachment = (input: ActionInput<Record<string, unknown>>) =>
     const { attachment, issue } = yield* fetchAttachment(
       input.params["id"] ?? "",
       pubkey,
-      "contributor",
-    );
+      "contributor", input.grants,);
 
     const db = yield* Db;
     const audit = yield* AuditLog;
@@ -452,8 +456,7 @@ export const deleteAttachment = (input: ActionInput) =>
     const { attachment, issue } = yield* fetchAttachment(
       input.params["id"] ?? "",
       callerPubkey(input.claims),
-      "contributor",
-    );
+      "contributor", input.grants,);
     const db = yield* Db;
     const audit = yield* AuditLog;
     const now = yield* Clock.currentTimeMillis;

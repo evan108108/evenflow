@@ -81,6 +81,7 @@ describe("storage actions", () => {
       deps,
       setStorageConfig(
         actionInput(JWT_TEST_CLAIMS, { org_slug: "nope" }, parseThatWouldFail(), {
+          grants: null,
           orgSlug: "nope",
         }),
         "00".repeat(32),
@@ -99,6 +100,7 @@ describe("storage actions", () => {
       deps,
       setStorageConfig(
         actionInput(JWT_TEST_CLAIMS, { org_slug: "nope" }, parseThatWouldFail(), {
+          grants: null,
           orgSlug: "nope",
         }),
         undefined,
@@ -123,7 +125,7 @@ describe("import actions", () => {
     const exit = await run(
       deps,
       createBulkImport(
-        actionInput(JWT_TEST_CLAIMS, { slug: "missing" }, parseThatWouldFail()),
+        actionInput(JWT_TEST_CLAIMS, { slug: "missing" }, parseThatWouldFail(), { grants: null }),
       ),
     );
 
@@ -146,8 +148,7 @@ describe("profile actions", () => {
         actionInput(
           JWT_TEST_CLAIMS,
           {},
-          Effect.succeed({ bytes: oversized, imageType: "image/png" }),
-        ),
+          Effect.succeed({ bytes: oversized, imageType: "image/png" }), { grants: null }),
       ),
     );
 
@@ -163,8 +164,7 @@ describe("profile actions", () => {
         actionInput(
           JWT_TEST_CLAIMS,
           {},
-          Effect.succeed({ bytes: new Uint8Array([1, 2, 3]), imageType: "image/gif" }),
-        ),
+          Effect.succeed({ bytes: new Uint8Array([1, 2, 3]), imageType: "image/gif" }), { grants: null }),
       ),
     );
 
@@ -185,7 +185,7 @@ describe("profile actions", () => {
     const deps = makeDeps();
     const exit = await run(
       deps,
-      listProfiles(actionInput(null, {}, undefined, { query: { pubkeys: "  " } })),
+      listProfiles(actionInput(null, {}, undefined, { query: { pubkeys: "  " } }, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");

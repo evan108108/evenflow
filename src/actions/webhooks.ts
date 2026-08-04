@@ -202,15 +202,14 @@ export const requirePredicateAllowed = (
  * there is no anonymous path onto a board's webhook settings.
  */
 const boardScope = (
-  input: Pick<ActionInput<unknown>, "claims" | "orgSlug" | "params">,
+  input: Pick<ActionInput<unknown>, "claims" | "orgSlug" | "params" | "grants">,
   minRole = "admin",
 ) =>
   Effect.gen(function* () {
     const scope = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       callerPubkey(input.claims),
-      minRole,
-    );
+      minRole, input.grants,);
     return { ...scope, caller: callerPubkey(input.claims) };
   });
 

@@ -26,6 +26,7 @@ import { parseRouteBody, parseRouteQuery } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -94,6 +95,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* createIssue(
         actionInput(claims, c.req.param(), parseRouteBody(c, PostIssueBody), {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );
@@ -122,7 +124,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           c.req.param(),
           query,
-          { orgSlug: c.req.param("org_slug") ?? null },
+          { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null },
         ),
       );
     });
@@ -138,7 +140,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           c.req.param(),
           undefined,
-          { query: c.req.query(), orgSlug: c.req.param("org_slug") ?? null },
+          { grants: grantsOf(c), query: c.req.query(), orgSlug: c.req.param("org_slug") ?? null },
         ),
       ),
     ),
@@ -150,7 +152,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, PatchIssueBody);
       return yield* updateIssue(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);
@@ -161,7 +163,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteIssue(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);
@@ -173,7 +175,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, PostTransitionBody);
       return yield* transitionIssue(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);
@@ -190,7 +192,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, PostMoveToBoardBody);
       return yield* setIssueBoard(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);
@@ -202,7 +204,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, PatchReorderBody);
       return yield* setIssuePosition(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);
@@ -214,7 +216,7 @@ export const makeIssuesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* parseRouteBody(c, ContainerBody);
       return yield* setIssueContainer(
-        actionInput(claims, c.req.param(), body, { orgSlug: c.req.param("org_slug") ?? null }),
+        actionInput(claims, c.req.param(), body, { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null }),
       );
     });
     return runJson(c, program);

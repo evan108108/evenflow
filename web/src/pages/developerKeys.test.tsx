@@ -30,11 +30,11 @@ vi.mock("@routes-manifest", async (importOriginal) => {
 });
 
 const KEYS = [
-  { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: null, rotated_to_id: null },
-  { id: "k2", name: "Old key", prefix: "evk_dead0000", created_at_ms: 1_600_000_000_000, last_used_at_ms: 1_650_000_000_000, revoked_at_ms: 1_690_000_000_000, rotated_at_ms: null, rotated_to_id: null },
+  { id: "k1", name: "CI bot", prefix: "evk_abcd1234", created_at_ms: 1_700_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: null, rotated_to_id: null, scopes: JSON.stringify(["board:*:read"]) },
+  { id: "k2", name: "Old key", prefix: "evk_dead0000", created_at_ms: 1_600_000_000_000, last_used_at_ms: 1_650_000_000_000, revoked_at_ms: 1_690_000_000_000, rotated_at_ms: null, rotated_to_id: null, scopes: null },
   // EFB-99: a key that was rotated and is still inside its grace window —
   // live, but not actionable, and pointing at the successor it was replaced by.
-  { id: "k3", name: "Rotated key", prefix: "evk_0ld00000", created_at_ms: 1_500_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: 1_700_000_500_000, rotated_to_id: "k1" },
+  { id: "k3", name: "Rotated key", prefix: "evk_0ld00000", created_at_ms: 1_500_000_000_000, last_used_at_ms: null, revoked_at_ms: null, rotated_at_ms: 1_700_000_500_000, rotated_to_id: "k1", scopes: JSON.stringify(["owner"]) },
 ];
 
 let calls: Array<{ method: string; url: string; body?: unknown }>;
@@ -55,6 +55,7 @@ beforeEach(() => {
           plaintext: "evk_fresh000_THE_ONE_TIME_PLAINTEXT",
         });
       }
+      if (String(url).endsWith("/boards")) return json({ boards: [{ slug: "kb", title: "Board" }] });
       if (method === "DELETE") return json({ revoked: true });
       return json({ keys: KEYS });
     }),
@@ -229,6 +230,83 @@ describe("DeveloperKeys", () => {
     );
     expect(entry).toBeDefined();
     expect(entry!.textContent!.trim()).toBe("API keys");
+    cleanup();
+  });
+
+  // ── EFB-100: scopes ────────────────────────────────────────────────────
+
+  // The security posture of the whole feature, asserted where a reviewer can
+  // see it: a key must never be able to mint or revoke keys, so `keys` is not
+  // a grantable domain. The picker reads GRANTABLE_DOMAINS from the server's
+  // own module, so this cannot drift — but if someone adds it back to that
+  // constant, this reddens.
+  it("never offers the keys domain in the scope picker", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    [...container.querySelectorAll<HTMLInputElement>('input[name="key-scope-mode"]')][1]!.click();
+    await flush();
+    const labels = [...container.querySelectorAll(".key-scope-domain")].map((e) => e.textContent);
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain("keys");
+    expect(labels).toContain("board");
+    cleanup();
+  });
+
+  it("defaults to full access and names the risk in words", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    const modes = [...container.querySelectorAll<HTMLInputElement>('input[name="key-scope-mode"]')];
+    expect(modes[0]!.checked).toBe(true);
+    expect(container.textContent).toContain("can do anything you can");
+    cleanup();
+  });
+
+  it("sends the chosen scopes on create, not just the name", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    [...container.querySelectorAll<HTMLInputElement>('input[name="key-scope-mode"]')][1]!.click();
+    await flush();
+    const boardRow = [...container.querySelectorAll(".key-scope-row")].find(
+      (r) => r.querySelector(".key-scope-domain")?.textContent === "board",
+    )!;
+    const select = boardRow.querySelector("select")!;
+    select.value = "read";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+
+    const input = container.querySelector<HTMLInputElement>(".key-create input")!;
+    input.value = "narrow";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    [...container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent === "Create key")!
+      .click();
+    await flush();
+    await flush();
+
+    const post = calls.find((c) => c.method === "POST")!;
+    expect((post.body as { scopes: string[] }).scopes).toEqual(["board:*:read"]);
+    cleanup();
+  });
+
+  it("warns that the board wildcard covers boards made later", async () => {
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    [...container.querySelectorAll<HTMLInputElement>('input[name="key-scope-mode"]')][1]!.click();
+    await flush();
+    const boardRow = [...container.querySelectorAll(".key-scope-row")].find(
+      (r) => r.querySelector(".key-scope-domain")?.textContent === "board",
+    )!;
+    const select = boardRow.querySelector("select")!;
+    select.value = "read";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(container.textContent).toContain("includes boards you create later");
+    cleanup();
+  });
+
+  it("shows each key's reach, and says full access in words rather than an empty list", async () => {
+    // "no restrictions" and "no permissions" must never look alike.
+    const { container, cleanup } = await mountPage(DeveloperKeys);
+    const rows = [...container.querySelectorAll<HTMLElement>(".key-row")];
+    expect(rows[0]!.querySelector(".key-scope-chip")!.textContent).toBe("board:*:read");
+    expect(rows[1]!.textContent).toContain("full access (legacy)");
+    expect(rows[2]!.textContent).toContain("full access");
     cleanup();
   });
 

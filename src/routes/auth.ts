@@ -20,6 +20,7 @@ import { getCookie } from "hono/cookie";
 import { Cause, Effect, Exit, Option } from "effect";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireAuth } from "../middleware/requireAuth";
 import { actionInput } from "../actions/types";
 import { createSessionFromJwt, deleteSession, whoami } from "../actions/auth";
@@ -71,7 +72,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
     return c.json(
       await Effect.runPromise(
         Effect.provide(
-          whoami(actionInput(claims, c.req.param(), undefined, { token })),
+          whoami(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token })),
           layerFor(c.env),
         ),
       ),
@@ -113,7 +114,7 @@ export const makeAuthRouter = (layerFor: LayerFor = bootstrap) => {
     }
     const token = (c.req.header("Authorization") ?? "").slice(BEARER_PREFIX.length).trim();
 
-    const program = deleteSession(actionInput(claims, c.req.param(), undefined, { token }));
+    const program = deleteSession(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token }));
 
     const exit = await Effect.runPromiseExit(Effect.provide(program, layerFor(c.env)));
     if (Exit.isFailure(exit)) {

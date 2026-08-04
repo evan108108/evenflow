@@ -272,6 +272,60 @@ detection as well as containment.
 the row lookup, and before any body is read. A caller who may not use the
 endpoint at all is told that, rather than being told to fix their JSON.
 
+### Key scopes
+
+A key carries a `scopes` array that narrows what it can reach. Without one it
+authenticates as its owner and can do anything the owner can — which is still
+the default, because silently narrowing existing integrations would break them.
+
+```
+owner                    everything, stated rather than implied
+<domain>:<access>        profile:read, org:write, notify:read
+board:<slug>:<access>    board:acme:write
+board:*:<access>         every board, INCLUDING ones created later
+```
+
+Domains: `board`, `org`, `profile`, `github`, `storage`, `notify`. Access runs
+`read < write < admin` and is ADDITIVE **within a domain**: `board:*:write`
+satisfies a read requirement, and grants nothing at all on `org`. That matches
+how board roles already work (`authorizeBoard` takes a *minimum* role), so one
+mental model covers both.
+
+`keys` is a domain in the requirement table but is **not grantable**. There is
+no `keys:admin`, the create endpoint answers 400 if you ask for one, and the
+picker does not offer it — the same invariant as above, approached from the
+grant side instead of the call side.
+
+**Scopes are fixed at mint.** There is no endpoint that narrows a key in place:
+that would be a downgrade path an attacker could walk as easily as an owner. To
+change a key's reach, mint a new one and revoke the old. A rotation carries the
+parent's scopes forward verbatim — a successor is capped by its parent, never
+widened by the act of rotating.
+
+Two checks enforce this, at the two layers that can each answer their own half:
+
+| Half | Where | Question |
+| --- | --- | --- |
+| domain + access | the auth middleware | may this key touch this KIND of thing? |
+| instance | `authorizeBoard` | is THIS board one the key names? |
+
+The instance half cannot live in the middleware: routes like `/issue/:id`
+address a row, not a board, so at request time there is no slug to compare —
+only an id whose board nothing has read yet. By the time `authorizeBoard` runs,
+it has been resolved.
+
+The domain half is derived from the manifest, never hand-annotated: one
+function maps (route file, auth level, method) to a requirement, and
+`npm run check:scopes` prints the resulting table for all declared routes. A
+route with **no manifest entry fails closed** — a scoped key cannot reach it,
+because nothing can say what reaching it would require. That is what makes the
+manifest a perimeter rather than a description.
+
+Scopes are a SECOND gate. Every `requireCaller`, `boardScope`,
+`authorizeBoard` and `rejectKeyCallers` check that existed before them still
+runs. If scope enforcement were ever the only check on a path, a scope bug
+would be an authz bypass.
+
 ---
 
 ## Adding a route
@@ -286,8 +340,8 @@ endpoint at all is told that, rather than being told to fix their JSON.
    mount-table test cover routing once, for everything.
 6. Reference it from callers by id: `url("your.route.id", { ... })`.
 
-`npm run check` runs `typecheck:src` + `check:boundary` +
-`check:boundary-query` + `check:rest-conventions`.
+`npm run check` runs `typecheck:src` + `typecheck:web` + `check:boundary` +
+`check:boundary-query` + `check:rest-conventions` + `check:scopes`.
 
 ---
 

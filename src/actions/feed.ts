@@ -123,8 +123,7 @@ export const boardActivity = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkeyOf(input),
-      "viewer",
-    );
+      "viewer", input.grants,);
 
     let kindSql = "";
     if (type !== undefined) {
@@ -203,7 +202,7 @@ export const issueActivity = (
     // Same non-leaking posture as issues.ts: for an authenticated caller a
     // missing issue and an invisible board are indistinguishable (404
     // "issue"); for an anonymous one both are 401 (EFB-76).
-    yield* authorizeBoardById(issue.board_id, pubkey, "viewer").pipe(
+    yield* authorizeBoardById(issue.board_id, pubkey, "viewer", input.grants).pipe(
       Effect.mapError((e) =>
         e._tag === "BoardOwnershipError" ? new NotFoundError({ reason: "issue" }) : e,
       ),
@@ -243,7 +242,6 @@ export const authorizeBoardStream = (
     const { board } = yield* resolveBoardScope(
       { org_slug: input.orgSlug ?? undefined, slug: input.params["slug"] ?? "" },
       pubkeyOf(input),
-      "viewer",
-    );
+      "viewer", input.grants,);
     return { board };
   });

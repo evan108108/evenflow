@@ -97,7 +97,7 @@ describe("comment actions", () => {
     const exit = await run(
       deps,
       createComment(
-        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, bodyOf({ body: "first" })),
+        actionInput(JWT_TEST_CLAIMS, { id: "i1" }, bodyOf({ body: "first" }), { grants: null }),
       ),
     );
 
@@ -113,7 +113,7 @@ describe("comment actions", () => {
 
     const exit = await run(
       deps,
-      createComment(actionInput(JWT_TEST_CLAIMS, { id: "nope" }, bodyOf({ body: "x" }))),
+      createComment(actionInput(JWT_TEST_CLAIMS, { id: "nope" }, bodyOf({ body: "x" }), { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -138,8 +138,7 @@ describe("comment actions", () => {
         actionInput(
           JWT_TEST_CLAIMS,
           { id: "no-such-issue" },
-          unparseableBody,
-        ),
+          unparseableBody, { grants: null }),
       ),
     );
 
@@ -157,7 +156,7 @@ describe("comment actions", () => {
       body_format: "markdown", in_reply_to: null, created_at_ms: 1, substrate_event_id: null,
     });
 
-    const exit = await run(deps, deleteComment(actionInput(JWT_TEST_CLAIMS, { id: "c1" }, undefined)));
+    const exit = await run(deps, deleteComment(actionInput(JWT_TEST_CLAIMS, { id: "c1" }, undefined, { grants: null })));
 
     expect(exit._tag).toBe("Failure");
     // Still there — a refused delete must not have removed the row on its way
@@ -175,7 +174,7 @@ describe("comment actions", () => {
 
     const exit = await run(
       deps,
-      listComments(actionInput(null, { id: "i1" }, undefined, { query: {} })),
+      listComments(actionInput(null, { id: "i1" }, undefined, { grants: null, query: {} })),
     );
 
     expect(exit._tag).toBe("Success");

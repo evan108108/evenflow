@@ -1,0 +1,37 @@
+-- Evenflow D1 schema — migration 0030: per-key scopes (EFB-100).
+--
+-- (0029 is key rotation, in flight on a parallel branch — numbers stay
+-- disjoint so neither branch rebases into a collision at apply time.)
+--
+-- Until now an API key WAS its owner: claimsForApiKey synthesizes the owner's
+-- claims, so every authz path downstream grants owner authority and a leaked
+-- key is a leaked account. `scopes` narrows a key to a subset of the surface.
+--
+-- NULL vs '["owner"]' — THE DISTINCTION IS LOAD-BEARING, AND THEY ARE NOT THE
+-- SAME VALUE EVEN THOUGH THEY GRANT THE SAME THING TODAY.
+--
+--   NULL             a key minted BEFORE this migration. Full owner authority,
+--                    byte-for-byte the pre-EFB-100 behaviour. Narrowing these
+--                    at migration time would silently break every live
+--                    integration, so nothing is rewritten here.
+--   '["owner"]'      a key minted AFTER, whose owner chose full authority.
+--                    Identical authority, but STATED.
+--
+-- The reason to spend a column value on that distinction: "NULL means
+-- everything" is a fail-OPEN default, and a future code path that mints a key
+-- and forgets to set scopes would silently get owner authority with nothing to
+-- notice it. Because new keys always write an explicit array, NULL is a CLOSED
+-- set that only this migration can produce — countable, reportable, and
+-- driven to zero as users rotate:
+--
+--   SELECT COUNT(*) FROM apiKeys WHERE scopes IS NULL;
+--
+-- Same ratchet posture as scripts/boundary-allowlist.json: legacy debt that is
+-- visible and shrinking rather than an open door with no counter.
+--
+-- Format: JSON array of scope strings, per src/scopes.ts —
+--   ["owner"]                                full owner authority, stated
+--   ["board:*:read"]                         read every board, present and future
+--   ["board:acme:write", "notify:read"]      one board, plus notifications
+
+ALTER TABLE apiKeys ADD COLUMN scopes TEXT;

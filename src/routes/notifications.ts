@@ -11,6 +11,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -29,7 +30,7 @@ export const makeNotificationsRouter = (layerFor: LayerFor = bootstrap) => {
   notifications.get(path("notifications.config.get"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      return yield* getNotificationsConfig(actionInput(claims, c.req.param(), undefined));
+      return yield* getNotificationsConfig(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c) }));
     });
     return runJson(c, program);
   });
@@ -39,7 +40,7 @@ export const makeNotificationsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
-      return yield* setNotificationsConfig(actionInput(claims, c.req.param(), body));
+      return yield* setNotificationsConfig(actionInput(claims, c.req.param(), body, { grants: grantsOf(c) }));
     });
     return runJson(c, program);
   });

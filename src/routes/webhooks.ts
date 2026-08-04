@@ -19,6 +19,7 @@ import { Cause, Effect, Option } from "effect";
 import { path } from "../routes-manifest";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { parseRouteBody } from "../lib/route-body";
 import { makeRunJson } from "../lib/run-json";
@@ -72,7 +73,7 @@ export const makeWebhooksRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listWebhooks(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -89,6 +90,7 @@ export const makeWebhooksRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* createWebhook(
         actionInput(claims, c.req.param(), parseRouteBody(c, PostSubscriptionBody), {
+          grants: grantsOf(c),
           orgSlug: orgSlug(c),
         }),
         c.env.EVENFLOW_WEBHOOK_SECRET,
@@ -103,6 +105,7 @@ export const makeWebhooksRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* updateWebhook(
         actionInput(claims, c.req.param(), parseRouteBody(c, PatchSubscriptionBody), {
+          grants: grantsOf(c),
           orgSlug: orgSlug(c),
         }),
       );
@@ -115,7 +118,7 @@ export const makeWebhooksRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteWebhook(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);
@@ -126,7 +129,7 @@ export const makeWebhooksRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listWebhookDeliveries(
-        actionInput(claims, c.req.param(), undefined, { orgSlug: orgSlug(c) }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), orgSlug: orgSlug(c) }),
       );
     });
     return runJson(c, program);

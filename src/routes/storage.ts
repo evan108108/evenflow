@@ -28,6 +28,7 @@ import { path } from "../routes-manifest";
 import { Effect } from "effect";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { deriveServerStorageKeys } from "../lib/nostr-keys";
 import { errorResponse, readJsonBody } from "./errors";
@@ -69,6 +70,7 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* getStorageConfig(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );
@@ -89,6 +91,7 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* setStorageConfig(
         actionInput(claims, c.req.param(), readJsonBody(c), {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
         // Ambient server configuration, so it travels as an explicit parameter
@@ -105,6 +108,7 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* testStorageConfig(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
         c.env.EVENFLOW_STORAGE_SECRET,
@@ -119,6 +123,7 @@ export const makeStorageRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteStorageConfig(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );

@@ -91,7 +91,7 @@ describe("invite actions", () => {
 
     const exit = await run(
       deps,
-      createInvite(actionInput(JWT_TEST_CLAIMS, {}, { org_slug: "acme", role: "member" })),
+      createInvite(actionInput(JWT_TEST_CLAIMS, {}, { org_slug: "acme", role: "member" }, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -110,7 +110,7 @@ describe("invite actions", () => {
 
     const exit = await run(
       deps,
-      createInvite(actionInput(JWT_TEST_CLAIMS, {}, { org_slug: "acme", role: "owner" })),
+      createInvite(actionInput(JWT_TEST_CLAIMS, {}, { org_slug: "acme", role: "owner" }, { grants: null })),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -128,7 +128,7 @@ describe("invite actions", () => {
           org_slug: "acme",
           role: "member",
           bind_to_email: true,
-        }),
+        }, { grants: null }),
       ),
     );
 
@@ -145,7 +145,7 @@ describe("invite actions", () => {
 
     const exit = await run(
       deps,
-      getInvite(actionInput(null, { code: "inv-abcd1234" }, undefined)),
+      getInvite(actionInput(null, { code: "inv-abcd1234" }, undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -165,7 +165,7 @@ describe("invite actions", () => {
 
     const exit = await run(
       deps,
-      getInvite(actionInput(null, { code: "inv-abcd1234" }, undefined)),
+      getInvite(actionInput(null, { code: "inv-abcd1234" }, undefined, { grants: null })),
     );
 
     expect(exit._tag).toBe("Success");
@@ -186,7 +186,7 @@ describe("invite actions", () => {
     const exit = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
 
@@ -209,13 +209,13 @@ describe("invite actions", () => {
     const first = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
     const second = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
 
@@ -235,7 +235,7 @@ describe("invite actions", () => {
     const exit = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
 
@@ -255,7 +255,7 @@ describe("invite actions", () => {
     const exit = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
 
@@ -272,12 +272,12 @@ describe("invite actions", () => {
 
     const declined = await run(
       deps,
-      declineInvite(actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined)),
+      declineInvite(actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null })),
     );
     const accepted = await run(
       deps,
       acceptInvite(
-        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { token: "t" }),
+        actionInput(JWT_TEST_CLAIMS, { code: "inv-abcd1234" }, undefined, { grants: null, token: "t" }),
       ),
     );
 
@@ -290,8 +290,8 @@ describe("invite actions", () => {
     seedOrg(deps);
     seedInvite(deps);
 
-    const first = await run(deps, deleteInvite(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined)));
-    const second = await run(deps, deleteInvite(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined)));
+    const first = await run(deps, deleteInvite(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { grants: null })));
+    const second = await run(deps, deleteInvite(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { grants: null })));
 
     expect(first._tag).toBe("Success");
     expect(second._tag).toBe("Success");
@@ -305,7 +305,7 @@ describe("invite actions", () => {
     seedOrg(deps);
     seedInvite(deps);
 
-    const exit = await run(deps, sendInviteEmail(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined)));
+    const exit = await run(deps, sendInviteEmail(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { grants: null })));
 
     expect(exit._tag).toBe("Failure");
     expect(deps.email.sent).toHaveLength(0);
@@ -316,7 +316,7 @@ describe("invite actions", () => {
     seedOrg(deps);
     seedInvite(deps, { invited_email: "new.hire@example.com" });
 
-    const exit = await run(deps, sendInviteEmail(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined)));
+    const exit = await run(deps, sendInviteEmail(actionInput(JWT_TEST_CLAIMS, { id: "i1" }, undefined, { grants: null })));
 
     expect(exit._tag).toBe("Success");
     expect(deps.email.sent).toHaveLength(1);
@@ -335,7 +335,7 @@ describe("invite actions", () => {
 
     const exit = await run(
       deps,
-      listOrgInvites(actionInput(JWT_TEST_CLAIMS, {}, undefined, { orgSlug: "acme" })),
+      listOrgInvites(actionInput(JWT_TEST_CLAIMS, {}, undefined, { grants: null, orgSlug: "acme" })),
     );
 
     expect(exit._tag).toBe("Success");

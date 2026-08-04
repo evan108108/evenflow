@@ -18,7 +18,16 @@
 // /mcp surface share this middleware, so keys work on both for free.
 
 import type { MiddlewareHandler } from "hono";
+import { routePath } from "hono/route";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
+import { entryForMatch } from "../routes-manifest";
+import {
+  derivedRequirement,
+  describeRequirement,
+  grantsFromColumn,
+  grantsSatisfy,
+  type Grant,
+} from "../scopes";
 import { Db, Jwt, bootstrap, type JwtError } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
 import type { Claims } from "../effects";
@@ -39,7 +48,19 @@ class ApiKeyError extends Data.TaggedError("ApiKeyError")<{
   readonly reason: "invalid-api-key";
 }> {}
 
-const verifyApiKey = (token: string): Effect.Effect<Claims, ApiKeyError, Db> =>
+/**
+ * A verified caller: who they are, plus what they may do.
+ *
+ * `grants` is null for a JWT caller and for a key minted before EFB-100 —
+ * both carry full owner authority, which is the pre-scoping behaviour
+ * preserved byte-for-byte. A non-null list NARROWS.
+ */
+interface VerifiedCaller {
+  readonly claims: Claims;
+  readonly grants: readonly Grant[] | null;
+}
+
+const verifyApiKey = (token: string): Effect.Effect<VerifiedCaller, ApiKeyError, Db> =>
   Effect.gen(function* () {
     const db = yield* Db;
     const candidates = yield* db
@@ -50,8 +71,9 @@ const verifyApiKey = (token: string): Effect.Effect<Claims, ApiKeyError, Db> =>
         key_hash: string;
         last_used_at_ms: number | null;
         rotated_at_ms: number | null;
+        scopes: string | null;
       }>(
-        "SELECT id, pubkey, name, key_hash, last_used_at_ms, rotated_at_ms FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL",
+        "SELECT id, pubkey, name, key_hash, last_used_at_ms, rotated_at_ms, scopes FROM apiKeys WHERE prefix = ? AND revoked_at_ms IS NULL",
         [token.slice(0, API_KEY_DISPLAY_PREFIX_LEN)],
       )
       .pipe(Effect.mapError(() => new ApiKeyError({ reason: "invalid-api-key" })));
@@ -97,7 +119,11 @@ const verifyApiKey = (token: string): Effect.Effect<Claims, ApiKeyError, Db> =>
         .execute("UPDATE apiKeys SET last_used_at_ms = ? WHERE id = ?", [now, key.id])
         .pipe(Effect.catchAll(() => Effect.void));
     }
-    return claims;
+    // EFB-100. NULL means the key predates scoping and carries full owner
+    // authority; an explicit array narrows. A stored value that will not parse
+    // yields an EMPTY grant list rather than null — a corrupt scopes column
+    // must never be read as the widest possible answer.
+    return { claims, grants: grantsFromColumn(key.scopes) };
   });
 
 const makeAuthMiddleware = (
@@ -114,9 +140,15 @@ const makeAuthMiddleware = (
     }
     const token = header.slice(BEARER_PREFIX.length).trim();
 
-    const verify: Effect.Effect<Claims, JwtError | ApiKeyError, Jwt | Db> = isApiKeyToken(token)
+    const verify: Effect.Effect<VerifiedCaller, JwtError | ApiKeyError, Jwt | Db> = isApiKeyToken(
+      token,
+    )
       ? verifyApiKey(token)
-      : Effect.flatMap(Jwt, (jwt) => jwt.verify(token));
+      : Effect.flatMap(Jwt, (jwt) =>
+          // A JWT caller is never narrowed: grants stay null, which is the
+          // pre-EFB-100 behaviour for every human session.
+          Effect.map(jwt.verify(token), (claims) => ({ claims, grants: null })),
+        );
     const exit = await Effect.runPromiseExit(
       Effect.provide(verify, layerFor(c.env)),
     );
@@ -127,8 +159,64 @@ const makeAuthMiddleware = (
       return c.json({ error: "unauthorized", reason }, 401);
     }
 
-    c.set("claims", exit.value);
+    const { claims, grants } = exit.value;
+
+    // ── EFB-100: the DOMAIN + ACCESS half of scope enforcement ────────────
+    //
+    // One place, and this is it. Both requireAuth and optionalAuth are built
+    // from this function, and mcp.ts builds its internal REST app with the
+    // same requireAuth factory — so the MCP surface inherits this check by
+    // construction rather than by anyone remembering to add it there. There
+    // is no second check to forget.
+    //
+    // The INSTANCE half (which board) is not here and cannot be: half the
+    // board surface addresses rows rather than boards (/issue/:id and
+    // friends), so at this point there is no slug to compare — only an opaque
+    // id whose board nothing has read yet. That half lives in authorizeBoard,
+    // where the board is resolved. Two choke points, two different questions,
+    // each at the only layer that can answer its own.
+    if (grants !== null) {
+      const entry = entryForMatch(c.req.method, routePath(c, -1));
+      // FAIL CLOSED. No manifest entry means nothing can say what reaching
+      // this route ought to require, and "unknown requirement" must never
+      // read as "no requirement". This is what makes the manifest the
+      // security perimeter: a route declared nowhere is reachable by no
+      // scoped key.
+      if (entry === null) {
+        return c.json(
+          {
+            error: "forbidden",
+            reason: "this route is not declared in the API manifest, so a scoped key cannot reach it",
+          },
+          403,
+        );
+      }
+      const requirement = derivedRequirement(entry);
+      if (!grantsSatisfy(grants, requirement)) {
+        // The keys surface answers `jwt-required` — the SAME reason
+        // rejectKeyCallers has always given — rather than a scope-flavoured
+        // one. Two things depend on that. A legacy key (grants null) skips
+        // this block entirely and gets `jwt-required` from the old guard, so
+        // any other string here would mean the same refusal reads differently
+        // depending on whether the key happens to be scoped. And the reason is
+        // wire surface: changing it is a wire-reason change, which needs its
+        // own ticket rather than riding in on this one.
+        //
+        // This is still a real second gate, not a pass-through: if a keys
+        // route ever forgot rejectKeyCallers, a scoped key is stopped here.
+        const reason =
+          requirement.kind === "never"
+            ? "jwt-required"
+            : `this key is missing ${describeRequirement(requirement)}`;
+        return c.json({ error: "forbidden", reason }, 403);
+      }
+    }
+
+    c.set("claims", claims);
     c.set("token", token);
+    // Read by authorizeBoard for the instance half. Null for JWT callers and
+    // legacy keys, which is what keeps their behaviour unchanged.
+    c.set("grants", grants);
     await next();
   };
 

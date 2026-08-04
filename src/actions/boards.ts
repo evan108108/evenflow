@@ -498,7 +498,7 @@ export const getBoard = (
 ): Effect.Effect<unknown, BoardsFailure, BoardServices> =>
   Effect.gen(function* () {
     const pubkey = input.claims === null ? null : callerPubkey(input.claims);
-    const { board, org, role } = yield* resolveBoardScope(boardScopeOf(input), pubkey, "viewer");
+    const { board, org, role } = yield* resolveBoardScope(boardScopeOf(input), pubkey, "viewer", input.grants);
     return { board, org: orgView(org), role };
   });
 
@@ -517,7 +517,7 @@ export const boardVelocity = (
 ): Effect.Effect<unknown, BoardsFailure, BoardServices> =>
   Effect.gen(function* () {
     const pubkey = input.claims === null ? null : callerPubkey(input.claims);
-    const { board } = yield* resolveBoardScope(boardScopeOf(input), pubkey, "viewer");
+    const { board } = yield* resolveBoardScope(boardScopeOf(input), pubkey, "viewer", input.grants);
     const daysRaw = input.query["days"];
     const days = (() => {
       if (daysRaw === undefined) return board.done_window_days;
@@ -562,8 +562,7 @@ export const updateBoard = (
     const { board: current } = yield* resolveBoardScope(
       boardScopeOf(input),
       callerPubkey(claims),
-      "admin",
-    );
+      "admin", input.grants,);
 
     // Renaming a prefix would orphan every FLOW-n URL and reference
     // already minted, so it is only editable while no issue exists yet.
@@ -618,7 +617,7 @@ export const updateBoard = (
     const flipToPrivate = requestedVisibility === "private" && !current.encryption_active;
     if (flipToPrivate) {
       // The flip itself is owner-only (the rest of the PATCH stays admin).
-      yield* resolveBoardScope(boardScopeOf(input), callerPubkey(claims), "owner");
+      yield* resolveBoardScope(boardScopeOf(input), callerPubkey(claims), "owner", input.grants);
       const audienceSvc = yield* Audience;
       if (audienceSvc.serverKeys() === null) {
         return yield* new ConflictError({ reason: "audience-not-configured" });
@@ -763,8 +762,7 @@ export const setBoardArchived =
     const { board } = yield* resolveBoardScope(
       boardScopeOf(input),
       callerPubkey(claims),
-      "owner",
-    );
+      "owner", input.grants,);
     const db = yield* Db;
     const audit = yield* AuditLog;
     const now = yield* Clock.currentTimeMillis;
@@ -806,8 +804,7 @@ export const deleteBoard = (
     const { board: current } = yield* resolveBoardScope(
       boardScopeOf(input),
       callerPubkey(claims),
-      "admin",
-    );
+      "admin", input.grants,);
     const db = yield* Db;
     const audit = yield* AuditLog;
     yield* db.execute("DELETE FROM boardCache WHERE id = ?", [current.id]);

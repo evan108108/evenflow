@@ -41,6 +41,7 @@ import { requireCaller } from "../authz";
 import { makeRunJson } from "../lib/run-json";
 import { errorResponse, readJsonBody } from "./errors";
 import { actionInput } from "../actions/types";
+import { grantsOf } from "../http";
 import {
   addBoardMember,
   addOrgMember,
@@ -70,7 +71,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
       return yield* createOrg(
-        actionInput(claims, {}, body, { token: c.get("token") ?? "" }),
+        actionInput(claims, {}, body, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program, 201);
@@ -85,6 +86,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           { orgSlug: c.req.param("org_slug") },
           undefined,
+          { grants: grantsOf(c) },
         ),
       ),
     ),
@@ -97,6 +99,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const body = yield* readJsonBody(c);
       return yield* updateOrg(
         actionInput(claims, { orgSlug: c.req.param("org_slug") }, body, {
+          grants: grantsOf(c),
           token: c.get("token") ?? "",
         }),
       );
@@ -109,7 +112,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* deleteOrg(
-        actionInput(claims, { orgSlug: c.req.param("org_slug") }, undefined),
+        actionInput(claims, { orgSlug: c.req.param("org_slug") }, undefined, { grants: grantsOf(c) }),
       );
     });
     return runJson(c, program);
@@ -122,6 +125,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const body = yield* readJsonBody(c);
       return yield* transferOrg(
         actionInput(claims, { orgSlug: c.req.param("org_slug") }, body, {
+          grants: grantsOf(c),
           token: c.get("token") ?? "",
         }),
       );
@@ -138,7 +142,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           { orgSlug: c.req.param("org_slug") },
           undefined,
-          { query: c.req.query() },
+          { grants: grantsOf(c), query: c.req.query() },
         ),
       ),
     ),
@@ -149,7 +153,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listOrgMembers(
-        actionInput(claims, { orgSlug: c.req.param("org_slug") }, undefined),
+        actionInput(claims, { orgSlug: c.req.param("org_slug") }, undefined, { grants: grantsOf(c) }),
       );
     });
     return runJson(c, program);
@@ -162,6 +166,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
       const body = yield* readJsonBody(c);
       return yield* addOrgMember(
         actionInput(claims, { orgSlug: c.req.param("org_slug") }, body, {
+          grants: grantsOf(c),
           token: c.get("token") ?? "",
         }),
       );
@@ -179,7 +184,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           claims,
           { orgSlug: c.req.param("org_slug"), pubkey: c.req.param("pubkey") },
           body,
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });
@@ -197,7 +202,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           claims,
           { orgSlug: c.req.param("org_slug"), pubkey: c.req.param("pubkey") },
           undefined,
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });
@@ -214,6 +219,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           c.get("claims") ?? null,
           { orgSlug: c.req.param("org_slug"), boardSlug: c.req.param("slug") },
           undefined,
+          { grants: grantsOf(c) },
         ),
       ),
     ),
@@ -228,7 +234,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
           claims,
           { orgSlug: c.req.param("org_slug"), boardSlug: c.req.param("slug") },
           body,
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });
@@ -248,7 +254,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
             pubkey: c.req.param("pubkey"),
           },
           body,
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });
@@ -267,7 +273,7 @@ export const makeOrgsRouter = (layerFor: LayerFor = bootstrap) => {
             pubkey: c.req.param("pubkey"),
           },
           undefined,
-          { token: c.get("token") ?? "" },
+          { grants: grantsOf(c), token: c.get("token") ?? "" },
         ),
       );
     });

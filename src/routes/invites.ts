@@ -24,6 +24,7 @@ import { path } from "../routes-manifest";
 import { makeRunJson } from "../lib/run-json";
 import { bootstrap, type Claims } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { grantsOf } from "../http";
 import { requireCaller } from "../authz";
 import { actionInput } from "../actions/types";
 import {
@@ -49,7 +50,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       const body = yield* readJsonBody(c);
-      return yield* createInvite(actionInput(claims, c.req.param(), body));
+      return yield* createInvite(actionInput(claims, c.req.param(), body, { grants: grantsOf(c) }));
     });
     return runJson(c, program, 201);
   });
@@ -59,7 +60,9 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
     runJson(
       c,
       getInvite(
-        actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined),
+        actionInput<undefined, Claims | null>(c.get("claims") ?? null, c.req.param(), undefined, {
+          grants: grantsOf(c),
+        }),
       ),
     ),
   );
@@ -69,7 +72,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* acceptInvite(
-        actionInput(claims, c.req.param(), undefined, { token: c.get("token") ?? "" }),
+        actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c), token: c.get("token") ?? "" }),
       );
     });
     return runJson(c, program);
@@ -79,7 +82,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   invites.post(path("invite.decline"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      return yield* declineInvite(actionInput(claims, c.req.param(), undefined));
+      return yield* declineInvite(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c) }));
     });
     return runJson(c, program);
   });
@@ -88,7 +91,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   invites.post(path("invite.email.send"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      return yield* sendInviteEmail(actionInput(claims, c.req.param(), undefined));
+      return yield* sendInviteEmail(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c) }));
     });
     return runJson(c, program);
   });
@@ -97,7 +100,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
   invites.delete(path("invite.delete"), async (c) => {
     const program = Effect.gen(function* () {
       const claims = yield* requireCaller(c.get("claims"));
-      return yield* deleteInvite(actionInput(claims, c.req.param(), undefined));
+      return yield* deleteInvite(actionInput(claims, c.req.param(), undefined, { grants: grantsOf(c) }));
     });
     return runJson(c, program);
   });
@@ -114,6 +117,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listOrgInvites(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );
@@ -126,6 +130,7 @@ export const makeInvitesRouter = (layerFor: LayerFor = bootstrap) => {
       const claims = yield* requireCaller(c.get("claims"));
       return yield* listOrgBoardInvites(
         actionInput(claims, c.req.param(), undefined, {
+          grants: grantsOf(c),
           orgSlug: c.req.param("org_slug") ?? null,
         }),
       );

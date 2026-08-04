@@ -84,7 +84,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
     const exit = await run(
       deps,
       createWebhook(
-        actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { orgSlug: null }),
+        actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { grants: null, orgSlug: null }),
         "master-secret",
       ),
     );
@@ -97,6 +97,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
       deps,
       updateWebhook(
         actionInput(JWT_TEST_CLAIMS, { ...NO_SUCH_BOARD, id: "sub-1" }, poisonBody(), {
+          grants: null,
           orgSlug: null,
         }),
       ),
@@ -108,7 +109,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
     const deps = makeDeps();
     const exit = await run(
       deps,
-      setGithubConfig(actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { orgSlug: null })),
+      setGithubConfig(actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { grants: null, orgSlug: null })),
     );
     expect(failureTag(exit)).toBe("BoardOwnershipError");
   });
@@ -117,7 +118,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
     const deps = makeDeps();
     const exit = await run(
       deps,
-      setGithubRules(actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { orgSlug: null })),
+      setGithubRules(actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { grants: null, orgSlug: null })),
     );
     expect(failureTag(exit)).toBe("BoardOwnershipError");
   });
@@ -127,7 +128,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
     const exit = await run(
       deps,
       testGithubConnection(
-        actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { orgSlug: null }),
+        actionInput(JWT_TEST_CLAIMS, NO_SUCH_BOARD, poisonBody(), { grants: null, orgSlug: null }),
       ),
     );
     expect(failureTag(exit)).toBe("BoardOwnershipError");
@@ -139,6 +140,7 @@ describe("EFB-98 rule 10 — the access gate runs before the body is read", () =
       deps,
       createAttachment(
         actionInput(JWT_TEST_CLAIMS, { ...NO_SUCH_BOARD, issue_ref: "nope" }, poisonBody(), {
+          grants: null,
           orgSlug: null,
         }),
         "storage-secret",
@@ -159,7 +161,7 @@ describe("EFB-98 rule 10 — preserve means preserve, not always defer", () => {
     const exit = await run(
       deps,
       updateAttachment(
-        actionInput(JWT_TEST_CLAIMS, { id: "ghost" }, { is_cover: "yes" }, { orgSlug: null }),
+        actionInput(JWT_TEST_CLAIMS, { id: "ghost" }, { is_cover: "yes" }, { grants: null, orgSlug: null }),
       ),
     );
     // Not NotFoundError: the body is judged first, exactly as it always was.
@@ -171,7 +173,7 @@ describe("EFB-98 rule 10 — preserve means preserve, not always defer", () => {
     const exit = await run(
       deps,
       updateAttachment(
-        actionInput(JWT_TEST_CLAIMS, { id: "ghost" }, { is_cover: true }, { orgSlug: null }),
+        actionInput(JWT_TEST_CLAIMS, { id: "ghost" }, { is_cover: true }, { grants: null, orgSlug: null }),
       ),
     );
     // The other half of the same order — proving the first assertion is about
