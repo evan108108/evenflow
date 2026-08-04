@@ -376,11 +376,7 @@ select:disabled {
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  /* Subtle dark wash, same as .drop-over — just a little muting of the
-     ocean's bright bands. No border at rest; the dashed edge only shows
-     when a card is being dragged over it (the .drop-over rule takes it
-     from here). */
-  background: rgba(23, 35, 59, 0.08);
+  background: transparent;
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
