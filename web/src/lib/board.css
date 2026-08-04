@@ -369,18 +369,14 @@ select:disabled {
 .kanban-column {
   flex: 1 1 260px;
   min-width: 260px;
-  /* Semi-opaque cream — reads as a paper card floating on the ocean without
-     hiding it entirely. Ocean tints through subtly. */
-  background: rgba(245, 242, 236, 0.75);
-  border-radius: var(--radius-chamfer);
-  /* Reserve real drop-target height even when a column is empty. The
-     outer column is invisible at rest — dashed outline reveals on
-     hover (matching the previous always-visible weight, just on
-     intent), and promotes to solid ink during a drag. */
+  /* Reserve real drop-target height even when a column is empty. Semi-opaque
+     cream so the column reads as a paper card floating on the ocean without
+     hiding it entirely; ocean tints through subtly. Dashed outline still
+     reveals on hover to signal drop-target intent. */
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  background: transparent;
+  background: rgba(245, 242, 236, 0.75);
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
