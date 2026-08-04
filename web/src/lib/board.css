@@ -2788,14 +2788,28 @@ input.sprint-name:focus {
    the left column scrolls past it. */
 .vertical-split.with-rail .kanban-rail {
   position: sticky;
-  top: 1rem;
-  max-height: calc(100vh - 2rem);
+  /* EFB-115 B3 — sit the rail directly under the sticky header, not at a
+     fixed 1rem offset from the viewport top. Same anchor the status stack
+     uses so the two panes rise and fall together. */
+  top: calc(var(--board-header-h, 260px) + 0.5rem);
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
   overflow-y: auto;
   /* Breathing room so a card's hover lift-shadow isn't shorn by the
      scroll container's edge; the top inset matches .kanban-column's
      padding so the first rail section lines up with the first column. */
   overflow-x: hidden;
   padding: 0.5rem 0.4rem 0;
+  scrollbar-width: thin;
+}
+
+/* EFB-115 B3 — the left pane (StatusStack, which uses .kanban.layout-vertical
+   here) gets its own scroll region too, so a tall stack scrolls without
+   pushing the whole page. Matched to the rail's viewport cap so the two
+   panes stay in the same visible band. */
+.vertical-split.with-rail .kanban.layout-vertical {
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
+  overflow-y: auto;
+  overflow-x: hidden;
   scrollbar-width: thin;
 }
 
