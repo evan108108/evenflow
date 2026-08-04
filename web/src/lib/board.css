@@ -64,6 +64,28 @@ select:disabled {
 }
 
 /* ── board shell ── */
+/* EFB-115 B — sticky header block wrapping TopBar + title row + tabs row +
+   filter chips. Naked over the ocean (Evan already rejected a solid paper
+   panel) — only a heavy backdrop-blur softens what's scrolling behind it,
+   so ink text stays legible without introducing a visible frame. Deep
+   z-index so drop targets under it can't win a hit test during a drag. */
+.board-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding-bottom: 0.4rem;
+  /* Bleed left+right so the blur reaches the edge of the page inset instead
+     of ending at the header's inner box. Uses negative margin against the
+     board-page padding rather than expanding width, so it can't push the
+     grid wider. */
+  margin-left: calc(-1 * var(--page-inset-left, 3rem));
+  margin-right: -1.5rem;
+  padding-left: var(--page-inset-left, 3rem);
+  padding-right: 1.5rem;
+}
+
 .board-page {
   max-width: 1440px;
   margin: 0 auto;

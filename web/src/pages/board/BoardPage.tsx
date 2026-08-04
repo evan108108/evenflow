@@ -544,6 +544,10 @@ export const BoardPage = () => {
         >
           {(board) => (
             <>
+              {/* EFB-115 B — the whole header block sticks to the top of the
+                  viewport so the wordmark, crumbs, view tabs, sprint chip,
+                  and filter chips stay in reach as the page scrolls. */}
+              <div class="board-sticky">
               <TopBar
                 crumbs={[
                   { label: "Boards", href: "/boards" },
@@ -763,6 +767,7 @@ export const BoardPage = () => {
                   </Show>
                 </div>
               </Show>
+              </div>
 
               <Show when={store.lastError()}>
                 <p class="muted" role="alert">
