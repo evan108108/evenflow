@@ -4,6 +4,7 @@
 
 import { For } from "solid-js";
 import { SECTIONS } from "@docs-content/sections";
+import { TopBar } from "../components/TopBar";
 import { methodOf, pathOf, MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
 import { IMPORT_PROMPTS, IMPORT_PROMPT_PREAMBLE } from "./docs/import-prompts";
 import { CANONICAL_COLUMNS } from "../../../src/lib/csv-canonical";
@@ -38,10 +39,13 @@ const MCP_CALL = `curl -X POST https://evenflow.work/mcp \\
 
 export const Docs = () => (
   <main class="docs-page">
+    {/* EFB-103 — real app chrome. Someone landing here cold from a search
+        result needs to know what Evenflow is and how to reach the product;
+        a docs page with no header reads as a stray document rather than part
+        of a thing. The wordmark that used to live here is TopBar's brand now,
+        so it is not duplicated. */}
+    <TopBar home="/" crumbs={[{ label: "Docs" }]} />
     <header class="docs-header">
-      <a class="docs-wordmark" href="/">
-        Evenflow
-      </a>
       <h1>Developer docs</h1>
       <p class="muted">
         One REST API, one MCP endpoint, one slash command — all riding the same auth.
@@ -53,6 +57,9 @@ export const Docs = () => (
         <a href="#import">Import</a>
         <a href="#skill">/evenflow skill</a>
         <a href="#attachment-privacy">Attachment storage</a>
+        {/* A cold reader needs a way INTO the product, not just around the
+            docs. TopBar's brand goes to /boards, which is behind auth. */}
+        <a class="docs-nav-signin" href="/signin">Sign in →</a>
       </nav>
     </header>
 

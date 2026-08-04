@@ -138,6 +138,11 @@ export const DocsNav = (props: { current?: string | undefined }) => (
     <a class="docs-nav-item docs-nav-llms" href="/docs/llms.txt">
       llms.txt ↓
     </a>
+    {/* The way into the product. TopBar's brand points at /boards, which is
+        behind auth, so a signed-out reader needs this explicitly. */}
+    <a class="docs-nav-item docs-nav-signin" href="/signin">
+      Sign in →
+    </a>
   </nav>
 );
 
@@ -147,7 +152,7 @@ export const DocsSection = () => {
 
   return (
     <main class="docs-main">
-      <TopBar crumbs={[{ label: "Docs", href: "/docs" }, { label: section()?.title ?? "Not found" }]} />
+      <TopBar home="/" crumbs={[{ label: "Docs", href: "/docs" }, { label: section()?.title ?? "Not found" }]} />
       <div class="docs-shell">
         <DocsNav current={section()?.id} />
         <article class="docs-body">

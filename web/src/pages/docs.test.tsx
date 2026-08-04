@@ -124,6 +124,46 @@ describe("the single-document form", () => {
   });
 });
 
+describe("docs pages carry the product's chrome", () => {
+  // Evan's note on review: a docs page with no header reads as a stray
+  // document. Someone arriving cold from a search result has to be able to
+  // tell what Evenflow is and how to get into it.
+  it("shows the brand and a way into the product on a section page", async () => {
+    const { container, cleanup } = await mount(DocsSection, "/docs/api", "/docs/:section");
+    expect(container.querySelector(".topbar")).not.toBeNull();
+    const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/signin");
+    cleanup();
+  });
+
+  // The header must WORK signed out, not merely render. TopBar's brand
+  // normally points at /boards, which is behind auth — following it from
+  // public documentation would drop a reader on a login wall, on the one
+  // surface that is supposed to need no account. Docs point it at the public
+  // landing page instead.
+  it("points the brand somewhere a signed-out reader can actually go", async () => {
+    for (const [component, path, route] of [
+      [DocsSection, "/docs/concepts", "/docs/:section"],
+      [Docs, "/docs", "/docs"],
+    ] as const) {
+      const { container, cleanup } = await mount(component, path, route);
+      const brand = container.querySelector(".topbar-brand");
+      expect(brand).not.toBeNull();
+      expect(brand!.getAttribute("href")).toBe("/");
+      expect(brand!.getAttribute("href")).not.toBe("/boards");
+      cleanup();
+    }
+  });
+
+  it("shows the same on the docs home", async () => {
+    const { container, cleanup } = await mount(Docs, "/docs", "/docs");
+    expect(container.querySelector(".topbar")).not.toBeNull();
+    const hrefs = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/signin");
+    cleanup();
+  });
+});
+
 describe("the docs link is on every page", () => {
   // The mechanism, not just the component: the footer has to be rendered by
   // the Router's root layout, or "every page" quietly means "every page

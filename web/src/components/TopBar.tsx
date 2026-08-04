@@ -19,9 +19,21 @@ export interface Crumb {
   readonly href?: string;
 }
 
-export const TopBar = (props: { crumbs?: readonly Crumb[] }) => (
+/**
+ * `home` exists because the brand cannot always point at /boards.
+ *
+ * /boards is behind auth. On the app's own pages that is right — you are
+ * signed in, and the boards list is home. On the PUBLIC docs it is a dead
+ * end: a signed-out reader clicks the logo and lands on a login wall, which
+ * is the one thing documentation must never do to someone who came to read
+ * it. Docs pass "/" — the landing page, which is public.
+ *
+ * Defaulted rather than required so every existing caller keeps its
+ * behaviour unchanged.
+ */
+export const TopBar = (props: { crumbs?: readonly Crumb[]; home?: string }) => (
   <div class="topbar">
-    <a class="topbar-brand serif" href="/boards">
+    <a class="topbar-brand serif" href={props.home ?? "/boards"}>
       <ButterflyMark />
       Evenflow
     </a>
