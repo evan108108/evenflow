@@ -2743,12 +2743,10 @@ input.sprint-name:focus {
 }
 
 /* Icon-only layout toggle in the tabs-row.
-   This is its own class of thing — a bare icon in a round pill, not a house
-   button. The default `button` rule in theme.css sets padding, letter-spacing,
-   font-size, and an ink-fill hover, none of which apply here; without an
-   explicit reset the padding shoves the icon off-center and hover paints the
-   whole pill dark. The `all: revert` line resets every property back to the
-   UA default, and then this rule paints the pill from scratch. */
+   Its own class of thing — a bare icon, no chrome. The default `button` rule
+   in theme.css draws a chamfered pill with padding, letter-spacing and an
+   ink-fill hover, none of which apply to a 16×16 utility glyph; `all: revert`
+   wipes all of that, and this rule paints only what the icon needs. */
 .layout-toggle {
   all: revert;
   display: inline-grid;
@@ -2756,19 +2754,17 @@ input.sprint-name:focus {
   width: 32px;
   height: 32px;
   padding: 0;
-  border: 1.5px solid var(--color-ink-faint);
-  border-radius: 999px;
+  border: 0;
   background: transparent;
   color: var(--color-ink-soft);
   font: inherit;
   letter-spacing: normal;
   cursor: pointer;
-  transition: all 140ms ease;
+  transition: color 140ms ease;
 }
 
 .layout-toggle:hover {
   background: transparent;
-  border-color: var(--color-ink);
   color: var(--color-ink);
 }
 
