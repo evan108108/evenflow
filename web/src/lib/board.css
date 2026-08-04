@@ -2742,12 +2742,16 @@ input.sprint-name:focus {
   margin-left: 0.4rem;
 }
 
-/* Icon-only layout toggle in the tabs-row. */
+/* Icon-only layout toggle in the tabs-row.
+   theme.css sets the house button default at padding: 0.55rem 1.1rem, and
+   with box-sizing: border-box that padding eats the declared 32×32 box and
+   knocks the icon off-center to the right and down. Override to 0. */
 .layout-toggle {
   display: inline-grid;
   place-items: center;
   width: 32px;
   height: 32px;
+  padding: 0;
   border: 1.5px solid var(--color-ink-faint);
   border-radius: 999px;
   background: transparent;
