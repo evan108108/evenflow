@@ -66,6 +66,18 @@ html { background: var(--color-cream); }
   width: 100%;
 }
 
+/* Content panel for pages that don't read well directly on the ocean —
+   semi-transparent cream + backdrop blur so it reads as a floating paper
+   sheet. Apply on any container that wraps a page's main content. */
+.paper-glass {
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 2rem 2.4rem;
+}
+
 
 
 h1,
