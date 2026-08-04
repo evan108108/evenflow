@@ -166,7 +166,7 @@ export const TideBadge = (props: TideBadgeProps) => {
       const path =
         source.sprintId === null
           ? `${source.apiBase}/tide?days=${TIDE_WINDOW_DAYS}`
-          : `${source.apiBase}/sprints/${encodeURIComponent(source.sprintId)}/tide?days=${TIDE_WINDOW_DAYS}`;
+          : `${source.apiBase}/sprint/${encodeURIComponent(source.sprintId)}/tide?days=${TIDE_WINDOW_DAYS}`;
       return api<TideReading>((c) => c.get<TideReading>(path));
     },
   );

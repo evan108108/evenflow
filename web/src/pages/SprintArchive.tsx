@@ -126,7 +126,7 @@ export const SprintArchive = () => {
   const [archive] = createResource(
     () => sprintId(),
     async () => {
-      return api((c) => c.get<SprintArchivePayload>(`${apiBase()}/sprints/${sprintId()}/archive`));
+      return api((c) => c.get<SprintArchivePayload>(`${apiBase()}/sprint/${sprintId()}/archived-issues`));
     },
   );
 
