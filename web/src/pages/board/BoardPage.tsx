@@ -504,11 +504,6 @@ export const BoardPage = () => {
                   {(prefix) => <span class="prefix-chip">{prefix()}</span>}
                 </Show>
                 <div class="spacer" />
-                {/* Search is a read, so it stays for a signed-out viewer on a
-                    public board — same reasoning as Sprints below. The server
-                    scopes results to this board and authorizes before it
-                    touches the index (EFB-14). */}
-                <BoardSearch apiBase={apiBase} base={base()} view={view()} />
                 {/* Sprint history stays: it is a read-only view, and a
                     signed-out visitor on a public board may read it. */}
                 <a class="btn" href={`${base()}/sprints`} title="Sprint history">
@@ -676,6 +671,10 @@ export const BoardPage = () => {
                       emptyLine="No labels on this board yet."
                     />
                   </Show>
+                  {/* Search sits with the filters — it is a text filter, not
+                      an action. Signed-out visitors on a public board still
+                      get it: it is a read (EFB-14). */}
+                  <BoardSearch apiBase={apiBase} base={base()} view={view()} />
                   {/* EFB-31 — Done-window chip. `on` follows the row's existing
                       vocabulary (a constraint is in force), and `lifted` reads
                       brighter to say the view is deliberately wider than
