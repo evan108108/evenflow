@@ -376,12 +376,10 @@ select:disabled {
   min-height: 60vh;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
-  /* Frosted-glass column: 55% cream + backdrop blur so the ocean's colors
-     still tint through but the sharp brightness variance is softened, and
-     card/header text reads consistently across the light and dark bands. */
-  background: rgba(245, 242, 236, 0.35);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  /* Subtle dark wash — the same feel as .drop-over during a card drag,
+     just always on. Mutes the bright bands of the shader while keeping
+     the ocean color legible; cards on top read consistently. */
+  background: rgba(23, 35, 59, 0.07);
   border: 1.5px dashed transparent;
   transition: border-color 140ms ease, background 140ms ease;
 }
