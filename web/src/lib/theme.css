@@ -41,9 +41,8 @@ body {
   font-size: 16px;
   line-height: 1.6;
   /* Transparent so the fixed OceanBackground canvas at z:-1 shows through.
-     The cream cards, columns and topbar all declare their own backgrounds,
-     so the "editorial paper on cream" reads the same on inner routes; the
-     background just switches from a flat wash to a live ocean shader. */
+     Every page's <main> declares an explicit cream so inner-route text stays
+     on paper; only Landing's hero opts out to sit directly on the water. */
   background: transparent;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
@@ -51,6 +50,17 @@ body {
 /* Fallback for pages where the shader hasn't mounted yet (or WebGL is off) —
    the cream stays on the html element so we never flash a black frame. */
 html { background: var(--color-cream); }
+
+/* Every inner-page <main> is an opaque cream sheet floating over the ocean.
+   Landing's hero opts out (.landing-hero-over-ocean below) so the ocean
+   fills the viewport behind the wordmark. Everything else keeps the exact
+   ink-on-cream palette it already had — only what's BEHIND main changes. */
+main {
+  background: var(--color-cream);
+}
+main.landing-hero-over-ocean {
+  background: transparent;
+}
 
 h1,
 h2,

@@ -3335,7 +3335,10 @@ input.sprint-name:focus {
    hover rather than ringed on focus. */
 
 .site-footer {
-  border-top: 1px solid var(--color-rule, rgba(0, 0, 0, 0.08));
+  /* Sits outside any <main>, directly over the ocean shader. Cream text +
+     a cream-tinted rule up top so the footer reads against the dark water
+     without needing its own paper card. */
+  border-top: 1px solid rgba(245, 242, 236, 0.16);
   margin-top: 4rem;
   padding: 1.6rem 1.5rem 2.4rem;
   display: flex;
@@ -3343,7 +3346,10 @@ input.sprint-name:focus {
   gap: 0.5rem;
   align-items: center;
   text-align: center;
+  color: var(--color-cream);
 }
+.site-footer a { color: var(--color-cream); }
+.site-footer .muted { color: rgba(245, 242, 236, 0.72); }
 
 .site-footer-links {
   display: flex;
