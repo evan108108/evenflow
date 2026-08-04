@@ -396,12 +396,7 @@ select:disabled {
 .kanban-column h3,
 .rail-section > h3 {
   font-size: 1.02rem;
-  /* Semi-opaque cream on the header only — 75%, so ocean tints through.
-     Tight vertical padding so cream stops right at the text edge instead
-     of extending down into the drop-target body below. */
-  background: rgba(245, 242, 236, 0.75);
-  border-radius: var(--radius-chamfer);
-  padding: 0.3rem 0.6rem 0.35rem;
+  padding: 0.3rem 0.4rem 0.6rem;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
