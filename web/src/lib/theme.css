@@ -62,7 +62,8 @@ html { background: var(--color-cream); }
   flex-direction: column;
 }
 .app-shell > main {
-  flex: 1;
+  flex-grow: 1;
+  width: 100%;
 }
 
 
