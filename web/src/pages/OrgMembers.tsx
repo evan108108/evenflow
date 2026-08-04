@@ -28,7 +28,7 @@ export const OrgMembers = () => {
   );
 
   return (
-    <main style={{ "max-width": "var(--measure)", margin: "0 auto", padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
+    <main class="board-page" style={{ padding: "4rem 1.5rem 4rem var(--page-inset-left, 3rem)" }}>
       <nav class="crumb muted" style={{ "margin-bottom": "1rem" }}>
         <a href="/boards">← Boards</a> / <a href={`/@${handle()}`}>@{handle()}</a> / members
       </nav>
@@ -38,10 +38,17 @@ export const OrgMembers = () => {
           "align-items": "center",
           "justify-content": "space-between",
           "margin-bottom": "2rem",
+          gap: "1rem",
         }}
       >
         <h1 style={{ "font-size": "2.2rem" }}>Members</h1>
-        <UserNav />
+        <div style={{ display: "flex", gap: "0.6rem", "align-items": "center" }}>
+          {/* Invite lives on the org settings page (opens the InviteModal).
+              Surfacing it here so a user landing on Members can actually add
+              one without hunting through settings. */}
+          <a class="btn btn-solid" href={`/@${handle()}/settings`}>Invite member</a>
+          <UserNav />
+        </div>
       </header>
 
       <Show when={!members.loading} fallback={<p class="muted">Finding the rhythm…</p>}>
