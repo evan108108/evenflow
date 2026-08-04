@@ -64,6 +64,21 @@ select:disabled {
 }
 
 /* ── board shell ── */
+/* Experimental — wraps the whole board header block (title row + tabs row +
+   filter chips) in the paper-glass treatment so the header reads as one
+   floating sheet over the ocean shader. Lighter vertical padding than the
+   generic .paper-glass because the header rows carry their own rhythm; the
+   bottom margin is what buys the kanban rail breathing room below. */
+.board-header-glass {
+  background: rgba(245, 242, 236, 0.42);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  border-radius: var(--radius-chamfer);
+  padding: 1.2rem 1.6rem;
+  margin-bottom: 1.5rem;
+}
+
 .board-page {
   max-width: 1440px;
   margin: 0 auto;
