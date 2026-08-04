@@ -107,7 +107,13 @@ export const createDnd = (onDrop: (id: string, zone: string) => void): DndHandle
       // Card zones resolve to an insertion slot: top half = before that
       // card, bottom half = after it. The half rides in the zone string so
       // both the drop handler and the indicator styling read one value.
-      if (zone !== null && zone.startsWith("card:") && zoneEl !== null) {
+      // Position zones (`pos:` — EFB-117 reorder in the non-kanban lists)
+      // share the same "which half" logic.
+      if (
+        zone !== null &&
+        (zone.startsWith("card:") || zone.startsWith("pos:")) &&
+        zoneEl !== null
+      ) {
         const rect = zoneEl.getBoundingClientRect();
         zone = `${zone}:${ev.clientY < rect.top + rect.height / 2 ? "before" : "after"}`;
       }
@@ -143,6 +149,36 @@ export const moveZone = (action: string) => `move:${action}`;
 export const cardZone = (column: string, issue: string) => `card:${column}:${issue}`;
 /** A sprint section in the Backlog view — dropping adds the issue to it. */
 export const sprintZone = (sprint: string) => `sprint:${sprint}`;
+/** EFB-117 — position-within-list zone for the non-kanban surfaces (backlog,
+ *  icebox, sprint sections, kanban rail). `listKey` is a short opaque tag the
+ *  drop handler resolves to the peer list; keep it colon-free (encode sprint
+ *  as `sprint-<uuid>`, not `sprint:<uuid>`) so parse can split on `:`. */
+export const posZone = (listKey: string, issue: string) => `pos:${listKey}:${issue}`;
+export const sprintListKey = (sprintId: string) => `sprint-${sprintId}`;
+
+/** EFB-117 — shared "should this card show a before/after indicator?"
+ *  resolver for `posZone`-wired lists. Mirrors KanbanView.indicatorFor:
+ *  active only when the pointer hovers THIS card in the SAME list AND the
+ *  dragged issue is a peer (a cross-list drag shows nothing here — the
+ *  target list's container drop-strip handles the intent). Returned as a
+ *  thunk so callers can pass it directly to IssueCard's `indicator` prop
+ *  without wrapping it themselves. */
+export const listIndicator = (
+  dnd: DndHandle,
+  listKey: string,
+  cardId: string,
+  peerHas: (id: string) => boolean,
+): (() => "before" | "after" | null) => () => {
+  const zone = dnd.overZone();
+  if (zone === null) return null;
+  const parsed = parseZone(zone);
+  if (parsed?.type !== "pos") return null;
+  if (parsed.listKey !== listKey || parsed.issue !== cardId) return null;
+  const dragging = dnd.draggingId();
+  if (dragging === null || dragging === cardId) return null;
+  if (!peerHas(dragging)) return null;
+  return parsed.half;
+};
 
 export const parseZone = (
   zone: string,
@@ -151,6 +187,7 @@ export const parseZone = (
   | { type: "move"; action: string }
   | { type: "card"; column: string; issue: string; half: "before" | "after" }
   | { type: "sprint"; sprint: string }
+  | { type: "pos"; listKey: string; issue: string; half: "before" | "after" }
   | null => {
   if (zone.startsWith("transition:")) return { type: "transition", column: zone.slice(11) };
   if (zone.startsWith("move:")) return { type: "move", action: zone.slice(5) };
@@ -161,6 +198,13 @@ export const parseZone = (
       return null;
     }
     return { type: "card", column, issue, half };
+  }
+  if (zone.startsWith("pos:")) {
+    const [, listKey, issue, half] = zone.split(":");
+    if (listKey === undefined || issue === undefined || (half !== "before" && half !== "after")) {
+      return null;
+    }
+    return { type: "pos", listKey, issue, half };
   }
   return null;
 };

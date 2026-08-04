@@ -17,7 +17,7 @@
 import { For, Show, createSignal } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { StreamSentinel } from "../../components/StreamSentinel";
-import { moveZone, sprintZone, type DndHandle } from "../../lib/dnd";
+import { listIndicator, moveZone, posZone, sprintListKey, sprintZone, type DndHandle } from "../../lib/dnd";
 import { FALLBACK_SPRINT_DAYS, effectiveSprintDays } from "../../lib/sprints";
 import { byBoardOrder } from "../../lib/order";
 import { refFor, shortIdIndex } from "../../lib/duplicates";
@@ -134,15 +134,22 @@ const SprintSection = (props: {
         fallback={<p class="empty-state">Drag issues here to shape the sprint.</p>}
       >
         <For each={props.issues}>
-          {(issue) => (
-            <IssueCard
-              issue={issue}
-              dnd={props.dnd}
-              onOpen={props.onOpen}
-              duplicateOfRef={refFor(props.duplicateRefs, issue)}
-              compact
-            />
-          )}
+          {(issue) => {
+            const listKey = sprintListKey(props.sprint.id);
+            const peerHas = (id: string) => props.issues.some((i) => i.id === id);
+            const cardIndicator = listIndicator(props.dnd, listKey, issue.id, peerHas);
+            return (
+              <IssueCard
+                issue={issue}
+                dnd={props.dnd}
+                onOpen={props.onOpen}
+                zone={posZone(listKey, issue.id)}
+                indicator={cardIndicator()}
+                duplicateOfRef={refFor(props.duplicateRefs, issue)}
+                compact
+              />
+            );
+          }}
         </For>
       </Show>
     </section>
@@ -266,15 +273,21 @@ export const BacklogView = (props: {
           fallback={<p class="empty-state">Nothing on your mind. What are you thinking about?</p>}
         >
           <For each={unassigned()}>
-            {(issue) => (
-              <IssueCard
-                issue={issue}
-                dnd={props.dnd}
-                onOpen={props.onOpen}
-                duplicateOfRef={refFor(duplicateRefs(), issue)}
-                compact
-              />
-            )}
+            {(issue) => {
+              const peerHas = (id: string) => unassigned().some((i) => i.id === id);
+              const cardIndicator = listIndicator(props.dnd, "backlog", issue.id, peerHas);
+              return (
+                <IssueCard
+                  issue={issue}
+                  dnd={props.dnd}
+                  onOpen={props.onOpen}
+                  zone={posZone("backlog", issue.id)}
+                  indicator={cardIndicator()}
+                  duplicateOfRef={refFor(duplicateRefs(), issue)}
+                  compact
+                />
+              );
+            }}
           </For>
         </Show>
         <StreamSentinel stream={props.store.streamFor("backlog")} />

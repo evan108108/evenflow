@@ -13,7 +13,7 @@
 import { For, Show, createSignal } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { StreamSentinel } from "../../components/StreamSentinel";
-import { cardZone, moveZone, parseZone, transitionZone, type DndHandle } from "../../lib/dnd";
+import { cardZone, listIndicator, moveZone, parseZone, posZone, transitionZone, type DndHandle } from "../../lib/dnd";
 import { enabledColumns, type Column } from "../../lib/columns";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
 import { refFor, shortIdIndex } from "../../lib/duplicates";
@@ -176,6 +176,9 @@ const RailSection = (props: {
   duplicateRefs: Map<string, string>;
   /** Container-move zone this section accepts drops for. */
   zone: string;
+  /** EFB-117 — key for the position-within-list drop zones on this section's
+   *  cards. `rail-backlog` and `rail-icebox` are the two BoardPage resolves. */
+  posListKey: string;
   dnd: DndHandle;
   onOpen: (id: string) => void;
   emptyLine: string;
@@ -214,15 +217,21 @@ const RailSection = (props: {
           fallback={<p class="empty-state">{props.emptyLine}</p>}
         >
           <For each={props.issues}>
-            {(issue) => (
-              <IssueCard
-                issue={issue}
-                dnd={props.dnd}
-                onOpen={props.onOpen}
-                duplicateOfRef={refFor(props.duplicateRefs, issue)}
-                compact
-              />
-            )}
+            {(issue) => {
+              const peerHas = (id: string) => props.issues.some((i) => i.id === id);
+              const cardIndicator = listIndicator(props.dnd, props.posListKey, issue.id, peerHas);
+              return (
+                <IssueCard
+                  issue={issue}
+                  dnd={props.dnd}
+                  onOpen={props.onOpen}
+                  zone={posZone(props.posListKey, issue.id)}
+                  indicator={cardIndicator()}
+                  duplicateOfRef={refFor(props.duplicateRefs, issue)}
+                  compact
+                />
+              );
+            }}
           </For>
         </Show>
       </Show>
@@ -262,6 +271,7 @@ const KanbanRail = (props: {
         title="Backlog"
         issues={backlog()}
         zone={moveZone("promote_to_backlog")}
+        posListKey="rail-backlog"
         dnd={props.dnd}
         onOpen={props.onOpen}
         duplicateRefs={duplicateRefs()}
@@ -271,6 +281,7 @@ const KanbanRail = (props: {
         title="Icebox"
         issues={iced()}
         zone={moveZone("send_to_icebox")}
+        posListKey="rail-icebox"
         dnd={props.dnd}
         onOpen={props.onOpen}
         duplicateRefs={duplicateRefs()}

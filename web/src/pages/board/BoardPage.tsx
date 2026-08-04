@@ -35,7 +35,7 @@ import { readFilters, writeFilters } from "../../lib/filterPersistence";
 import { readDoneWindowLifted, writeDoneWindowLifted } from "../../lib/doneWindowPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
 import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
-import { issuesInColumn } from "../../lib/order";
+import { byBoardOrder, issuesInColumn } from "../../lib/order";
 import { activeSprintFilterId, sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
 import { Butterfly, NewIssueModal } from "../../components/NewIssueModal";
@@ -286,6 +286,55 @@ export const BoardPage = () => {
       if (column !== undefined) void store.transition(issue, column);
     } else if (target.type === "sprint") {
       void store.addIssueToSprint(issue, target.sprint);
+    } else if (target.type === "pos") {
+      // EFB-117 — reorder inside a non-kanban list (backlog / icebox /
+      // sprint sections / kanban rail). Resolve the peer set from the
+      // listKey, then compute before/after around target.issue the same
+      // way the `card:` branch does for status columns.
+      if (target.issue === issueId) return;
+      let peers: readonly Issue[] = [];
+      const all = store.issues();
+      if (target.listKey === "backlog") {
+        // Same partition BacklogView shows: backlog container, excluding
+        // issues that already sit in a planning sprint (those live in a
+        // SprintSection with its own `sprint-<id>` listKey).
+        const planningIds = new Set(
+          store.sprints().filter((s) => s.status === "planning").map((s) => s.id),
+        );
+        peers = all
+          .filter((i) => i.container === "backlog" && (i.sprint_id == null || !planningIds.has(i.sprint_id)))
+          .slice()
+          .sort(byBoardOrder);
+      } else if (target.listKey === "rail-backlog") {
+        peers = all.filter((i) => i.container === "backlog").slice().sort(byBoardOrder);
+      } else if (target.listKey === "icebox" || target.listKey === "rail-icebox") {
+        // Icebox list orders newest-first by updated_at_ms (see IceboxView /
+        // KanbanRail); the reorder API still positions with `position`, so
+        // peer *order* only matters for computing before/after. We use the
+        // visible order here to match user intent.
+        peers = all
+          .filter((i) => i.container === "icebox")
+          .slice()
+          .sort((a, b) => b.updated_at_ms - a.updated_at_ms);
+      } else if (target.listKey.startsWith("sprint-")) {
+        const sprintId = target.listKey.slice("sprint-".length);
+        peers = all.filter((i) => i.sprint_id === sprintId).slice().sort(byBoardOrder);
+      } else {
+        return;
+      }
+      if (!peers.some((i) => i.id === issueId)) {
+        // Dragged from another list — the pos: branch is reorder only. A
+        // cross-list drop is handled by that list's own container zone (the
+        // drop-strip surrounding it), not by this card-level intent.
+        return;
+      }
+      const ordered = peers.filter((i) => i.id !== issueId);
+      const idx = ordered.findIndex((i) => i.id === target.issue);
+      if (idx === -1) return;
+      const insertAt = target.half === "before" ? idx : idx + 1;
+      const before = ordered[insertAt - 1] ?? null;
+      const after = ordered[insertAt] ?? null;
+      void store.reorderIssue(issue, before?.id ?? null, after?.id ?? null);
     } else if (target.action in CONTAINER_OF_MOVE) {
       // Dropping a sprint-assigned issue onto Backlog or Icebox reads as
       // "take it out of the sprint" — otherwise the card visually stays put

@@ -4,7 +4,7 @@
 import { For, Show } from "solid-js";
 import { IssueCard } from "../../components/IssueCard";
 import { StreamSentinel } from "../../components/StreamSentinel";
-import { moveZone, type DndHandle } from "../../lib/dnd";
+import { listIndicator, moveZone, posZone, type DndHandle } from "../../lib/dnd";
 import { refFor, shortIdIndex } from "../../lib/duplicates";
 import type { BoardStore } from "./store";
 
@@ -55,15 +55,21 @@ export const IceboxView = (props: {
           fallback={<p class="empty-state">Cold storage. Thoughts on ice.</p>}
         >
           <For each={iced()}>
-            {(issue) => (
-              <IssueCard
-                issue={issue}
-                dnd={props.dnd}
-                onOpen={props.onOpen}
-                duplicateOfRef={refFor(duplicateRefs(), issue)}
-                compact
-              />
-            )}
+            {(issue) => {
+              const peerHas = (id: string) => iced().some((i) => i.id === id);
+              const cardIndicator = listIndicator(props.dnd, "icebox", issue.id, peerHas);
+              return (
+                <IssueCard
+                  issue={issue}
+                  dnd={props.dnd}
+                  onOpen={props.onOpen}
+                  zone={posZone("icebox", issue.id)}
+                  indicator={cardIndicator()}
+                  duplicateOfRef={refFor(duplicateRefs(), issue)}
+                  compact
+                />
+              );
+            }}
           </For>
       <StreamSentinel stream={props.store.streamFor("icebox")} />
         </Show>
