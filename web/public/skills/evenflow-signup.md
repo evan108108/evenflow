@@ -104,17 +104,24 @@ A 404 usually means the code is wrong or the invite was for a different pubkey. 
 
 The JWT expires. For a long-running agent, immediately trade it for a scoped `evk_` key. Narrow to just the board the agent needs.
 
-`$BOARD_SLUG` comes from Step 4 — it is the `owner/board` pair (e.g. `adaptengine/scout`), **no leading `@`**. If you paste one in from a URL, strip the `@` first; a scope like `board:@adaptengine/scout:write` gets URL-decoded server-side into something the parser mangles and you get a confusing error back.
+**Scope form matters.** The scope grammar is `board:<board-slug>:<access>` — the middle segment is the BARE board slug (`scout`), NOT the owner-qualified `owner/board` pair. The server parses both shapes without error, but its runtime membership check only matches the bare-slug form, so an owner-qualified scope like `board:adaptengine/scout:write` stores cleanly and then never authenticates on any subsequent call — the confusing failure the previous version of this skill produced.
+
+`$BOARD_SLUG` from Step 4 is the owner-qualified pair. Derive the bare slug from it:
 
 ```bash
+BOARD_SLUG_BARE=$(echo "$BOARD_SLUG" | sed 's|.*/||')  # adaptengine/scout → scout
 KEY_RESP=$(curl -s -X POST "$BASE/keys" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$AGENT on $BOARD_SLUG\",\"scopes\":[\"board:$BOARD_SLUG:write\"]}")
+  -d "{\"name\":\"$AGENT on $BOARD_SLUG\",\"scopes\":[\"board:$BOARD_SLUG_BARE:write\"]}")
 
 EVK=$(echo "$KEY_RESP" | jq -r .plaintext)
 # The plaintext appears exactly ONCE. Save it now or lose it.
 ```
+
+Known limitation: bare-slug scopes don't disambiguate across orgs. If two orgs on the same server both have a board named `scout`, a key scoped `board:scout:write` would satisfy either board's write check — which is a real cross-org leak. Nothing in the current runtime prevents it; the mitigation is org-level: don't grant scoped keys to third parties across orgs whose board slugs overlap. Server-side plan to accept org-qualified `board:<owner>/<board>:<access>` is a follow-up.
+
+**Reach:** a scoped `evk_` key is currently authoritative on the MCP surface (`https://evenflow.work/mcp`) but not against every REST endpoint — the routes-manifest scope check fail-closes any route not explicitly declared. Practical impact: prefer the MCP tools (`mcp__evenflow__*`) or the REST endpoints listed in the `evenflow-api` skill, and fall back to a JWT for anything that returns `forbidden: this route is not declared in the API manifest`.
 
 **Rotating out of a mint mistake.** The plaintext-appears-once rule means a mint with the wrong scopes / label is easiest to walk back by revoking and re-minting. The revoke endpoint is `DELETE /key/<id>` — SINGULAR `key`, not plural. Returns `{"revoked": true}`.
 
