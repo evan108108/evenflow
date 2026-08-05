@@ -434,12 +434,30 @@ select:disabled {
   justify-content: space-between;
   align-items: baseline;
 }
+/* Same cream glass pill as the kanban column h3 so rail headers over the
+   ocean stay legible in both bright and deep water. */
+.rail-section > h3 {
+  background: rgba(245, 242, 236, 0.55);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-radius: var(--radius-chamfer);
+  padding: 0.5rem 0.9rem;
+  margin-bottom: 0.4rem;
+}
 
 /* EFB-115 B2 — column header pins to the top of its scrollable column so
-   the title + count stay visible while cards scroll behind them. Matches
-   the column's glass tint (not paper-cream) so it reads as an extension of
-   the column, not a card. Vertical layout keeps its normal flow (the whole
-   stack scrolls as one). */
+   the title + count stay visible while cards scroll behind them. Same
+   cream-tinted glass pill in both layouts so ink text stays readable
+   whether the water behind is bright (sun band) or deep (near-black). */
+.kanban .kanban-column .kanban-column-content h3 {
+  background: rgba(245, 242, 236, 0.55);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-radius: var(--radius-chamfer);
+  margin: 0 -0.2rem 0.4rem;
+  padding: 0.5rem 0.9rem;
+}
+/* Horizontal layout only — pin the h3 to the top of its scrollable column. */
 .kanban:not(.layout-vertical) .kanban-column .kanban-column-content h3 {
   position: sticky;
   /* Compensate for .kanban-column-content's own top padding so the sticky
@@ -449,9 +467,6 @@ select:disabled {
   z-index: 5;
   margin: -0.6rem -0.6rem 0.4rem;
   padding: 0.9rem 0.9rem 0.6rem;
-  background: rgba(23, 35, 59, 0.08);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 /* Column-content also needs overflow visible so the sticky h3's stretched
    backdrop doesn't clip along the padding line. */
