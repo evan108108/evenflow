@@ -614,7 +614,7 @@ export const BoardSettings = () => {
 
       <Show when={tab() === "Integrations"}>
         <GithubSection apiBase={apiBase()} />
-        <WebhooksSection apiBase={apiBase()} />
+        <WebhooksSection apiBase={apiBase()} members={members() ?? []} />
         <ImportSection apiBase={apiBase()} />
       </Show>
 

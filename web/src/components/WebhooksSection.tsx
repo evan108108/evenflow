@@ -81,7 +81,26 @@ interface Delivery {
 const when = (ms: number | null) =>
   ms === null ? "—" : new Date(ms).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
 
-export const WebhooksSection = (props: { apiBase: string }) => {
+interface MemberOption {
+  readonly pubkey: string;
+  readonly role: string;
+}
+
+/** Compact display: first eight chars of the pubkey plus role. No display
+ *  names exist on MemberRow, so the pubkey prefix is what we have — good
+ *  enough to distinguish members on a small board, and the full pubkey
+ *  goes on the wire regardless. */
+const memberLabel = (m: MemberOption) => `${m.pubkey.slice(0, 8)}… · ${m.role}`;
+
+const CUSTOM_SENTINEL = "__custom__";
+const NONE_SENTINEL = "";
+
+export const WebhooksSection = (props: {
+  apiBase: string;
+  /** Board's member roster, threaded from BoardSettings so we don't refetch
+   *  the same rows the Members panel already loaded. */
+  members: ReadonlyArray<MemberOption>;
+}) => {
   const url = () => `${props.apiBase}/webhooks`;
 
   const [data, { refetch }] = createResource(
@@ -97,8 +116,21 @@ export const WebhooksSection = (props: { apiBase: string }) => {
   const [name, setName] = createSignal("");
   const [target, setTarget] = createSignal("");
   const [kinds, setKinds] = createSignal<string[]>(DEFAULT_KINDS);
-  const [assignee, setAssignee] = createSignal("");
-  const [excludeActor, setExcludeActor] = createSignal("");
+  // Two-part state per predicate slot: a select-value + a text-value used
+  // only when the select is on CUSTOM_SENTINEL. Keeping them separate means
+  // switching from a member back to "any" doesn't lose what was typed.
+  const [assigneeSelect, setAssigneeSelect] = createSignal(NONE_SENTINEL);
+  const [assigneeCustom, setAssigneeCustom] = createSignal("");
+  const [excludeSelect, setExcludeSelect] = createSignal(NONE_SENTINEL);
+  const [excludeCustom, setExcludeCustom] = createSignal("");
+
+  /** Resolve a select+custom pair to the string the API expects. Empty
+   *  string means "unset — do not include in predicate." */
+  const resolvePubkey = (select: string, custom: string): string => {
+    if (select === CUSTOM_SENTINEL) return custom.trim();
+    if (select === NONE_SENTINEL) return "";
+    return select;
+  };
 
   const [openLog, setOpenLog] = createSignal<string | null>(null);
   const [log, { refetch: refetchLog }] = createResource(
@@ -142,16 +174,20 @@ export const WebhooksSection = (props: { apiBase: string }) => {
       // omitted optional differently from an explicit null, and "no predicate"
       // is the former.
       const predicate: Record<string, string> = {};
-      if (assignee().trim() !== "") predicate["assignee"] = assignee().trim();
-      if (excludeActor().trim() !== "") predicate["exclude_actor"] = excludeActor().trim();
+      const assigneeValue = resolvePubkey(assigneeSelect(), assigneeCustom());
+      const excludeValue = resolvePubkey(excludeSelect(), excludeCustom());
+      if (assigneeValue !== "") predicate["assignee"] = assigneeValue;
+      if (excludeValue !== "") predicate["exclude_actor"] = excludeValue;
       if (Object.keys(predicate).length > 0) body["predicate"] = predicate;
       const res = await api<{ secret: string }>((c) => c.post(url(), body));
       setFreshSecret(res.secret);
       setName("");
       setTarget("");
       setKinds(DEFAULT_KINDS);
-      setAssignee("");
-      setExcludeActor("");
+      setAssigneeSelect(NONE_SENTINEL);
+      setAssigneeCustom("");
+      setExcludeSelect(NONE_SENTINEL);
+      setExcludeCustom("");
     });
 
   const setEnabled = (s: Subscription, enabled: boolean) =>
@@ -253,11 +289,11 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                         {s.event_kinds.join(", ")}
                         <Show when={s.predicate?.assignee !== undefined}>
                           {" · assignee="}
-                          {s.predicate?.assignee}
+                          {(s.predicate?.assignee ?? "").slice(0, 8)}…
                         </Show>
                         <Show when={s.predicate?.exclude_actor !== undefined}>
                           {" · exclude_actor="}
-                          {s.predicate?.exclude_actor}
+                          {(s.predicate?.exclude_actor ?? "").slice(0, 8)}…
                         </Show>
                       </p>
                     </div>
@@ -376,18 +412,52 @@ export const WebhooksSection = (props: { apiBase: string }) => {
               )}
             </For>
           </div>
-          <input
-            type="text"
-            placeholder="Only issues assigned to (optional pubkey — yours, unless you're an admin)"
-            value={assignee()}
-            onInput={(e) => setAssignee(e.currentTarget.value)}
-          />
-          <input
-            type="text"
-            placeholder="Suppress when caused by (optional pubkey — e.g. your AI teammate's, to skip self-loop)"
-            value={excludeActor()}
-            onInput={(e) => setExcludeActor(e.currentTarget.value)}
-          />
+          <label style={{ display: "flex", "flex-direction": "column", gap: "0.3rem" }}>
+            <span class="muted" style={{ "font-size": "0.85rem" }}>Only issues assigned to</span>
+            <select
+              value={assigneeSelect()}
+              onChange={(e) => setAssigneeSelect(e.currentTarget.value)}
+            >
+              <option value={NONE_SENTINEL}>— any assignee —</option>
+              <For each={props.members}>
+                {(m) => <option value={m.pubkey}>{memberLabel(m)}</option>}
+              </For>
+              <option value={CUSTOM_SENTINEL}>Custom pubkey…</option>
+            </select>
+            <Show when={assigneeSelect() === CUSTOM_SENTINEL}>
+              <input
+                type="text"
+                placeholder="64 characters, lowercase hex"
+                value={assigneeCustom()}
+                onInput={(e) => setAssigneeCustom(e.currentTarget.value)}
+                style={{ "font-family": "monospace", "font-size": "0.85rem" }}
+              />
+            </Show>
+          </label>
+          <label style={{ display: "flex", "flex-direction": "column", gap: "0.3rem" }}>
+            <span class="muted" style={{ "font-size": "0.85rem" }}>
+              Suppress when caused by <em>(skip self-loop, e.g. your AI teammate's own actions)</em>
+            </span>
+            <select
+              value={excludeSelect()}
+              onChange={(e) => setExcludeSelect(e.currentTarget.value)}
+            >
+              <option value={NONE_SENTINEL}>— no suppression —</option>
+              <For each={props.members}>
+                {(m) => <option value={m.pubkey}>{memberLabel(m)}</option>}
+              </For>
+              <option value={CUSTOM_SENTINEL}>Custom pubkey…</option>
+            </select>
+            <Show when={excludeSelect() === CUSTOM_SENTINEL}>
+              <input
+                type="text"
+                placeholder="64 characters, lowercase hex"
+                value={excludeCustom()}
+                onInput={(e) => setExcludeCustom(e.currentTarget.value)}
+                style={{ "font-family": "monospace", "font-size": "0.85rem" }}
+              />
+            </Show>
+          </label>
           {/* In a .button-row rather than bare in the .form-stack: the stack is
               a flex column, so a bare button would stretch to the full width of
               the fields above it. */}
