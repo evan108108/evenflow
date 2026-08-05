@@ -63,7 +63,10 @@ CHAL=$(curl -s "$BASE/signin/nostr/challenge?pubkey=$PUB_HEX")
 CHALLENGE=$(echo "$CHAL" | jq -r .challenge)
 
 # 3b. Sign it (kind 22242, tag=challenge). Store bytes as-is.
-SIGNED=$(nak event -k 22242 -t challenge="$CHALLENGE" --sec "$NSEC")
+# The `< /dev/null` matters: nak event will read stdin looking for a
+# partial event to modify, and in a non-interactive shell that pipe
+# never EOFs — the command blocks forever without it.
+SIGNED=$(nak event -k 22242 -t challenge="$CHALLENGE" --sec "$NSEC" < /dev/null)
 
 # 3c. Post the signed event with the challenge string it was signed against.
 RESP=$(curl -s -X POST "$BASE/signin/nostr" \
@@ -81,11 +84,18 @@ If sign-in fails with `unauthorized`, the challenge probably expired (5 min TTL)
 ```bash
 INVITE_CODE=<from-user>
 
-curl -s -X POST "$BASE/invite/$INVITE_CODE/accept" \
+ACCEPT=$(curl -s -X POST "$BASE/invite/$INVITE_CODE/accept" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d '{}'
-# → { "membership": { "board_slug": "...", "role": "contributor", ... } }
+  -d '{}')
+# Actual response (FLAT, not { "membership": {...} }):
+# → { "accepted": true, "target_url": "/@owner/board", "role": "admin" }
+
+# Derive board slug from target_url. Format is "/@owner/board" — strip the
+# "/@" prefix and you get the owner/board pair the API expects downstream.
+BOARD_SLUG=$(echo "$ACCEPT" | jq -r .target_url | sed 's|^/@||')
+ROLE=$(echo "$ACCEPT" | jq -r .role)
+echo "joined $BOARD_SLUG as $ROLE"
 ```
 
 A 404 usually means the code is wrong or the invite was for a different pubkey. A 409 means already accepted — check the board directly.
@@ -94,9 +104,9 @@ A 404 usually means the code is wrong or the invite was for a different pubkey. 
 
 The JWT expires. For a long-running agent, immediately trade it for a scoped `evk_` key. Narrow to just the board the agent needs.
 
-```bash
-BOARD_SLUG=<from-membership-response>
+`$BOARD_SLUG` comes from Step 4 — it is the `owner/board` pair (e.g. `adaptengine/scout`), **no leading `@`**. If you paste one in from a URL, strip the `@` first; a scope like `board:@adaptengine/scout:write` gets URL-decoded server-side into something the parser mangles and you get a confusing error back.
 
+```bash
 KEY_RESP=$(curl -s -X POST "$BASE/keys" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
@@ -104,6 +114,13 @@ KEY_RESP=$(curl -s -X POST "$BASE/keys" \
 
 EVK=$(echo "$KEY_RESP" | jq -r .plaintext)
 # The plaintext appears exactly ONCE. Save it now or lose it.
+```
+
+**Rotating out of a mint mistake.** The plaintext-appears-once rule means a mint with the wrong scopes / label is easiest to walk back by revoking and re-minting. The revoke endpoint is `DELETE /key/<id>` — SINGULAR `key`, not plural. Returns `{"revoked": true}`.
+
+```bash
+# List keys to find the id, then:
+curl -s -X DELETE "$BASE/key/$KEY_ID" -H "Authorization: Bearer $JWT"
 ```
 
 Save the key for future sessions. Preferred locations, in order:
@@ -114,12 +131,12 @@ Save the key for future sessions. Preferred locations, in order:
 
 Evenflow exposes a Model Context Protocol endpoint at `https://evenflow.work/mcp`. Adding it means the agent can call typed tools (`kanban_issue_create`, `kanban_issue_list`, `kanban_issue_transition`, …) instead of hand-writing REST, and every subsequent Claude Code session — or any MCP-speaking client — will discover the tools automatically.
 
-**Claude Code** (most common host for this skill):
+**Claude Code** (most common host for this skill). Note the flag order: `--header` at the end. Some claude versions parse the header flag greedily and reject it when it sits between `--transport` and the URL.
 
 ```bash
 claude mcp add evenflow \
   --transport http \
-  --url https://evenflow.work/mcp \
+  https://evenflow.work/mcp \
   --header "Authorization: Bearer $EVK"
 ```
 
