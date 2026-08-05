@@ -52,7 +52,7 @@ interface Subscription {
   name: string;
   url: string;
   event_kinds: string[];
-  predicate: { assignee?: string } | null;
+  predicate: { assignee?: string; exclude_actor?: string } | null;
   auth_scheme: string;
   enabled: boolean;
   created_at_ms: number;
@@ -98,6 +98,7 @@ export const WebhooksSection = (props: { apiBase: string }) => {
   const [target, setTarget] = createSignal("");
   const [kinds, setKinds] = createSignal<string[]>(DEFAULT_KINDS);
   const [assignee, setAssignee] = createSignal("");
+  const [excludeActor, setExcludeActor] = createSignal("");
 
   const [openLog, setOpenLog] = createSignal<string | null>(null);
   const [log, { refetch: refetchLog }] = createResource(
@@ -140,13 +141,17 @@ export const WebhooksSection = (props: { apiBase: string }) => {
       // Absent, not null — the schema rejects unknown keys but treats an
       // omitted optional differently from an explicit null, and "no predicate"
       // is the former.
-      if (assignee().trim() !== "") body["predicate"] = { assignee: assignee().trim() };
+      const predicate: Record<string, string> = {};
+      if (assignee().trim() !== "") predicate["assignee"] = assignee().trim();
+      if (excludeActor().trim() !== "") predicate["exclude_actor"] = excludeActor().trim();
+      if (Object.keys(predicate).length > 0) body["predicate"] = predicate;
       const res = await api<{ secret: string }>((c) => c.post(url(), body));
       setFreshSecret(res.secret);
       setName("");
       setTarget("");
       setKinds(DEFAULT_KINDS);
       setAssignee("");
+      setExcludeActor("");
     });
 
   const setEnabled = (s: Subscription, enabled: boolean) =>
@@ -249,6 +254,10 @@ export const WebhooksSection = (props: { apiBase: string }) => {
                         <Show when={s.predicate?.assignee !== undefined}>
                           {" · assignee="}
                           {s.predicate?.assignee}
+                        </Show>
+                        <Show when={s.predicate?.exclude_actor !== undefined}>
+                          {" · exclude_actor="}
+                          {s.predicate?.exclude_actor}
                         </Show>
                       </p>
                     </div>
@@ -372,6 +381,12 @@ export const WebhooksSection = (props: { apiBase: string }) => {
             placeholder="Only issues assigned to (optional pubkey — yours, unless you're an admin)"
             value={assignee()}
             onInput={(e) => setAssignee(e.currentTarget.value)}
+          />
+          <input
+            type="text"
+            placeholder="Suppress when caused by (optional pubkey — e.g. your AI teammate's, to skip self-loop)"
+            value={excludeActor()}
+            onInput={(e) => setExcludeActor(e.currentTarget.value)}
           />
           {/* In a .button-row rather than bare in the .form-stack: the stack is
               a flex column, so a bare button would stretch to the full width of
