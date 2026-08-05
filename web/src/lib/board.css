@@ -2760,6 +2760,20 @@ input.sprint-name:focus {
   min-height: 3.2rem;
 }
 
+/* Collapsed status column in vertical layout: header stays a live drop
+   target (drag a card onto it to transition), cards are hidden. Same shape
+   as the rail-section.collapsed pattern the Icebox already uses. */
+.kanban.layout-vertical .kanban-column.collapsed {
+  min-height: 0;
+}
+.kanban.layout-vertical .kanban-column.collapsed .kanban-column-content {
+  min-height: 0;
+  padding-bottom: 0.4rem;
+}
+.kanban.layout-vertical .kanban-column.collapsed h3 {
+  margin-bottom: 0;
+}
+
 /* ── vertical Kanban: the Backlog + Icebox rail ── */
 /* Beside-vs-below is decided in JS (lib/layout isWideVertical toggles
    `with-rail`), NOT by a media query — window.innerWidth and media-query

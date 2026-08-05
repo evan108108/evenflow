@@ -51,6 +51,11 @@ const StatusStack = (props: {
   /** EFB-45: the `active`-scope predicate — every filter dimension including
    *  sprint. Absent = no filtering. */
   matchesFilters?: ((issue: Issue) => boolean) | undefined;
+  /** Column ids the viewer has collapsed in vertical layout. Header stays a
+   *  live drop target when collapsed; cards hide. Only used when
+   *  layout === "vertical". */
+  collapsedColumns?: ReadonlySet<string> | undefined;
+  onToggleCollapse?: ((columnId: string) => void) | undefined;
 }) => {
   const active = () => {
     const rows = props.store.issues().filter((i) => i.container === "active");
@@ -109,6 +114,12 @@ const StatusStack = (props: {
         <For each={columns()}>
           {(column) => {
             const zone = transitionZone(column.id);
+            // Collapse only bites in vertical layout — horizontal already has
+            // per-column scroll, so the "long Done pushes others out of view"
+            // problem doesn't apply there.
+            const collapsible = () => props.layout === "vertical";
+            const collapsed = () =>
+              collapsible() && (props.collapsedColumns?.has(column.id) ?? false);
             // The column highlights for a direct hover, or when the pointer
             // is over one of its cards during a CROSS-column drag (that
             // drop transitions here; same-column card hovers show the
@@ -127,32 +138,50 @@ const StatusStack = (props: {
             return (
               <div
                 class="kanban-column"
-                classList={{ "drop-over": dropOver() }}
+                classList={{ "drop-over": dropOver(), collapsed: collapsed() }}
                 data-dropzone={zone}
               >
                 <div class="kanban-column-content">
                   <h3>
-                    {column.name} <SectionCounts issues={inColumn(column)} />
+                    <Show
+                      when={collapsible()}
+                      fallback={<span>{column.name}</span>}
+                    >
+                      <button
+                        class="rail-collapse"
+                        aria-expanded={!collapsed()}
+                        title={collapsed() ? "Expand column" : "Collapse column"}
+                        onClick={() => props.onToggleCollapse?.(column.id)}
+                      >
+                        {column.name}
+                        <span class="rail-caret" aria-hidden="true">
+                          {collapsed() ? "▸" : "▾"}
+                        </span>
+                      </button>
+                    </Show>{" "}
+                    <SectionCounts issues={inColumn(column)} />
                   </h3>
-                  <For each={inColumn(column)}>
-                    {(issue: Issue) => (
-                      <IssueCard
-                        issue={issue}
-                        dnd={props.dnd}
-                        onOpen={props.onOpen}
-                        zone={cardZone(column.id, issue.id)}
-                        indicator={indicatorFor(column, issue)}
-                        duplicateOfRef={refFor(duplicateRefs(), issue)}
-                        highlight={
-                          props.highlightSprintId != null &&
-                          issue.sprint_id === props.highlightSprintId
-                        }
-                        compact={props.layout === "vertical"}
-                      />
-                    )}
-                  </For>
-                  {/* Phase 22: each column is its own paged stream. */}
-                  <StreamSentinel stream={props.store.streamFor("active", column.id)} />
+                  <Show when={!collapsed()}>
+                    <For each={inColumn(column)}>
+                      {(issue: Issue) => (
+                        <IssueCard
+                          issue={issue}
+                          dnd={props.dnd}
+                          onOpen={props.onOpen}
+                          zone={cardZone(column.id, issue.id)}
+                          indicator={indicatorFor(column, issue)}
+                          duplicateOfRef={refFor(duplicateRefs(), issue)}
+                          highlight={
+                            props.highlightSprintId != null &&
+                            issue.sprint_id === props.highlightSprintId
+                          }
+                          compact={props.layout === "vertical"}
+                        />
+                      )}
+                    </For>
+                    {/* Phase 22: each column is its own paged stream. */}
+                    <StreamSentinel stream={props.store.streamFor("active", column.id)} />
+                  </Show>
                 </div>
               </div>
             );
@@ -182,10 +211,15 @@ const RailSection = (props: {
   dnd: DndHandle;
   onOpen: (id: string) => void;
   emptyLine: string;
-  /** Starts closed and toggles on a header click. Plain sections omit it. */
+  /** Header becomes a click-to-collapse button. */
   collapsible?: boolean;
+  /** When collapsible, whether to start closed (Icebox default) or open
+   *  (Backlog default — most-used section). */
+  defaultCollapsed?: boolean;
 }) => {
-  const [expanded, setExpanded] = createSignal(props.collapsible !== true);
+  const [expanded, setExpanded] = createSignal(
+    props.collapsible === true ? props.defaultCollapsed !== true : true,
+  );
 
   return (
     <section
@@ -276,6 +310,7 @@ const KanbanRail = (props: {
         onOpen={props.onOpen}
         duplicateRefs={duplicateRefs()}
         emptyLine="Nothing on your mind."
+        collapsible
       />
       <RailSection
         title="Icebox"
@@ -287,6 +322,7 @@ const KanbanRail = (props: {
         duplicateRefs={duplicateRefs()}
         emptyLine="Cold storage. Thoughts on ice."
         collapsible
+        defaultCollapsed
       />
     </aside>
   );
@@ -314,6 +350,10 @@ export const KanbanView = (props: {
   /** EFB-45 `ambient`-scope predicate — every dimension EXCEPT sprint. Goes to
    *  the rail, which has no sprint sections and stays deliberately ambient. */
   matchesAmbient?: ((issue: Issue) => boolean) | undefined;
+  /** Column ids the viewer has collapsed in vertical layout. Ignored in
+   *  horizontal — the whole feature is vertical-only for now. */
+  collapsedColumns?: ReadonlySet<string>;
+  onToggleCollapse?: (columnId: string) => void;
 }) => (
   <Show
     when={props.layout === "vertical"}
@@ -338,6 +378,8 @@ export const KanbanView = (props: {
         doneWindowMs={props.doneWindowMs}
         layout="vertical"
         matchesFilters={props.matchesActive}
+        collapsedColumns={props.collapsedColumns}
+        onToggleCollapse={props.onToggleCollapse}
       />
       <KanbanRail
         store={props.store}

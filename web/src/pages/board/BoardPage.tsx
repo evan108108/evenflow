@@ -33,6 +33,7 @@ import {
 import { effectiveDoneWindowMs } from "../../lib/doneWindow";
 import { readFilters, writeFilters } from "../../lib/filterPersistence";
 import { readDoneWindowLifted, writeDoneWindowLifted } from "../../lib/doneWindowPersistence";
+import { readCollapsed, writeCollapsed } from "../../lib/collapsedColumnsPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
 import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
@@ -142,6 +143,30 @@ export const BoardPage = () => {
     const viewer = callerPubkey();
     setDoneWindowLifted(boardId === undefined ? false : readDoneWindowLifted(boardId, viewer));
   });
+  // Collapsible vertical-kanban columns. Same persistence shape as filters —
+  // key includes viewer so signing in/out swaps to that viewer's preferences.
+  // First visit defaults Done to collapsed (the long-tail column that
+  // motivates this).
+  const [collapsedColumns, setCollapsedColumns] = createSignal<ReadonlySet<string>>(new Set());
+  createEffect(() => {
+    const board = store.board();
+    if (board === null || board === undefined) {
+      setCollapsedColumns(new Set<string>());
+      return;
+    }
+    const defaults = board.columns.filter((c) => c.category === "done").map((c) => c.id);
+    setCollapsedColumns(readCollapsed(board.id, callerPubkey(), defaults));
+  });
+  const toggleColumnCollapse = (columnId: string) => {
+    setCollapsedColumns((prev) => {
+      const next = new Set<string>(prev);
+      if (next.has(columnId)) next.delete(columnId);
+      else next.add(columnId);
+      const boardId = store.board()?.id;
+      if (boardId !== undefined) writeCollapsed(boardId, callerPubkey(), next);
+      return next;
+    });
+  };
   const toggleIn = (key: "assignees" | "labels") => (value: string) =>
     applyFilters((f) => ({
       ...f,
@@ -812,6 +837,8 @@ export const BoardPage = () => {
                   wideRail={wideRail()}
                   matchesActive={activePredicate()}
                   matchesAmbient={ambientPredicate()}
+                  collapsedColumns={collapsedColumns()}
+                  onToggleCollapse={toggleColumnCollapse}
                 />
               </Show>
               <Show when={view() === "backlog"}>
