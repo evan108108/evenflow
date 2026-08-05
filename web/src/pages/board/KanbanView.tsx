@@ -301,6 +301,12 @@ const KanbanRail = (props: {
     const pred = props.matchesFilters;
     return pred === undefined ? rows : rows.filter(pred);
   };
+  // Without an active sprint, the kanban IS the backlog — StatusStack already
+  // pulls backlog issues into the columns, so a rail Backlog section would
+  // just duplicate them. Rail comes back when a sprint is running: then the
+  // columns are the sprint scope, and the rail shows what's NOT yet committed.
+  const hasActiveSprint = () =>
+    props.store.sprints().some((s) => s.status === "active");
   const backlog = () =>
     keep(props.store.issues().filter((i) => i.container === "backlog")).sort(byBoardOrder);
   const iced = () =>
@@ -314,17 +320,19 @@ const KanbanRail = (props: {
 
   return (
     <aside class="kanban-rail">
-      <RailSection
-        title="Backlog"
-        issues={backlog()}
-        zone={moveZone("promote_to_backlog")}
-        posListKey="rail-backlog"
-        dnd={props.dnd}
-        onOpen={props.onOpen}
-        duplicateRefs={duplicateRefs()}
-        emptyLine="Nothing on your mind."
-        collapsible
-      />
+      <Show when={hasActiveSprint()}>
+        <RailSection
+          title="Backlog"
+          issues={backlog()}
+          zone={moveZone("promote_to_backlog")}
+          posListKey="rail-backlog"
+          dnd={props.dnd}
+          onOpen={props.onOpen}
+          duplicateRefs={duplicateRefs()}
+          emptyLine="Nothing on your mind."
+          collapsible
+        />
+      </Show>
       <RailSection
         title="Icebox"
         issues={iced()}
