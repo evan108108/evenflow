@@ -253,7 +253,14 @@ export const createComment = (
       issue_id: issue.id,
       comment_id: comment.id,
       at_ms: now,
-      payload: { comment },
+      // assignee_pubkey rides the payload so the webhook `assignee`
+      // predicate can gate on it. Without this a subscription of the
+      // shape `{assignee: X}` never matches comment.created — the
+      // matcher would only see fields on `comment`, and no comment
+      // carries an assignee (comments belong to their author, not the
+      // parent issue's owner). Cheap to include: the parent issue is
+      // already in scope, and the field is public per the SSE feed.
+      payload: { comment, assignee_pubkey: issue.assignee_pubkey },
     },
     ProvenanceFromCaller(input.claims),
   );
