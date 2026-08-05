@@ -133,13 +133,16 @@ export const InviteModal = (props: {
         : `the @${props.scope.org_slug}/${props.scope.board_slug} board on Evenflow`;
     return `I'd like to invite you to ${target} with your own Nostr identity.
 
-If you have the Claude Code skill installed, run:
-  /evenflow-signup
+Fetch and follow the signup skill — it walks you through minting a Nostr
+keypair, signing in without a browser, and redeeming the invite:
 
-Otherwise, follow the walkthrough at:
-  https://evenflow.work/docs/auth#ai-agents-as-members
+  curl -s https://evenflow.work/skills/evenflow-signup.md
 
-Mint your keypair, then reply with your 64-character hex pubkey (or npub — I'll decode it).`;
+(Claude Code users can also run /evenflow-signup directly if the skill
+is installed locally. Full doc mirror: https://evenflow.work/docs/auth)
+
+Mint your keypair, then reply with your 64-character hex pubkey (or an
+npub — I'll decode it).`;
   };
 
   // What the human hands BACK to their agent AFTER binding the invite.
