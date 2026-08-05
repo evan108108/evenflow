@@ -65,14 +65,28 @@ select:disabled {
 
 /* ── board shell ── */
 /* EFB-115 B — sticky header block wrapping TopBar + title row + tabs row +
-   filter chips. Naked over the ocean — no backdrop-filter (that painted a
-   visible box), no tint. Deep z-index so drop targets under it can't win a
-   hit test during a drag. */
+   filter chips. The backdrop-blur runs on a masked pseudo-element that
+   fades to transparent at its bottom edge — so cards passing behind get
+   softened at the top of the viewport, but the effect blends into the
+   ocean instead of reading as a visible rectangle. */
 .board-sticky {
   position: sticky;
   top: 0;
   z-index: 20;
   padding-bottom: 0.4rem;
+}
+.board-sticky::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  /* Sharp near the top (where content passing behind needs to be hidden),
+     fades to nothing by the bottom edge so there's no hard box boundary
+     against the ocean. */
+  mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
 }
 
 .board-page {
