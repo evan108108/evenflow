@@ -2761,6 +2761,13 @@ input.sprint-name:focus {
      stack), so undo the horizontal-layout per-column cap + overflow. */
   max-height: none;
   overflow-y: visible;
+  /* Vertical stack is wide and shallow — the horizontal 7% ink glass reads
+     transparent enough that ink text sits on raw ocean and disappears in
+     deep water. Bump to a cream tint so the h3 always has a lightened
+     surface under it. Blur softens the shader further. */
+  background: rgba(245, 242, 236, 0.4);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
 .kanban.layout-vertical .kanban-column-content {
