@@ -104,6 +104,12 @@ export const WebhooksSection = (props: {
   members: ReadonlyArray<MemberOption>;
 }) => {
   const url = () => `${props.apiBase}/webhooks`;
+  // Individual-webhook paths are SINGULAR per the routes manifest
+  // (/board/:slug/webhook/:id), matching /issue/:id and /comment/:id — the
+  // collection is plural, one row is singular. Hand-constructing ${url()}/${id}
+  // gave the plural form and 404'd; this helper makes the singular form the
+  // path everyone uses.
+  const rowUrl = (id: string) => `${props.apiBase}/webhook/${id}`;
 
   // Kick off a profile fetch for every roster member so their display
   // names resolve inside the <select>s below. Also request profiles for
@@ -154,7 +160,7 @@ export const WebhooksSection = (props: {
     async (id) =>
       id === null
         ? []
-        : await api<{ deliveries: Delivery[] }>((c) => c.get(`${url()}/${id}/deliveries`))
+        : await api<{ deliveries: Delivery[] }>((c) => c.get(`${rowUrl(id)}/deliveries`))
             .then((r) => r.deliveries)
             .catch(() => [] as Delivery[]),
   );
@@ -207,10 +213,10 @@ export const WebhooksSection = (props: {
     });
 
   const setEnabled = (s: Subscription, enabled: boolean) =>
-    guard(() => api((c) => c.patch(`${url()}/${s.id}`, { enabled })));
+    guard(() => api((c) => c.patch(rowUrl(s.id), { enabled })));
 
   const remove = (s: Subscription) =>
-    guard(() => api((c) => c.delete(`${url()}/${s.id}`)));
+    guard(() => api((c) => c.delete(rowUrl(s.id))));
 
   return (
     <section class="settings-section">
