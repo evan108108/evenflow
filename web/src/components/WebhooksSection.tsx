@@ -11,9 +11,10 @@
 // because there is nothing to reveal — D1 holds ciphertext and the server never
 // hands the plaintext back. Same posture as the GitHub webhook secret.
 
-import { For, Show, createResource, createSignal } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal } from "solid-js";
 import { Effect } from "effect";
 import { ApiClient, appRuntime, type ApiClientService, type ApiError } from "../effects";
+import { authorLabel, profileFor, requestProfile } from "../lib/profileStore";
 
 const api = <T,>(f: (c: ApiClientService) => Effect.Effect<T, ApiError>): Promise<T> =>
   appRuntime.runPromise(Effect.flatMap(ApiClient, f));
@@ -86,11 +87,12 @@ interface MemberOption {
   readonly role: string;
 }
 
-/** Compact display: first eight chars of the pubkey plus role. No display
- *  names exist on MemberRow, so the pubkey prefix is what we have — good
- *  enough to distinguish members on a small board, and the full pubkey
- *  goes on the wire regardless. */
-const memberLabel = (m: MemberOption) => `${m.pubkey.slice(0, 8)}… · ${m.role}`;
+/** Resolved display name for a member, matching how <Author> renders
+ *  everywhere else on the app. Reads reactively from profileStore — the
+ *  label updates from a canonical ref (google:... / nostr:...) to the
+ *  member's display_name once their profile lands. */
+const memberLabel = (m: MemberOption) =>
+  `${authorLabel(profileFor(m.pubkey), m.pubkey, null)} · ${m.role}`;
 
 const CUSTOM_SENTINEL = "__custom__";
 const NONE_SENTINEL = "";
@@ -102,6 +104,20 @@ export const WebhooksSection = (props: {
   members: ReadonlyArray<MemberOption>;
 }) => {
   const url = () => `${props.apiBase}/webhooks`;
+
+  // Kick off a profile fetch for every roster member so their display
+  // names resolve inside the <select>s below. Also request profiles for
+  // any pubkey referenced by an existing subscription row so the "…
+  // assignee=<name>" summary line reads the same way.
+  createEffect(() => {
+    for (const m of props.members) requestProfile(m.pubkey);
+  });
+  createEffect(() => {
+    for (const s of data()?.subscriptions ?? []) {
+      if (s.predicate?.assignee) requestProfile(s.predicate.assignee);
+      if (s.predicate?.exclude_actor) requestProfile(s.predicate.exclude_actor);
+    }
+  });
 
   const [data, { refetch }] = createResource(
     () => props.apiBase,
@@ -289,11 +305,19 @@ export const WebhooksSection = (props: {
                         {s.event_kinds.join(", ")}
                         <Show when={s.predicate?.assignee !== undefined}>
                           {" · assignee="}
-                          {(s.predicate?.assignee ?? "").slice(0, 8)}…
+                          {authorLabel(
+                            profileFor(s.predicate!.assignee!),
+                            s.predicate!.assignee!,
+                            null,
+                          )}
                         </Show>
                         <Show when={s.predicate?.exclude_actor !== undefined}>
                           {" · exclude_actor="}
-                          {(s.predicate?.exclude_actor ?? "").slice(0, 8)}…
+                          {authorLabel(
+                            profileFor(s.predicate!.exclude_actor!),
+                            s.predicate!.exclude_actor!,
+                            null,
+                          )}
                         </Show>
                       </p>
                     </div>
@@ -422,12 +446,12 @@ export const WebhooksSection = (props: {
               <For each={props.members}>
                 {(m) => <option value={m.pubkey}>{memberLabel(m)}</option>}
               </For>
-              <option value={CUSTOM_SENTINEL}>Custom pubkey…</option>
+              <option value={CUSTOM_SENTINEL}>Custom identity…</option>
             </select>
             <Show when={assigneeSelect() === CUSTOM_SENTINEL}>
               <input
                 type="text"
-                placeholder="64 characters, lowercase hex"
+                placeholder="google:… / nostr:… / 64-char hex"
                 value={assigneeCustom()}
                 onInput={(e) => setAssigneeCustom(e.currentTarget.value)}
                 style={{ "font-family": "monospace", "font-size": "0.85rem" }}
@@ -446,12 +470,12 @@ export const WebhooksSection = (props: {
               <For each={props.members}>
                 {(m) => <option value={m.pubkey}>{memberLabel(m)}</option>}
               </For>
-              <option value={CUSTOM_SENTINEL}>Custom pubkey…</option>
+              <option value={CUSTOM_SENTINEL}>Custom identity…</option>
             </select>
             <Show when={excludeSelect() === CUSTOM_SENTINEL}>
               <input
                 type="text"
-                placeholder="64 characters, lowercase hex"
+                placeholder="google:… / nostr:… / 64-char hex"
                 value={excludeCustom()}
                 onInput={(e) => setExcludeCustom(e.currentTarget.value)}
                 style={{ "font-family": "monospace", "font-size": "0.85rem" }}
