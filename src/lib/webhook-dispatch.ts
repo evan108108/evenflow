@@ -130,7 +130,11 @@ export const subscriberMayReceive = (
  * matches NOTHING rather than throwing. A corrupt subscription costs its owner
  * their notifications; it must never take down the emit path for the board.
  */
-export const matchesSubscription = (sub: SubscriptionRow, event: BoardEvent): boolean => {
+export const matchesSubscription = (
+  sub: SubscriptionRow,
+  event: BoardEvent,
+  actorPubkey: string | null = null,
+): boolean => {
   let kinds: unknown;
   try {
     kinds = JSON.parse(sub.event_kinds);
@@ -148,8 +152,23 @@ export const matchesSubscription = (sub: SubscriptionRow, event: BoardEvent): bo
   }
   if (typeof predicate !== "object" || predicate === null) return false;
 
-  // v1 grammar is exactly one field: {"assignee": "<canonical ref>"}. The
-  // payload is `unknown` by contract (board-events.ts), so this reads
+  // v1 grammar: at most two fields.
+  //   { "assignee": "<canonical ref>" }        — deliver only when the issue is
+  //                                              assigned to X. Reads
+  //                                              payload.assignee_pubkey.
+  //   { "exclude_actor": "<canonical ref>" }   — do NOT deliver when X caused
+  //                                              the event. Reads actor
+  //                                              provenance carried alongside
+  //                                              the event (not payload) so it
+  //                                              works uniformly on every
+  //                                              kind, not just the handful
+  //                                              whose payload happens to
+  //                                              include actor_pubkey.
+  // Both are optional; if both are set they AND. The exclude_actor test comes
+  // FIRST because it is a cheaper reject on a self-loop — the common case for
+  // an AI teammate.
+  //
+  // The payload is `unknown` by contract (board-events.ts), so this reads
   // defensively rather than casting.
   //
   // EFB-62 — this now runs for private boards too, and it must be handed the
@@ -160,7 +179,12 @@ export const matchesSubscription = (sub: SubscriptionRow, event: BoardEvent): bo
   // Hence the enqueue path's two-event signature — match on one, deliver the
   // other. Matching on cleartext leaks nothing: it happens inside the worker,
   // against a board row we already hold.
+  const excludeActor = (predicate as Record<string, unknown>)["exclude_actor"];
+  if (typeof excludeActor === "string") {
+    if (actorPubkey !== null && actorPubkey === excludeActor) return false;
+  }
   const wanted = (predicate as Record<string, unknown>)["assignee"];
+  if (wanted === undefined) return true;
   if (typeof wanted !== "string") return false;
   const payload = event.payload;
   if (typeof payload !== "object" || payload === null) return false;
@@ -195,6 +219,7 @@ export const enqueueOutboundWebhooks = (
   event: BoardEvent,
   deliverEvent: BoardEvent,
   nowMs: number,
+  actorPubkey: string | null,
 ): Effect.Effect<number, never, Db> =>
   Effect.gen(function* () {
     const db = yield* Db;
@@ -205,7 +230,7 @@ export const enqueueOutboundWebhooks = (
       [board.id],
     );
 
-    const matching = subs.filter((s) => matchesSubscription(s, event));
+    const matching = subs.filter((s) => matchesSubscription(s, event, actorPubkey));
     if (matching.length === 0) return 0;
 
     // Resolved once per distinct subscriber, not once per subscription: a

@@ -84,6 +84,13 @@ const EventKind = Schema.Literal(...BOARD_EVENT_KINDS);
  */
 const Predicate = Schema.Struct({
   assignee: Schema.optional(IdentityRefFromInput),
+  // EFB — actor-aware webhooks. When set, a matching subscription DOES NOT
+  // fire if the event was caused by this pubkey. The single load-bearing use
+  // case: an AI teammate on a board that subscribes to "issues assigned to
+  // me" would loop on its own transitions/comments without this. Applies to
+  // every kind — the emit path knows the actor via Provenance whether or
+  // not the event's own payload carries an `actor_pubkey`.
+  exclude_actor: Schema.optional(IdentityRefFromInput),
 });
 
 const AuthScheme = Schema.Literal("hmac", "bearer");
@@ -184,14 +191,28 @@ const subscriptionWire = (r: SubscriptionRecord, memberOk: boolean) => ({
  * tested directly rather than only through a live router.
  */
 export const requirePredicateAllowed = (
-  predicate: { readonly assignee?: string | undefined } | null | undefined,
+  predicate:
+    | { readonly assignee?: string | undefined; readonly exclude_actor?: string | undefined }
+    | null
+    | undefined,
   caller: string | null,
   role: string,
 ): Effect.Effect<void, PredicateForbiddenError> => {
+  const admin = role === "admin";
   const assignee = predicate?.assignee;
-  if (assignee === undefined) return Effect.void;
-  if (role === "admin" || (caller !== null && caller === assignee)) return Effect.void;
-  return Effect.fail(new PredicateForbiddenError({ reason: "predicate-forbidden" }));
+  if (assignee !== undefined && !admin && !(caller !== null && caller === assignee)) {
+    return Effect.fail(new PredicateForbiddenError({ reason: "predicate-forbidden" }));
+  }
+  // Same posture as `assignee`: an `exclude_actor` predicate names a specific
+  // pubkey, which turns "notify me on this board except when X acts" into a
+  // channel that leaks X's inactivity to whoever registers it. Only board
+  // admins (who can already see every action) or the actor themselves (a
+  // self-suppress — "don't ping me for my own work") may set it.
+  const excludeActor = predicate?.exclude_actor;
+  if (excludeActor !== undefined && !admin && !(caller !== null && caller === excludeActor)) {
+    return Effect.fail(new PredicateForbiddenError({ reason: "predicate-forbidden" }));
+  }
+  return Effect.void;
 };
 
 /**

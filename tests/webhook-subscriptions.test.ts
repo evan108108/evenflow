@@ -228,6 +228,42 @@ describe("matchesSubscription", () => {
     expect(matchesSubscription(s, event("issue.created", {}))).toBe(false);
   });
 
+  // Actor-aware webhooks: an `exclude_actor` predicate suppresses delivery
+  // when the event was caused by the named pubkey. The load-bearing use
+  // case is an AI teammate that subscribes to "issues assigned to me" and
+  // would otherwise loop on its own transitions.
+  it("suppresses via exclude_actor when the actor matches", () => {
+    const s = sub({ predicate: JSON.stringify({ exclude_actor: ALICE }) });
+    // Alice caused the event → dropped.
+    expect(matchesSubscription(s, event("issue.created", {}), ALICE)).toBe(false);
+    // Bob caused it → delivered.
+    expect(matchesSubscription(s, event("issue.created", {}), BOB)).toBe(true);
+    // Actor unknown (system emit) → delivered; we never match null against
+    // a string.
+    expect(matchesSubscription(s, event("issue.created", {}), null)).toBe(true);
+  });
+
+  // Both predicates AND: the event must be assigned to X AND not caused by
+  // Y. This is the shape a Scout-style route actually needs — deliver only
+  // when someone else touches something assigned to Scout.
+  it("ANDs exclude_actor with assignee", () => {
+    const s = sub({
+      predicate: JSON.stringify({ assignee: ALICE, exclude_actor: ALICE }),
+    });
+    // Assigned to Alice, Bob acted → delivered.
+    expect(
+      matchesSubscription(s, event("issue.created", { assignee_pubkey: ALICE }), BOB),
+    ).toBe(true);
+    // Assigned to Alice, Alice acted → suppressed (self-loop).
+    expect(
+      matchesSubscription(s, event("issue.created", { assignee_pubkey: ALICE }), ALICE),
+    ).toBe(false);
+    // Assigned to Bob, Bob acted → dropped on assignee, not on actor.
+    expect(
+      matchesSubscription(s, event("issue.created", { assignee_pubkey: BOB }), BOB),
+    ).toBe(false);
+  });
+
   // Blast radius: a corrupt row costs its own owner notifications. It must not
   // throw, because this runs inside the emit path shared by every mutation.
   it("matches NOTHING on unparseable json rather than throwing", () => {

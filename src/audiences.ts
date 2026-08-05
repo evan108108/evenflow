@@ -744,7 +744,13 @@ export const emitSecureBoardEvent = (
     // public, it POSTed a private board's cleartext titles and bodies to any
     // registered URL.
     if (board !== null) {
-      yield* enqueueOutboundWebhooks(board, event, secured.event, event.at_ms);
+      // Actor pubkey is Provenance-derived on purpose — same value the
+      // publisher gets, same value that gates `exclude_actor` predicates.
+      // Empty pubkey (system-emitted event) becomes null so a caller cannot
+      // subscribe with `exclude_actor: ""` and accidentally suppress every
+      // system event on the board.
+      const actorPubkey = actor?.pubkey && actor.pubkey !== "" ? actor.pubkey : null;
+      yield* enqueueOutboundWebhooks(board, event, secured.event, event.at_ms, actorPubkey);
     }
     return secured.substrate_event_id;
   });
