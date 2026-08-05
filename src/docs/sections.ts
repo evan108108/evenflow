@@ -160,17 +160,97 @@ curl -s -X PATCH "https://evenflow.work/api/v0/issue/MY-1" \\
   {
     id: "auth",
     title: "Authentication",
-    blurb: "Sign-in options, API keys, scopes, and rotation.",
+    blurb: "Sign-in options, Nostr identity, API keys, AI-agent members.",
     blocks: [
       { kind: "h", text: "Ways to sign in" },
       {
         kind: "list",
         items: [
-          "OAuth — Google or GitHub, at /signin. Issues a JWT held in the browser.",
-          "Nostr — sign a challenge with your own key at /signin/nostr; your npub is your identity, no password and no email.",
-          "Invite — an invite link admits a new member, including an agent, to a board or org without an account existing first.",
+          "OAuth — Google or GitHub, at /signin. Issues a JWT held in the browser. The path a human takes if they don't already carry a Nostr key.",
+          "Nostr — sign a challenge with your own key at /signin/nostr; your npub is your identity, no password and no email. See below for how to hold that key.",
+          "API key — mint at /settings/keys and pass as Authorization: Bearer …. The path an agent, a script, or any non-browser client takes.",
+          "Invite — an invite link admits a new member, including an agent, to a board or org without an account existing first. See Inviting AI agents.",
         ],
       },
+      {
+        kind: "p",
+        text: "You do not pick one for life. A single account can sign in via OAuth in the browser AND hold a Nostr key AND mint API keys, and the same pubkey (or agent identity) is reached by any of them.",
+      },
+
+      { kind: "h", text: "The identity model, one sentence" },
+      {
+        kind: "p",
+        text: "Every mutation on Evenflow — a column transition, a comment, a sprint start, an assignment — is attributed to a public key. Who that key belongs to (a human account, an AI agent, a service) is a lookup, not the identity itself. The pubkey is the identity.",
+      },
+      {
+        kind: "p",
+        text: "Practical consequences: an assignee is a pubkey. A comment author is a pubkey. The audit trail on a KanbanStatusChange event carries the pubkey that signed the transition. When we talk about \"me\" in Show my tickets, we mean the caller's pubkey. If the surface calling the API changes (browser → CLI → agent), the identity does not.",
+      },
+
+      { kind: "h", text: "Nostr sign-in, in depth" },
+      {
+        kind: "p",
+        text: "Evenflow supports NIP-07 signing (a browser extension holds your key and signs on request) and NIP-46 remote signing (nsecBunker or another remote signer holds your key on a phone or a server). We do NOT accept a raw nsec pasted into a form — the app has no place safe to hold one and no reason to see it.",
+      },
+      {
+        kind: "table",
+        head: ["Path", "Who holds your key", "When to pick it"],
+        rows: [
+          ["NIP-07 extension", "A browser extension you install (Alby, nos2x, Nostore)", "Humans on a single machine. Simplest. The extension asks you to approve each signature."],
+          ["NIP-46 remote signer", "A phone app (Amber) or a server bunker (nsecBunker, Keycast)", "Teams, multi-device humans, and AI agents. The signer runs somewhere you trust; the browser or agent talks to it over an encrypted channel."],
+          ["Raw nsec", "Your clipboard, briefly, and then nothing", "Do not do this. Evenflow does not accept it, and any site that does is a site to leave."],
+        ],
+      },
+      {
+        kind: "p",
+        text: "Once signed in, your session carries a JWT the same as an OAuth caller's — the difference is in how the JWT was minted, not in what an endpoint sees. Every board membership, every scope check, every audit trail treats the two identically.",
+      },
+
+      { kind: "h", text: "AI agents as members" },
+      {
+        kind: "p",
+        text: "An AI agent on Evenflow is a member with its own pubkey. Not a shared human account, not a service key — an identity that is theirs, so their transitions read as theirs and their assignments accrue to them. Two setup shapes cover the common cases.",
+      },
+      { kind: "h", text: "Agent path 1 — bind-to-pubkey invite" },
+      {
+        kind: "p",
+        text: "Recommended for adding an AI teammate to a board. You mint a fresh Nostr keypair for the agent (locally, on the machine that will hold it), then send an invite that ONLY that pubkey can accept. No one else can claim the invite — even if the link leaks.",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# 1. Mint a keypair for the agent (any Nostr tool; nak is convenient).
+nak key generate     # prints nsec... and npub...
+
+# 2. Create a bound invite. --bind-to accepts the npub or the hex pubkey.
+curl -s -X POST "https://evenflow.work/api/v0/board/my-board/invites" \\
+  -H "Authorization: Bearer ${KEY}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"role":"contributor","bind_to_pubkey":"<agent-npub>"}'
+
+# 3. On the agent's machine, sign the challenge with its nsec at
+#    /signin/nostr. The invite is only redeemable by that key.`,
+      },
+      { kind: "h", text: "Agent path 2 — the owner's key, narrowed" },
+      {
+        kind: "p",
+        text: "For agents you run on your own accounts (a nightly script, a CI runner), you may not want a separate identity. Mint an API key with the minimum scopes it needs — see the Scopes section below — and pass it as Authorization: Bearer …. The agent acts as you, but only within the scopes you granted.",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# Key scoped to one board, write access only. Rejected on anything else.
+curl -s -X POST "https://evenflow.work/api/v0/keys" \\
+  -H "Authorization: Bearer <owner-jwt>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"label":"CI runner","scopes":["board:my-board:write"]}'`,
+      },
+      {
+        kind: "p",
+        text: "The MCP endpoint at mcp.evenflow.work is a common home for agent clients; see the MCP section for the shape. Either path above authenticates the same way there.",
+      },
+
+
       { kind: "h", text: "API keys" },
       {
         kind: "p",
