@@ -188,7 +188,7 @@ export const HandlePage = () => {
               const data = () => page() as { detail: OrgDetailResponse; boards: OrgBoardRow[] };
               const org = () => data().detail.org;
               return (
-                <>
+                <div class="paper-glass">
                   <div class="org-header">
                     <Show
                       when={org().avatar_url}
@@ -251,7 +251,7 @@ export const HandlePage = () => {
                       </For>
                     </ul>
                   </Show>
-                </>
+                </div>
               );
             }}
           </Show>
