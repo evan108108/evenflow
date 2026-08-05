@@ -434,30 +434,18 @@ select:disabled {
   justify-content: space-between;
   align-items: baseline;
 }
-/* Same cream glass pill as the kanban column h3 so rail headers over the
-   ocean stay legible in both bright and deep water. */
+/* Text-shadow halo so every character on the header row (label, count,
+   points) reads on both bright and deep water — no visible pill, just a
+   soft cream glow tracing the ink. Doubled for a slightly stronger lift. */
+.kanban-column h3,
 .rail-section > h3 {
-  background: rgba(245, 242, 236, 0.55);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  border-radius: var(--radius-chamfer);
-  padding: 0.5rem 0.9rem;
-  margin-bottom: 0.4rem;
+  text-shadow:
+    0 0 6px rgba(245, 242, 236, 0.9),
+    0 0 3px rgba(245, 242, 236, 0.9);
 }
 
 /* EFB-115 B2 — column header pins to the top of its scrollable column so
-   the title + count stay visible while cards scroll behind them. Same
-   cream-tinted glass pill in both layouts so ink text stays readable
-   whether the water behind is bright (sun band) or deep (near-black). */
-.kanban .kanban-column .kanban-column-content h3 {
-  background: rgba(245, 242, 236, 0.55);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  border-radius: var(--radius-chamfer);
-  margin: 0 -0.2rem 0.4rem;
-  padding: 0.5rem 0.9rem;
-}
-/* Horizontal layout only — pin the h3 to the top of its scrollable column. */
+   the title + count stay visible while cards scroll behind them. */
 .kanban:not(.layout-vertical) .kanban-column .kanban-column-content h3 {
   position: sticky;
   /* Compensate for .kanban-column-content's own top padding so the sticky
