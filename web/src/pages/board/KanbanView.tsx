@@ -114,6 +114,11 @@ const StatusStack = (props: {
         <For each={columns()}>
           {(column) => {
             const zone = transitionZone(column.id);
+            // Scroll-linked opacity on the sticky h3: transparent while at
+            // the top of the column, cream-solid once cards start passing
+            // behind. Prevents "Done" from overlapping with the top row of
+            // cards during a scroll in horizontal-kanban.
+            const [scrolled, setScrolled] = createSignal(false);
             // Collapse only bites in vertical layout — horizontal already has
             // per-column scroll, so the "long Done pushes others out of view"
             // problem doesn't apply there.
@@ -138,8 +143,9 @@ const StatusStack = (props: {
             return (
               <div
                 class="kanban-column"
-                classList={{ "drop-over": dropOver(), collapsed: collapsed() }}
+                classList={{ "drop-over": dropOver(), collapsed: collapsed(), scrolled: scrolled() }}
                 data-dropzone={zone}
+                onScroll={(e) => setScrolled((e.currentTarget as HTMLElement).scrollTop > 0)}
               >
                 <div class="kanban-column-content">
                   <h3>
