@@ -77,7 +77,10 @@ select:disabled {
   z-index: 20;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  padding-bottom: 1.2rem;
+  /* Breathing room around the header content so the wordmark + buttons
+     don't sit on the blur's edge. Vertical padding also protects the top
+     row from the browser viewport top. */
+  padding: 0.6rem 1rem 1.2rem;
 }
 
 /* EFB-115 B4 — on horizontal-kanban the page itself must not scroll.
