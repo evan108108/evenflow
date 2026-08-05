@@ -30,6 +30,7 @@ import {
   type BoardOwnershipError,
 } from "../authz";
 import { ValidationError } from "../lib/errors";
+import { roleAtLeast } from "../roles";
 import { IdentityRefFromInput, NonEmptyString } from "../lib/route-body";
 import { mintWebhookSecret, sealWebhookSecret } from "../github/secret";
 import { subscriberMayReceive } from "../lib/webhook-dispatch";
@@ -198,7 +199,13 @@ export const requirePredicateAllowed = (
   caller: string | null,
   role: string,
 ): Effect.Effect<void, PredicateForbiddenError> => {
-  const admin = role === "admin";
+  // Anyone at admin OR ABOVE — that includes org owners (role="owner") whose
+  // projection sits at rank 4, higher than admin's 3. Bare equality was wrong
+  // and blocked the org owner from ever creating a predicate-filtered webhook
+  // that named a pubkey other than themselves, even though owner is strictly
+  // stronger than admin. Same bug also applied to the assignee check when it
+  // stood alone; fixed together.
+  const admin = roleAtLeast(role, "admin");
   const assignee = predicate?.assignee;
   if (assignee !== undefined && !admin && !(caller !== null && caller === assignee)) {
     return Effect.fail(new PredicateForbiddenError({ reason: "predicate-forbidden" }));
