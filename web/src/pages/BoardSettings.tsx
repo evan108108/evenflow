@@ -31,7 +31,7 @@ import { TopBar } from "../components/TopBar";
 import "../lib/board.css";
 
 const BOARD_ROLES = ["admin", "contributor", "viewer"] as const;
-const TABS = ["General", "Members", "Columns", "GitHub", "Danger zone"] as const;
+const TABS = ["General", "Members", "Columns", "Integrations", "Danger zone"] as const;
 type Tab = (typeof TABS)[number];
 
 interface BoardDetail {
@@ -612,7 +612,7 @@ export const BoardSettings = () => {
         </section>
       </Show>
 
-      <Show when={tab() === "GitHub"}>
+      <Show when={tab() === "Integrations"}>
         <GithubSection apiBase={apiBase()} />
         <WebhooksSection apiBase={apiBase()} />
         <ImportSection apiBase={apiBase()} />
