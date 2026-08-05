@@ -65,25 +65,14 @@ select:disabled {
 
 /* ── board shell ── */
 /* EFB-115 B — sticky header block wrapping TopBar + title row + tabs row +
-   filter chips. Naked over the ocean (Evan already rejected a solid paper
-   panel) — only a heavy backdrop-blur softens what's scrolling behind it,
-   so ink text stays legible without introducing a visible frame. Deep
-   z-index so drop targets under it can't win a hit test during a drag. */
+   filter chips. Naked over the ocean — no backdrop-filter (that painted a
+   visible box), no tint. Deep z-index so drop targets under it can't win a
+   hit test during a drag. */
 .board-sticky {
   position: sticky;
   top: 0;
   z-index: 20;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   padding-bottom: 0.4rem;
-  /* Bleed left+right so the blur reaches the edge of the page inset instead
-     of ending at the header's inner box. Uses negative margin against the
-     board-page padding rather than expanding width, so it can't push the
-     grid wider. */
-  margin-left: calc(-1 * var(--page-inset-left, 3rem));
-  margin-right: -1.5rem;
-  padding-left: var(--page-inset-left, 3rem);
-  padding-right: 1.5rem;
 }
 
 .board-page {
@@ -433,15 +422,6 @@ select:disabled {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-}
-/* Text-shadow halo so every character on the header row (label, count,
-   points) reads on both bright and deep water — no visible pill, just a
-   soft cream glow tracing the ink. Doubled for a slightly stronger lift. */
-.kanban-column h3,
-.rail-section > h3 {
-  text-shadow:
-    0 0 6px rgba(245, 242, 236, 0.9),
-    0 0 3px rgba(245, 242, 236, 0.9);
 }
 
 /* EFB-115 B2 — column header pins to the top of its scrollable column so
