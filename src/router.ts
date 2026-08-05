@@ -126,6 +126,7 @@ export const MOUNTS: readonly Mount[] = [
   { prefix: ORG_PREFIX, make: makeCommentsRouter },
   { prefix: ORG_PREFIX, make: makeFeedRouter },
   { prefix: ORG_PREFIX, make: makeAttachmentsRouter },
+  { prefix: ORG_PREFIX, make: makeWebhooksRouter },
   { prefix: ORG_PREFIX, make: makeSearchRouter },
 
   // Audiences and profile mount after the org block, exactly as index.ts had
