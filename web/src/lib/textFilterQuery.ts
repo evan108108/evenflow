@@ -73,9 +73,30 @@ export const parseTextFilter = (raw: string): ReadonlyArray<Clause> => {
     }
     tokens.push(trimmed.slice(start, i));
   }
-  return tokens
+  return coalescePrefixSpace(tokens)
     .map((tok) => toClause(tok))
     .filter((c): c is Clause => c !== null);
+};
+
+// Users often type `title: foo` with a space after the colon — matches
+// natural English cadence. The whitespace tokeniser would split that into
+// `title:` and `foo`, so we walk the token list and glue any bare
+// `[-]?prefix:` (with nothing after the colon) onto its next neighbour.
+const PREFIX_ONLY_RE = /^-?(?:title|body|description|desc|type):$/i;
+const coalescePrefixSpace = (tokens: readonly string[]): string[] => {
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (PREFIX_ONLY_RE.test(t) && i + 1 < tokens.length) {
+      out.push(t + tokens[i + 1]);
+      i += 2;
+      continue;
+    }
+    out.push(t);
+    i++;
+  }
+  return out;
 };
 
 const stripQuotes = (s: string): string => {
