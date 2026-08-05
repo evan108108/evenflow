@@ -57,8 +57,20 @@ const StatusStack = (props: {
   collapsedColumns?: ReadonlySet<string> | undefined;
   onToggleCollapse?: ((columnId: string) => void) | undefined;
 }) => {
+  // When the board has no active sprint at all, the kanban is the working
+  // set — pull backlog issues into the columns so a sprint-free flow works
+  // out of the box. Once any sprint is active, kanban narrows back to
+  // container==="active" (the sprint-scoped model).
+  const hasActiveSprint = () =>
+    props.store.sprints().some((s) => s.status === "active");
   const active = () => {
-    const rows = props.store.issues().filter((i) => i.container === "active");
+    const rows = props.store
+      .issues()
+      .filter((i) =>
+        hasActiveSprint()
+          ? i.container === "active"
+          : i.container === "active" || i.container === "backlog",
+      );
     const pred = props.matchesFilters;
     return pred === undefined ? rows : rows.filter(pred);
   };
@@ -106,11 +118,7 @@ const StatusStack = (props: {
   };
 
   return (
-    <Show
-      when={active().length > 0}
-      fallback={<p class="empty-state">Still waters. What flows next?</p>}
-    >
-      <div class="kanban" classList={{ "layout-vertical": props.layout === "vertical" }}>
+    <div class="kanban" classList={{ "layout-vertical": props.layout === "vertical" }}>
         <For each={columns()}>
           {(column) => {
             const zone = transitionZone(column.id);
@@ -194,7 +202,6 @@ const StatusStack = (props: {
           }}
         </For>
       </div>
-    </Show>
   );
 };
 
