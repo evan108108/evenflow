@@ -53,31 +53,17 @@ body {
    the cream stays on the html element so we never flash a black frame. */
 html { background: var(--color-cream); }
 
-/* App-shell layout — the document itself does not scroll. Header (rendered
-   inside `main`) sticks to the top of main's scroll region; footer stays
-   pinned at the bottom of the viewport as a flex sibling; only `main`
-   scrolls in between. Result: no content ever passes behind the header
-   because the outer page has nothing to move. `min-height: 0` on `main` is
-   the standard flex-child trick that lets overflow-y actually take effect
-   inside a flex container. */
+/* Flex column filling the viewport so the site footer pins to the bottom
+   on short pages instead of floating up right below the last bit of
+   content. `main` grows to fill the leftover space. */
 .app-shell {
-  height: 100dvh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 .app-shell > main {
-  flex: 1 1 auto;
+  flex-grow: 1;
   width: 100%;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  /* Container-query context so descendants can size against `main`'s own
-     height (100cqh) instead of the viewport — critical for the kanban
-     columns, which need to fill exactly what's left of the scroll region
-     minus the sticky header. */
-  container-type: size;
-  container-name: main-shell;
 }
 
 /* Content panel for pages that don't read well directly on the ocean —

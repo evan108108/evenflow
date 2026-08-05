@@ -65,15 +65,36 @@ select:disabled {
 
 /* ── board shell ── */
 /* EFB-115 B — sticky header block wrapping TopBar + title row + tabs row +
-   filter chips. Naked over the ocean — the app-shell layout (theme.css)
-   makes `main` the sole scroll container, so nothing ever passes behind
-   this header and it needs no visual weight of its own. Deep z-index so
-   drop targets under it can't win a hit test during a drag. */
+   filter chips. Naked over the ocean (Evan already rejected a solid paper
+   panel) — only a heavy backdrop-blur softens what's scrolling behind it,
+   so ink text stays legible without introducing a visible frame. Deep
+   z-index so drop targets under it can't win a hit test during a drag. */
 .board-sticky {
   position: sticky;
   top: 0;
   z-index: 20;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   padding-bottom: 0.4rem;
+  /* Bleed left+right so the blur reaches the edge of the page inset instead
+     of ending at the header's inner box. Uses negative margin against the
+     board-page padding rather than expanding width, so it can't push the
+     grid wider. */
+  margin-left: calc(-1 * var(--page-inset-left, 3rem));
+  margin-right: -1.5rem;
+  padding-left: var(--page-inset-left, 3rem);
+  padding-right: 1.5rem;
+}
+
+/* EFB-115 B4 — on horizontal-kanban the page itself must not scroll.
+   Everything the user needs to reach lives inside a per-column scroll
+   region below the sticky header, so the outer page has nothing to move.
+   Result: no cards ever cross the header's rectangle — they can't leave
+   their column. Backlog / icebox / vertical-kanban still scroll normally
+   because they need to. */
+.board-page:has(.kanban:not(.layout-vertical)) {
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .board-page {
@@ -390,7 +411,7 @@ select:disabled {
      header, and let cards scroll inside instead of pushing the page. The
      min-height above still holds when the deck is shorter than the cap;
      `max-height` only bites when the column would otherwise exceed it. */
-  max-height: calc(100cqh - var(--board-header-h, 260px) - 1.5rem);
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
   overflow-y: auto;
   border-radius: var(--radius-chamfer);
   padding: 0.5rem;
@@ -2780,7 +2801,7 @@ input.sprint-name:focus {
      fixed 1rem offset from the viewport top. Same anchor the status stack
      uses so the two panes rise and fall together. */
   top: calc(var(--board-header-h, 260px) + 0.5rem);
-  max-height: calc(100cqh - var(--board-header-h, 260px) - 1.5rem);
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
   overflow-y: auto;
   /* Breathing room so a card's hover lift-shadow isn't shorn by the
      scroll container's edge; the top inset matches .kanban-column's
@@ -2795,7 +2816,7 @@ input.sprint-name:focus {
    pushing the whole page. Matched to the rail's viewport cap so the two
    panes stay in the same visible band. */
 .vertical-split.with-rail .kanban.layout-vertical {
-  max-height: calc(100cqh - var(--board-header-h, 260px) - 1.5rem);
+  max-height: calc(100dvh - var(--board-header-h, 260px) - 1.5rem);
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: thin;
