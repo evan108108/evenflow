@@ -123,12 +123,25 @@ Known limitation: bare-slug scopes don't disambiguate across orgs. If two orgs o
 
 **Reach:** a scoped `evk_` key is currently authoritative on the MCP surface (`https://evenflow.work/mcp`) but not against every REST endpoint — the routes-manifest scope check fail-closes any route not explicitly declared. Practical impact: prefer the MCP tools (`mcp__evenflow__*`) or the REST endpoints listed in the `evenflow-api` skill, and fall back to a JWT for anything that returns `forbidden: this route is not declared in the API manifest`.
 
-**Rotating out of a mint mistake.** The plaintext-appears-once rule means a mint with the wrong scopes / label is easiest to walk back by revoking and re-minting. The revoke endpoint is `DELETE /key/<id>` — SINGULAR `key`, not plural. Returns `{"revoked": true}`.
+**Rotating out of a mint mistake.** The plaintext-appears-once rule means a mint with the wrong scopes / label is easiest to walk back — but HOW you walk it back matters. Two flavours:
+
+- **`POST /key/<id>/rotate`** — mints a replacement secret; the OLD row stays live during a grace window (`API_KEY_ROTATION_GRACE_MS`, enforced at `requireAuth.ts:108`) so any client still holding the previous secret keeps working while it redeploys. **Use this whenever a running process might be holding the key** — Claude Code's MCP wrapper, cron jobs, sidecar daemons. They all snapshot the Authorization header at startup and don't re-read config on their own, so a straight revoke will lock them out until they restart.
+- **`DELETE /key/<id>`** — hard revoke, effective immediately. Returns `{"revoked": true}`. Correct for a key you're sure nothing is using — say, a probe key or one from a compromised paste. Wrong for a key that's wired into any running MCP client.
+
+Concrete recovery from a bad-scope mint that a live client is already using: `rotate` first (new secret returned, both work during grace), swap the new secret into the client's config, restart the client so it picks it up, then let the grace expire (or explicit-revoke the pre-rotate row) once you've verified the new secret is in place.
 
 ```bash
-# List keys to find the id, then:
+# List keys to find the id
+curl -s "$BASE/keys" -H "Authorization: Bearer $JWT" | jq
+
+# Rotate (safe with live MCP clients):
+curl -s -X POST "$BASE/key/$KEY_ID/rotate" -H "Authorization: Bearer $JWT"
+
+# OR hard revoke (only when nothing is using the key):
 curl -s -X DELETE "$BASE/key/$KEY_ID" -H "Authorization: Bearer $JWT"
 ```
+
+Why this matters: `invalid-api-key` collapses three cases (revoked, never-existed, rotated-past-grace) into one error string so a prober can't learn a prefix once existed. That's deliberate — but means a client suddenly seeing `invalid-api-key` after a rotation can't tell WHICH of the three it hit. Rotate-and-swap is the workflow that never surfaces this ambiguity.
 
 Save the key for future sessions. Preferred locations, in order:
 1. Sonata memory secret store: `mem_secret_set evenflow_login "$EVK"` (works with the `evenflow-api` skill out of the box).
