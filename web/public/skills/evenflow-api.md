@@ -98,16 +98,39 @@ Container — "put FLOW-42 on ice":
 
 ## REST equivalents (when curl is handier)
 
+Path rule: individual-item paths are SINGULAR (`/board/:slug`, `/issue/:id`, `/comment/:id`); collections are plural under the singular parent (`/board/:slug/issues`, `/issue/:id/comments`). The one collection served at the top level is `/boards` (your accessible boards, plural — the exception). NO `/orgs/` prefix and NO `/issues/:id` bare form; both 404. Every board-family route ALSO mounts under `/org/:org_slug/…` (singular `org`) if you need to disambiguate — use it whenever a slug isn't unique across orgs.
+
 ```bash
 BASE=https://evenflow.work/api/v0; AUTH="Authorization: Bearer $EVK"
-curl $BASE/boards -H "$AUTH"                                  # boards
-curl "$BASE/orgs/ORG/boards/SLUG/issues?container=active" -H "$AUTH"
-curl -X POST $BASE/orgs/ORG/boards/SLUG/issues -H "$AUTH" \
-  -H "Content-Type: application/json" -d '{"title":"…","type":"task"}'
-curl -X POST $BASE/issues/FLOW-42/transition -H "$AUTH" \
+
+# Boards & board detail
+curl "$BASE/boards" -H "$AUTH"                                  # boards.list
+curl "$BASE/board/SLUG" -H "$AUTH"                              # board.get
+# Org-qualified form (disambiguates if slug collides across orgs):
+curl "$BASE/org/ORG/board/SLUG" -H "$AUTH"
+
+# Issue list & filter
+curl "$BASE/board/SLUG/issues?container=active" -H "$AUTH"      # issue.list
+
+# Issue create — POST on the collection under the board
+curl -X POST "$BASE/board/SLUG/issues" -H "$AUTH" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"…","type":"task"}'
+
+# Read one issue (by short_id like FLOW-42 or by UUID)
+curl "$BASE/issue/FLOW-42" -H "$AUTH"                           # issue.get
+curl "$BASE/issue/FLOW-42/comments" -H "$AUTH"                  # comment.list
+
+# Transition
+curl -X POST "$BASE/issue/FLOW-42/transition" -H "$AUTH" \
   -H "Content-Type: application/json" -d '{"to":"Done"}'
-curl "$BASE/issues/FLOW-42?include=comments,attachments" -H "$AUTH"
+
+# Comment
+curl -X POST "$BASE/issue/FLOW-42/comments" -H "$AUTH" \
+  -H "Content-Type: application/json" -d '{"body":"Fix shipped."}'
 ```
+
+If a REST call returns `403 forbidden: this route is not declared in the API manifest`, that's a scoped `evk_` key hitting a manifest gap for keys (not a path typo — the URL is correct but the middleware fails-closed for keys on undeclared routes). Fall back to MCP for that call, or use a JWT.
 
 ## Ground rules
 
