@@ -229,7 +229,7 @@ describe("Done window does not apply in sprint-mode", () => {
       done("8", "Recent in sprint", 1, { sprint_id: "s1" }),
       done("9", "Old, other sprint", 40, { sprint_id: "s2" }),
     ];
-    const filters: BoardFilters = { ...EMPTY_FILTERS, sprintId: "s1" };
+    const filters: BoardFilters = { ...EMPTY_FILTERS, sprintId: "s1", text: "" };
     const { container, cleanup } = mount(() => (
       <KanbanView
         store={stub(sprintIssues)}

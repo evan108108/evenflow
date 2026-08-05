@@ -18,6 +18,7 @@
 // of state, and unit-testable.
 
 import type { Issue } from "./types";
+import { matchesTextFilter, parseTextFilter } from "./textFilterQuery";
 
 /**
  * Assignee-picker option standing for "nobody is assigned".
@@ -36,6 +37,9 @@ export interface BoardFilters {
   /** Sprint to narrow the active board to, or null for no sprint constraint.
    *  Unlike the others this is scope-limited — see `predicateFor`. */
   readonly sprintId: string | null;
+  /** EFB-112 — free-form text query (title/body/type/short_id, negation,
+   *  quoted phrases). Empty string = no constraint. */
+  readonly text: string;
 }
 
 export const EMPTY_FILTERS: BoardFilters = {
@@ -43,11 +47,15 @@ export const EMPTY_FILTERS: BoardFilters = {
   assignees: [],
   labels: [],
   sprintId: null,
+  text: "",
 };
 
 /** The dimensions that narrow every funnel — everything except sprint. */
 const hasAmbientFilters = (filters: BoardFilters): boolean =>
-  filters.mineOnly || filters.assignees.length > 0 || filters.labels.length > 0;
+  filters.mineOnly ||
+  filters.assignees.length > 0 ||
+  filters.labels.length > 0 ||
+  filters.text.trim() !== "";
 
 /**
  * Is anything narrowing the board at all, sprint included?
@@ -102,7 +110,14 @@ export const matchesFilters = (
   viewer: string | null,
 ): boolean => {
   if (filters.mineOnly && viewer !== null && issue.assignee_pubkey !== viewer) return false;
-  return filterByAssignee(issue, filters.assignees) && filterByLabels(issue, filters.labels);
+  if (!filterByAssignee(issue, filters.assignees)) return false;
+  if (!filterByLabels(issue, filters.labels)) return false;
+  // Parse-per-issue on the flat helper — predicateFor below hoists the parse
+  // out of the loop for the hot path. This entry point stays available for
+  // ad-hoc callers that don't build a predicate.
+  const text = filters.text.trim();
+  if (text !== "" && !matchesTextFilter(issue, parseTextFilter(text))) return false;
+  return true;
 };
 
 /**
@@ -136,6 +151,14 @@ export const predicateFor = (
 ): ((issue: Issue) => boolean) | undefined => {
   const sprintId = scope === "active" ? filters.sprintId : null;
   if (sprintId === null && !hasAmbientFilters(filters)) return undefined;
-  return (issue: Issue) =>
-    filterBySprint(issue, sprintId) && matchesFilters(issue, filters, viewer);
+  // Hoist the text-filter parse out of the per-issue loop.
+  const textClauses = parseTextFilter(filters.text);
+  return (issue: Issue) => {
+    if (!filterBySprint(issue, sprintId)) return false;
+    if (filters.mineOnly && viewer !== null && issue.assignee_pubkey !== viewer) return false;
+    if (!filterByAssignee(issue, filters.assignees)) return false;
+    if (!filterByLabels(issue, filters.labels)) return false;
+    if (textClauses.length > 0 && !matchesTextFilter(issue, textClauses)) return false;
+    return true;
+  };
 };

@@ -2644,6 +2644,26 @@ input.sprint-name:focus {
   z-index: 80;
 }
 
+/* EFB-112 — text-filter popover input. Full width of the popover, matches
+   the app's ink-on-cream register with a subtle border. */
+.text-filter-input {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1.5px solid var(--color-ink);
+  border-radius: var(--radius-chamfer);
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+}
+.text-filter-popover code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  background: var(--color-ink-faint);
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
 .filter-menu-item {
   display: flex;
   align-items: center;

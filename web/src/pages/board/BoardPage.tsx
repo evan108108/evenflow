@@ -36,6 +36,7 @@ import { readDoneWindowLifted, writeDoneWindowLifted } from "../../lib/doneWindo
 import { readCollapsed, writeCollapsed } from "../../lib/collapsedColumnsPersistence";
 import { authorLabel, profileFor, requestProfile } from "../../lib/profileStore";
 import { FilterPicker, type FilterOption } from "../../components/FilterPicker";
+import { TextFilterChip } from "../../components/TextFilterChip";
 import { byBoardOrder, issuesInColumn } from "../../lib/order";
 import { activeSprintFilterId, sprintCountdown } from "../../lib/sprints";
 import { CONTAINER_OF_MOVE, type ContainerMove, type Issue } from "../../lib/types";
@@ -788,6 +789,10 @@ export const BoardPage = () => {
                       onToggle={toggleIn("labels")}
                       onClear={clearIn("labels")}
                       emptyLine="No labels on this board yet."
+                    />
+                    <TextFilterChip
+                      value={filters().text}
+                      onChange={(next) => applyFilters((f) => ({ ...f, text: next }))}
                     />
                   </Show>
                   {/* EFB-31 — Done-window chip. `on` follows the row's existing

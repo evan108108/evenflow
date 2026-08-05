@@ -52,6 +52,7 @@ describe("parseFilters", () => {
       assignees: ["a"],
       labels: ["bug"],
       sprintId: null,
+      text: "",
     });
   });
 });
@@ -62,6 +63,7 @@ describe("read/write round-trip", () => {
     assignees: [SONA],
     labels: ["bug"],
     sprintId: null,
+      text: "",
   };
 
   it("restores what it stored", () => {
@@ -103,6 +105,7 @@ describe("sprint is never persisted", () => {
       assignees: [],
       labels: [],
       sprintId: "s1",
+      text: "",
     });
     const raw = window.localStorage.getItem(filterStorageKey(BOARD, SONA));
     expect(raw).not.toBeNull();
@@ -113,7 +116,7 @@ describe("sprint is never persisted", () => {
   it("never restores a sprint, even from a hand-edited blob", () => {
     window.localStorage.setItem(
       filterStorageKey(BOARD, SONA),
-      JSON.stringify({ mineOnly: false, assignees: [], labels: ["bug"], sprintId: "s1" }),
+      JSON.stringify({ mineOnly: false, assignees: [], labels: ["bug"], sprintId: "s1", text: "" }),
     );
     expect(readFilters(BOARD, SONA).sprintId).toBeNull();
     // ...while still restoring the dimensions that DO persist.
@@ -123,7 +126,7 @@ describe("sprint is never persisted", () => {
   // A sprint selection alone must not create a storage entry: isEmpty weighs
   // only the persisted dimensions, so this stays a no-trace board.
   it("writes nothing when the sprint is the only thing set", () => {
-    writeFilters(BOARD, SONA, { mineOnly: false, assignees: [], labels: [], sprintId: "s1" });
+    writeFilters(BOARD, SONA, { mineOnly: false, assignees: [], labels: [], sprintId: "s1", text: "" });
     expect(window.localStorage.getItem(filterStorageKey(BOARD, SONA))).toBeNull();
   });
 });

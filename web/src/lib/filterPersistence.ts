@@ -33,7 +33,7 @@ export const parseFilters = (raw: string | null): BoardFilters => {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return EMPTY_FILTERS;
-    const { mineOnly, assignees, labels } = parsed as Record<string, unknown>;
+    const { mineOnly, assignees, labels, text } = parsed as Record<string, unknown>;
     return {
       mineOnly: mineOnly === true,
       assignees: isStringArray(assignees) ? assignees : [],
@@ -43,6 +43,7 @@ export const parseFilters = (raw: string | null): BoardFilters => {
       // did. Hard-coded null rather than read-and-ignore so a hand-edited or
       // future-shaped blob can never resurrect it.
       sprintId: null,
+      text: typeof text === "string" ? text : "",
     };
   } catch {
     return EMPTY_FILTERS;
@@ -50,7 +51,10 @@ export const parseFilters = (raw: string | null): BoardFilters => {
 };
 
 const isEmpty = (f: BoardFilters): boolean =>
-  !f.mineOnly && f.assignees.length === 0 && f.labels.length === 0;
+  !f.mineOnly &&
+  f.assignees.length === 0 &&
+  f.labels.length === 0 &&
+  f.text.trim() === "";
 
 /** Filters for this board+viewer, or the empty set. Never throws. */
 export const readFilters = (boardId: string, viewer: string | null): BoardFilters => {
@@ -82,6 +86,7 @@ export const writeFilters = (boardId: string, viewer: string | null, filters: Bo
           mineOnly: filters.mineOnly,
           assignees: filters.assignees,
           labels: filters.labels,
+          text: filters.text,
         }),
       );
   } catch {

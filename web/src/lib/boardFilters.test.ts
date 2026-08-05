@@ -117,7 +117,7 @@ describe("matchesFilters — composition", () => {
 
   // The brief's core requirement: chips AND together.
   it("ANDs across dimensions", () => {
-    const f = { mineOnly: true, assignees: [], labels: ["bug"], sprintId: null };
+    const f = { mineOnly: true, assignees: [], labels: ["bug"], sprintId: null, text: "" };
     expect(matchesFilters(issue({ assignee_pubkey: SONA, labels: ["bug"] }), f, SONA)).toBe(true);
     // right label, wrong owner
     expect(matchesFilters(issue({ assignee_pubkey: EVAN, labels: ["bug"] }), f, SONA)).toBe(false);
@@ -126,7 +126,7 @@ describe("matchesFilters — composition", () => {
   });
 
   it("narrows as an intersection when assignee and label are both set", () => {
-    const f = { mineOnly: false, assignees: [EVAN], labels: ["ui"], sprintId: null };
+    const f = { mineOnly: false, assignees: [EVAN], labels: ["ui"], sprintId: null, text: "" };
     expect(matchesFilters(issue({ assignee_pubkey: EVAN, labels: ["ui", "bug"] }), f, SONA)).toBe(
       true,
     );
@@ -137,7 +137,7 @@ describe("matchesFilters — composition", () => {
   // mineOnly and an explicit assignee selection are independent gates, so a
   // contradictory pair legitimately matches nothing.
   it("lets mineOnly and a conflicting assignee selection cancel out", () => {
-    const f = { mineOnly: true, assignees: [EVAN], labels: [], sprintId: null };
+    const f = { mineOnly: true, assignees: [EVAN], labels: [], sprintId: null, text: "" };
     expect(matchesFilters(issue({ assignee_pubkey: SONA }), f, SONA)).toBe(false);
     expect(matchesFilters(issue({ assignee_pubkey: EVAN }), f, SONA)).toBe(false);
   });
@@ -166,7 +166,7 @@ describe("filterBySprint", () => {
 });
 
 describe("predicateFor — scope limits sprint to the active funnel", () => {
-  const sprintOnly = { ...EMPTY_FILTERS, sprintId: "s1" };
+  const sprintOnly = { ...EMPTY_FILTERS, sprintId: "s1", text: "" };
 
   it("narrows the active funnel by sprint", () => {
     const pred = predicateFor("active", sprintOnly, SONA);
@@ -218,7 +218,7 @@ describe("predicateFor — scope limits sprint to the active funnel", () => {
 
 describe("hasActiveFilters — sprint dimension", () => {
   it("counts a sprint selection", () => {
-    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: "s1" })).toBe(true);
-    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: null })).toBe(false);
+    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: "s1", text: "" })).toBe(true);
+    expect(hasActiveFilters({ ...EMPTY_FILTERS, sprintId: null, text: "" })).toBe(false);
   });
 });
