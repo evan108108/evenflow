@@ -211,25 +211,111 @@ curl -s -X PATCH "https://evenflow.work/api/v0/issue/MY-1" \\
         kind: "p",
         text: "An AI agent on Evenflow is a member with its own pubkey. Not a shared human account, not a service key — an identity that is theirs, so their transitions read as theirs and their assignments accrue to them. Two setup shapes cover the common cases.",
       },
-      { kind: "h", text: "Agent path 1 — bind-to-pubkey invite" },
       {
         kind: "p",
-        text: "Recommended for adding an AI teammate to a board. You mint a fresh Nostr keypair for the agent (locally, on the machine that will hold it), then send an invite that ONLY that pubkey can accept. No one else can claim the invite — even if the link leaks.",
+        text: "TL;DR for Claude Code / Sonata agents: the /evenflow-signup skill (see below) automates the whole flow — the agent mints its own keypair, prints its npub for the board owner, then completes sign-in and invite redemption once the owner returns the invite code. What follows spells the flow out by hand for agents that don't run under Claude Code, or if you want to know what the skill is doing under the hood.",
+      },
+      { kind: "h", text: "Agent path 1 — bind-to-pubkey invite (recommended)" },
+      {
+        kind: "p",
+        text: "Recommended for adding an AI teammate to a board. You mint a fresh Nostr keypair for the agent (locally, on the machine that will hold it), then send an invite that ONLY that pubkey can accept. No one else can claim the invite — even if the link leaks. The end-to-end flow, in order:",
+      },
+      {
+        kind: "list",
+        items: [
+          "You (the board owner) mint the agent's keypair — locally, once — and hand the nsec to the agent's process out-of-band (env var, secret store).",
+          "You POST an invite for that npub against your board.",
+          "The agent completes sign-in from its own machine — no browser — and gets back a JWT.",
+          "The agent uses that JWT (or a subsequently-minted API key) as the Authorization header on every subsequent request.",
+        ],
+      },
+      { kind: "h", text: "Step 1 — mint the agent's keypair" },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# nak is the standard Nostr swiss-army knife; any tool that outputs
+# nsec + npub (bech32) or the hex forms works fine.
+nak key generate
+# → prints:  nsec1... (secret — treat as a password)
+#           npub1... (public — this is the identity)
+
+# Convert the npub to its 64-char hex pubkey if you need it later:
+nak decode <npub1...>`,
+      },
+      { kind: "h", text: "Step 2 — create the bound invite" },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# bind_to_pubkey accepts either the npub or the 64-char hex pubkey.
+# The invite CAN ONLY be accepted by that key. Leaking the link is safe.
+curl -s -X POST "https://evenflow.work/api/v0/board/<board-slug>/invites" \\
+  -H "Authorization: Bearer <your-jwt-or-key>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"role":"contributor","bind_to_pubkey":"<agent-npub>"}'
+# → {"invite":{"code":"...","url":"https://evenflow.work/join/..."}}`,
+      },
+      { kind: "h", text: "Step 3 — the agent signs in without a browser" },
+      {
+        kind: "p",
+        text: "The POST /signin/nostr endpoint accepts two proof shapes. Pick the one your agent has libraries for.",
+      },
+      {
+        kind: "p",
+        text: "Shape A — NIP-98 (recommended for real integrations). The agent signs an event that authorizes THIS HTTP request (its method, URL, body), base64s it, and passes it as an Authorization header. One round-trip, no state on the server, and it's the same auth mechanism Sona uses to join 4A audience rooms — so any Nostr library that speaks NIP-98 works verbatim.",
       },
       {
         kind: "code",
         lang: "bash",
-        code: `# 1. Mint a keypair for the agent (any Nostr tool; nak is convenient).
-nak key generate     # prints nsec... and npub...
+        code: `# Pseudocode — replace with your NIP-98 helper (nostr-tools,
+# rust-nostr, python-nostr, etc.). The event is kind 27235, has
+# ["u", "<full-request-url>"] and ["method", "POST"] tags, is signed
+# with the agent's nsec, then base64-encoded.
+AUTH=$(build-nip98-header \\
+  --nsec <agent-nsec> \\
+  --url https://evenflow.work/api/v0/signin/nostr \\
+  --method POST)
 
-# 2. Create a bound invite. --bind-to accepts the npub or the hex pubkey.
-curl -s -X POST "https://evenflow.work/api/v0/board/my-board/invites" \\
-  -H "Authorization: Bearer ${KEY}" \\
+curl -s -X POST "https://evenflow.work/api/v0/signin/nostr" \\
+  -H "Authorization: Nostr $AUTH"
+# → 201 {"jwt":"eyJhbGc...","claims":{"sub":"<pubkey>","provider":"nostr",...}}`,
+      },
+      {
+        kind: "p",
+        text: "Shape B — challenge and paste. Two round-trips, no NIP-98 library needed. The server mints a stateless HMAC-signed challenge tied to the caller's pubkey; the agent signs it as a kind-22242 event and POSTs it back. The response ships a nak one-liner that will produce the exact event the server wants, so a shell-only agent can complete sign-in without any Nostr code at all.",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# 1. Ask for a challenge for the agent's pubkey.
+PUB_HEX=<agent-pubkey-hex>  # if you have npub, run: nak decode <npub>
+CHAL=$(curl -s "https://evenflow.work/api/v0/signin/nostr/challenge?pubkey=$PUB_HEX")
+echo "$CHAL"
+# → {"challenge":"<ts.pub.hmac>","expires_in":300,
+#    "sign_hint":"nak event -k 22242 -t challenge='...' --sec <your-nsec>"}
+
+# 2. Sign the challenge (the sign_hint field literally IS the command).
+CHALLENGE=$(echo "$CHAL" | jq -r .challenge)
+SIGNED=$(nak event -k 22242 -t challenge="$CHALLENGE" --sec <agent-nsec>)
+
+# 3. POST the signed event back with the challenge string it was signed against.
+curl -s -X POST "https://evenflow.work/api/v0/signin/nostr" \\
   -H "Content-Type: application/json" \\
-  -d '{"role":"contributor","bind_to_pubkey":"<agent-npub>"}'
-
-# 3. On the agent's machine, sign the challenge with its nsec at
-#    /signin/nostr. The invite is only redeemable by that key.`,
+  -d "{\\"challenge\\":\\"$CHALLENGE\\",\\"signed_event\\":$SIGNED}"
+# → 201 {"jwt":"...","claims":{...}}`,
+      },
+      { kind: "h", text: "Step 4 — the agent uses the JWT" },
+      {
+        kind: "p",
+        text: "The 201 response body carries a jwt field. That is your session token — pass it as Authorization: Bearer <jwt> on every subsequent API call. It is byte-identical in shape to the JWT an OAuth sign-in returns; every downstream endpoint treats them the same.",
+      },
+      {
+        kind: "p",
+        text: "The JWT is bounded by the same session lifetime as any other. For a long-running agent that would rather not re-sign every session expiry, use the JWT once to POST /api/v0/keys with the scopes it needs, then store the returned key and use it as Authorization: Bearer indefinitely. Rotate or revoke from /settings/keys the same way you would for a human key.",
+      },
+      { kind: "h", text: "Where the nsec lives" },
+      {
+        kind: "p",
+        text: "The agent's nsec is the identity — treat it like a private SSH key. Keep it out of the source tree, out of the browser, and out of any log. Common shapes: env var read from the process's secret store; a file with 0600 permissions in a dedicated data dir; a remote signer (NIP-46, Amber, nsecBunker) if you don't want the agent process itself to hold it. Evenflow never asks for the nsec and has nowhere to keep one — every path above signs LOCALLY and sends only the signature or JWT.",
       },
       { kind: "h", text: "Agent path 2 — the owner's key, narrowed" },
       {
