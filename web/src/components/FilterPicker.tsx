@@ -6,6 +6,7 @@
 // shape mirrors UserNav's menu.
 
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { Portal } from "solid-js/web";
 
 export interface FilterOption {
   readonly value: string;
@@ -32,6 +33,7 @@ export const FilterPicker = (props: {
   const [anchor, setAnchor] = createSignal<{ left: number; top: number } | null>(null);
   let root: HTMLDivElement | undefined;
   let trigger: HTMLButtonElement | undefined;
+  let menu: HTMLDivElement | undefined;
 
   const openMenu = () => {
     if (trigger) {
@@ -42,7 +44,12 @@ export const FilterPicker = (props: {
   };
 
   const onDocClick = (e: MouseEvent) => {
-    if (open() && root && !root.contains(e.target as Node)) setOpen(false);
+    if (!open()) return;
+    const target = e.target as Node;
+    // Menu is portaled to document.body, so root.contains(target) won't
+    // include clicks inside the menu — check both.
+    if (root?.contains(target) || menu?.contains(target)) return;
+    setOpen(false);
   };
   onMount(() => document.addEventListener("mousedown", onDocClick));
   onCleanup(() => document.removeEventListener("mousedown", onDocClick));
@@ -64,38 +71,46 @@ export const FilterPicker = (props: {
         {chipText()}
       </button>
       <Show when={open()}>
-        <div
-          class="filter-menu"
-          role="menu"
-          style={{
-            position: "fixed",
-            left: `${anchor()?.left ?? 0}px`,
-            top:  `${anchor()?.top  ?? 0}px`,
-          }}
-        >
-          <Show
-            when={props.options.length > 0}
-            fallback={<div class="filter-menu-empty">{props.emptyLine}</div>}
+        {/* Portal to body — the sticky header's backdrop-filter creates a
+            new containing block, so `position: fixed` inside it resolves
+            against .board-sticky's box, not the viewport, and the menu
+            snaps to the wrong spot. Rendering under document.body escapes
+            the trap. */}
+        <Portal>
+          <div
+            class="filter-menu"
+            role="menu"
+            ref={menu}
+            style={{
+              position: "fixed",
+              left: `${anchor()?.left ?? 0}px`,
+              top:  `${anchor()?.top  ?? 0}px`,
+            }}
           >
-            <For each={props.options}>
-              {(opt) => (
-                <label class="filter-menu-item">
-                  <input
-                    type="checkbox"
-                    checked={props.selected.includes(opt.value)}
-                    onChange={() => props.onToggle(opt.value)}
-                  />
-                  <span>{opt.label}</span>
-                </label>
-              )}
-            </For>
-          </Show>
-          <Show when={count() > 0}>
-            <button type="button" class="filter-menu-clear" onClick={() => props.onClear()}>
-              Clear
-            </button>
-          </Show>
-        </div>
+            <Show
+              when={props.options.length > 0}
+              fallback={<div class="filter-menu-empty">{props.emptyLine}</div>}
+            >
+              <For each={props.options}>
+                {(opt) => (
+                  <label class="filter-menu-item">
+                    <input
+                      type="checkbox"
+                      checked={props.selected.includes(opt.value)}
+                      onChange={() => props.onToggle(opt.value)}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                )}
+              </For>
+            </Show>
+            <Show when={count() > 0}>
+              <button type="button" class="filter-menu-clear" onClick={() => props.onClear()}>
+                Clear
+              </button>
+            </Show>
+          </div>
+        </Portal>
       </Show>
     </div>
   );
