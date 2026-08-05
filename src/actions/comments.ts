@@ -260,7 +260,26 @@ export const createComment = (
       // carries an assignee (comments belong to their author, not the
       // parent issue's owner). Cheap to include: the parent issue is
       // already in scope, and the field is public per the SSE feed.
-      payload: { comment, assignee_pubkey: issue.assignee_pubkey },
+      //
+      // A minimal `issue` reference rides alongside so webhook prompt
+      // templates that read `body.payload.issue.short_id` / `.title`
+      // / `.body` render the same way across issue.* AND comment.*
+      // events. Without it a downstream template built for the issue
+      // shape silently produces empty strings on every comment event
+      // (see Scout Aug 5 2026 — delivery succeeded but the rendered
+      // prompt was missing every issue field). Trimmed to the display
+      // triple to keep the wire cheap and to avoid re-shipping fields
+      // (assignee_pubkey, status) that already live at the payload's
+      // top level or on the outer envelope.
+      payload: {
+        comment,
+        issue: {
+          short_id: issue.short_id,
+          title: issue.title,
+          body: issue.body,
+        },
+        assignee_pubkey: issue.assignee_pubkey,
+      },
     },
     ProvenanceFromCaller(input.claims),
   );
