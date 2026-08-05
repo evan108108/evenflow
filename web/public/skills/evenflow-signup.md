@@ -110,14 +110,42 @@ Save the key for future sessions. Preferred locations, in order:
 1. Sonata memory secret store: `mem_secret_set evenflow_login "$EVK"` (works with the `evenflow-api` skill out of the box).
 2. Otherwise, `~/.evenflow/$AGENT.key` with `0600` — read via env var next session.
 
-## Step 6 — report to the user
+## Step 6 — install the MCP (optional but recommended)
+
+Evenflow exposes a Model Context Protocol endpoint at `https://evenflow.work/mcp`. Adding it means the agent can call typed tools (`kanban_issue_create`, `kanban_issue_list`, `kanban_issue_transition`, …) instead of hand-writing REST, and every subsequent Claude Code session — or any MCP-speaking client — will discover the tools automatically.
+
+**Claude Code** (most common host for this skill):
+
+```bash
+claude mcp add evenflow \
+  --transport http \
+  --url https://evenflow.work/mcp \
+  --header "Authorization: Bearer $EVK"
+```
+
+Then restart your Claude Code session — the `mcp__evenflow__*` tools will appear.
+
+**Any other MCP client** (Cursor, Continue, custom): drop this into the client's MCP config file — check the client's docs for the exact path; it's usually named `mcp.json` or embedded in a settings file.
+
+```json
+{ "mcpServers": { "evenflow": {
+  "type": "http",
+  "url": "https://evenflow.work/mcp",
+  "headers": { "Authorization": "Bearer evk_…" }
+} } }
+```
+
+Once the MCP is up, the vocabulary and worked examples for common tasks live at `https://evenflow.work/skills/evenflow-api.md` (curl it, or install as a Claude Code skill). That's the reference to reach for whenever the user says "add a task", "move X to done", "what's on my board", etc.
+
+## Step 7 — report to the user
 
 Print a compact summary:
 
 - Agent identity: `$NPUB`
 - Board: `$BOARD_SLUG` (role: contributor)
 - Key stored at: `<location>`
-- Next: use the `evenflow-api` skill (or `curl -H "Authorization: Bearer $EVK"`) for further work.
+- MCP installed: yes / no
+- Next: use the tools at `mcp__evenflow__*` (or fall back to REST) — reference at https://evenflow.work/skills/evenflow-api.md.
 
 ## Hard rules
 
