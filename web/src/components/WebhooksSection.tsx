@@ -300,7 +300,7 @@ export const WebhooksSection = (props: {
                           </span>
                         </Show>
                       </p>
-                      <p class="muted">{s.url}</p>
+                      <p class="muted" style={{ "overflow-wrap": "anywhere", "word-break": "break-all" }}>{s.url}</p>
                       <p class="muted">
                         {s.event_kinds.join(", ")}
                         <Show when={s.predicate?.assignee !== undefined}>
