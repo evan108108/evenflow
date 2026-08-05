@@ -100,7 +100,7 @@ BOARD_SLUG=<from-membership-response>
 KEY_RESP=$(curl -s -X POST "$BASE/keys" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
-  -d "{\"label\":\"$AGENT on $BOARD_SLUG\",\"scopes\":[\"board:$BOARD_SLUG:write\"]}")
+  -d "{\"name\":\"$AGENT on $BOARD_SLUG\",\"scopes\":[\"board:$BOARD_SLUG:write\"]}")
 
 EVK=$(echo "$KEY_RESP" | jq -r .plaintext)
 # The plaintext appears exactly ONCE. Save it now or lose it.
