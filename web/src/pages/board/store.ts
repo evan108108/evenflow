@@ -669,7 +669,20 @@ export const createBoardStore = (
     // reported from — it spelled the URL by hand and the server had a
     // different one.
     const target = sprintId ?? issue.sprint_id;
-    return optimistic(issue.id, { sprint_id: sprintId }, async () => {
+    // Mirror EFB-17's server-side auto-promote optimistically: attaching to an
+    // ACTIVE sprint flips container to "active" on the server, so we flip it
+    // locally too. Without this, a card dropped from Backlog onto the active
+    // sprint keeps its container=backlog for the round-trip and stays visible
+    // in the backlog list (which filters by container) until the response
+    // arrives — reads as a ~1-10s freeze depending on network.
+    const targetSprint = sprintId === null ? null : sprints().find((s) => s.id === sprintId) ?? null;
+    const promotes = targetSprint?.status === "active" && issue.container !== "active";
+    // column_id isn't set optimistically — the server picks the first enabled
+    // column and the response fills it in on arrival.
+    const patch = promotes
+      ? { sprint_id: sprintId, container: "active" as Container }
+      : { sprint_id: sprintId };
+    return optimistic(issue.id, patch, async () => {
       const res = await api((c) =>
         sprintId === null
           ? c.delete<{ issue: Issue }>(
