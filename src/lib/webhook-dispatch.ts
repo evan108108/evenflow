@@ -188,7 +188,21 @@ export const matchesSubscription = (
   if (typeof wanted !== "string") return false;
   const payload = event.payload;
   if (typeof payload !== "object" || payload === null) return false;
-  return (payload as Record<string, unknown>)["assignee_pubkey"] === wanted;
+  // Real emit paths (src/actions/issues.ts) wrap the issue as
+  // { issue: { ..., assignee_pubkey, ... } } and DO NOT expose
+  // assignee_pubkey at the payload top level — the top-level check alone
+  // would never match a live event. Accept both spellings so a caller
+  // handing us a flat {assignee_pubkey} still matches (some events
+  // deliberately do that, e.g. status_change rows) but real issue events
+  // find the field where it actually lives.
+  const p = payload as Record<string, unknown>;
+  const top = p["assignee_pubkey"];
+  if (top === wanted) return true;
+  const inner = p["issue"];
+  if (typeof inner === "object" && inner !== null) {
+    return (inner as Record<string, unknown>)["assignee_pubkey"] === wanted;
+  }
+  return false;
 };
 
 /**

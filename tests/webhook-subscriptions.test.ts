@@ -228,6 +228,27 @@ describe("matchesSubscription", () => {
     expect(matchesSubscription(s, event("issue.created", {}))).toBe(false);
   });
 
+  // The real emit path (src/actions/issues.ts) sends
+  //   payload = { issue: { ..., assignee_pubkey, ... } }
+  // — assignee sits INSIDE the issue object, not at payload top level. A
+  // matcher that read only the top level saw every live issue event as
+  // "no assignee" and dropped the delivery, which is what broke the
+  // Scout webhook on 2026-08-05. The subscription that had a valid
+  // predicate silently produced zero deliveries.
+  it("matches assignee nested inside payload.issue (real emit shape)", () => {
+    const s = sub({
+      event_kinds: JSON.stringify(["issue.created", "issue.updated"]),
+      predicate: JSON.stringify({ assignee: ALICE }),
+    });
+    expect(
+      matchesSubscription(s, event("issue.updated", { issue: { assignee_pubkey: ALICE } })),
+    ).toBe(true);
+    expect(
+      matchesSubscription(s, event("issue.updated", { issue: { assignee_pubkey: BOB } })),
+    ).toBe(false);
+    expect(matchesSubscription(s, event("issue.updated", { issue: {} }))).toBe(false);
+  });
+
   // Actor-aware webhooks: an `exclude_actor` predicate suppresses delivery
   // when the event was caused by the named pubkey. The load-bearing use
   // case is an AI teammate that subscribes to "issues assigned to me" and
