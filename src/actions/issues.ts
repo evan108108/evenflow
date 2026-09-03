@@ -400,10 +400,20 @@ const assertRosterMember = (
 ): Effect.Effect<string | null, ValidationError, Db> =>
   Effect.gen(function* () {
     if (ref === null) return null;
-    if (!(yield* isRosterMember("boardMemberCache", board.id, ref))) {
-      return yield* new ValidationError({ reason: "not-a-member" });
+    // Mirror listBoardMembers (actions/orgs.ts) and the crypto layer's
+    // boardMemberPubkeys (audiences.ts:76): an org member is a member of
+    // every board in the org via role projection, so they must be
+    // assignable from the same set the members-list endpoint renders. Two
+    // queries because `isRosterMember` reads one roster at a time and adding
+    // a UNION variant just for this call site would drift from the shape
+    // every other caller uses. Cheap enough — both are single-row lookups
+    // keyed on primary-key columns, and the second only runs on the (rare)
+    // path where the person is org-projected rather than explicit.
+    if (yield* isRosterMember("boardMemberCache", board.id, ref)) return ref;
+    if (board.org_id !== null && (yield* isRosterMember("orgMemberCache", board.org_id, ref))) {
+      return ref;
     }
-    return ref;
+    return yield* new ValidationError({ reason: "not-a-member" });
   }).pipe(
     // Same posture as before: a failed roster read is our outage, not the
     // caller's mistake, so it dies as a 500 rather than becoming a 400.

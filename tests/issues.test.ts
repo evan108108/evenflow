@@ -11,6 +11,7 @@ import {
   makeHarness,
   seedBoardMember,
   seedForeignBoardAndIssue,
+  seedOrgMember,
   tokenFor,
 } from "./harness";
 
@@ -717,6 +718,25 @@ describe("EFB-38 assignee_pubkey validation", () => {
   it("PATCH accepts an already-canonical member pubkey unchanged", async () => {
     const h = makeHarness();
     await boardWithNostrMember(h);
+    const issue = await createIssue(h);
+
+    const res = await patchAssignee(h, issue.id, CANON);
+    expect(res.status).toBe(200);
+    expect(storedAssignee(h, issue.id)).toBe(CANON);
+  });
+
+  // Assignee resolution matches the members-list roster (org-teams decision
+  // doc): an org member has a projected contributor role on every board in
+  // the org, so they must be assignable without an explicit boardMemberCache
+  // grant. Before the fix the picker showed them (post the listBoardMembers
+  // union) but assertRosterMember rejected them with `not-a-member`.
+  it("PATCH accepts an org member as assignee without an explicit board grant", async () => {
+    const h = makeHarness();
+    await createBoard(h);
+    const orgId = h.db.orgs[0]!["id"] as string;
+    // Deliberately NOT calling seedBoardMember for CANON — only org
+    // membership. The check under test is that org projection is enough.
+    seedOrgMember(h, orgId, CANON, "member");
     const issue = await createIssue(h);
 
     const res = await patchAssignee(h, issue.id, CANON);
