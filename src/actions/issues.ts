@@ -430,14 +430,33 @@ export const fetchIssue = (
   pubkey: string | null,
   minRole: string,
   grants: readonly Grant[] | null,
+  orgSlug: string | null = null,
 ) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
+    // Migration 0031 scoped short_id uniqueness to (board_id, short_id), so
+    // the string ADA-1 is no longer a database-wide address. Resolution has
+    // to say which universe it means. When an orgSlug is in scope (every
+    // orgScoped route has one on `input.orgSlug`), the query narrows to that
+    // org, so a different org's ADA-1 — live or orphaned — cannot be
+    // returned across the boundary. The join to boardCache is also what
+    // hides orphan rows: a deleted-board issue has no boardCache parent, so
+    // the JOIN drops it. That failure mode used to arrive as "issue not
+    // found" a step later in authorizeBoardById; naming it here makes the
+    // reason legible without the debugger.
     const row =
       shortId === null
         ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
-        : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
+        : orgSlug === null
+          ? yield* db.queryFirst(
+              "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id WHERE i.short_id = ?",
+              [shortId],
+            )
+          : yield* db.queryFirst(
+              "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id JOIN orgCache o ON o.id = b.org_id WHERE i.short_id = ? AND o.slug = ? AND o.deleted_at_ms IS NULL",
+              [shortId, orgSlug],
+            );
     if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
     const { board } = yield* authorizeBoardById(issue.board_id, pubkey, minRole, grants).pipe(
@@ -644,10 +663,18 @@ const resolveDuplicateTarget = (current: IssueShape, ref: string) =>
     // /issue/:id/board mints a fresh one), so a cross-board pointer could not
     // render as "→ EFB-7" without lying about which board's #7.
     const shortId = asShortId(ref);
+    // Board-scoped from the SQL itself: post-migration-0031 a short_id names
+    // an issue in some board, so a duplicate-target lookup that is
+    // already-known-to-be-same-board asks the DB in that scope directly
+    // rather than filtering afterward. The same-board check below survives
+    // as a UUID guard — a bare id could still name another board's row.
     const row =
       shortId === null
         ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
-        : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
+        : yield* db.queryFirst(
+            "SELECT * FROM issueCache WHERE board_id = ? AND short_id = ?",
+            [current.board_id, shortId],
+          );
     if (row === null) {
       return yield* new ValidationError({ reason: "duplicate-target-not-found" });
     }
@@ -1043,7 +1070,9 @@ export const getIssue = (
     const { issue } = yield* fetchIssue(
       input.params["id"] ?? "",
       input.claims === null ? null : callerPubkey(input.claims),
-      "viewer", input.grants,);
+      "viewer", input.grants,
+      input.orgSlug ?? null,
+    );
     const unknown = [...include].filter((k) => k !== "comments" && k !== "attachments");
     if (unknown.length > 0) return yield* new ValidationError({ reason: "include" });
     const db = yield* Db;
@@ -1082,7 +1111,9 @@ export const updateIssue = (
     const { issue: current, board } = yield* fetchIssue(
       input.params["id"] ?? "",
       pubkey,
-      "contributor", input.grants,);
+      "contributor", input.grants,
+      input.orgSlug ?? null,
+    );
     const db = yield* Db;
 
     const title = body.title ?? current.title;
@@ -1260,7 +1291,9 @@ export const deleteIssue = (
     const { issue } = yield* fetchIssue(
       input.params["id"] ?? "",
       callerPubkey(claims),
-      "contributor", input.grants,);
+      "contributor", input.grants,
+      input.orgSlug ?? null,
+    );
     const db = yield* Db;
     const audit = yield* AuditLog;
     yield* db.execute("DELETE FROM commentCache WHERE issue_id = ?", [issue.id]);
@@ -1303,7 +1336,7 @@ export const transitionIssue = (
     const claims = input.claims;
     const pubkey = callerPubkey(claims);
     const body = input.body;
-    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
+    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants, input.orgSlug ?? null);
     let to: Column;
     if (body.column_id !== undefined) {
       // Still `!== undefined` and not a truthiness test: the schema now
@@ -1383,7 +1416,9 @@ export const setIssueBoard = (
     const { issue, board: source } = yield* fetchIssue(
       input.params["id"] ?? "",
       pubkey,
-      "contributor", input.grants,);
+      "contributor", input.grants,
+      input.orgSlug ?? null,
+    );
     if (target_board_id === source.id) {
       return yield* new ValidationError({ reason: "target-is-source" });
     }
@@ -1521,7 +1556,7 @@ export const setIssuePosition = (
       return yield* new ValidationError({ reason: "neighbors" });
     }
 
-    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
+    const { issue, board } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants, input.orgSlug ?? null);
     if (beforeId === issue.id || afterId === issue.id) {
       return yield* new ValidationError({ reason: "neighbors" });
     }
@@ -1664,7 +1699,7 @@ export const setIssueContainer = (
     const pubkey = callerPubkey(claims);
     const { container: to } = input.body;
     const event = CONTAINER_AUDIT_EVENT[to];
-    const { issue } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants);
+    const { issue } = yield* fetchIssue(input.params["id"] ?? "", pubkey, "contributor", input.grants, input.orgSlug ?? null);
     const { issue: updated, statusChangeId } = yield* applyContainerMove(issue, to, pubkey);
     const audit = yield* AuditLog;
     yield* audit.record({

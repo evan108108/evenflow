@@ -1256,6 +1256,35 @@ export const makeDbMock = (): DbMock => {
           const r = issues.find((x) => x["short_id"] === params[0]);
           return (r ? { ...r } : null) as R | null;
         }
+        // Migration 0031 scoped short_id uniqueness to (board_id, short_id), so
+        // the two lookup call-sites (fetchIssue / the duplicate-target resolver)
+        // JOIN boardCache to skip orphan rows a deleted board left behind.
+        if (
+          sql.startsWith(
+            "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id WHERE i.short_id = ?",
+          )
+        ) {
+          const r = issues.find(
+            (x) => x["short_id"] === params[0] && boards.some((b) => b["id"] === x["board_id"]),
+          );
+          return (r ? { ...r } : null) as R | null;
+        }
+        // Org-scoped short_id resolution (migration 0031): narrows to a
+        // specific org so a different org's ADA-1 cannot leak across.
+        if (
+          sql.startsWith(
+            "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id JOIN orgCache o ON o.id = b.org_id WHERE i.short_id = ? AND o.slug = ? AND o.deleted_at_ms IS NULL",
+          )
+        ) {
+          const r = issues.find((x) => {
+            if (x["short_id"] !== params[0]) return false;
+            const b = boards.find((row) => row["id"] === x["board_id"]);
+            if (b === undefined) return false;
+            const o = orgs.find((row) => row["id"] === b["org_id"]);
+            return o !== undefined && o["slug"] === params[1] && o["deleted_at_ms"] === null;
+          });
+          return (r ? { ...r } : null) as R | null;
+        }
         if (sql.startsWith("SELECT id FROM boardCache WHERE org_id = ? AND slug = ?")) {
           const r = boards.find((x) => x["org_id"] === params[0] && x["slug"] === params[1]);
           return (r ? { id: r["id"] } : null) as R | null;

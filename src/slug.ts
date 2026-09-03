@@ -1,9 +1,14 @@
 // Short issue identifiers — the FLOW-42 reference system.
 //
 // Each board owns a 2-5 char uppercase alphanumeric prefix; each issue gets
-// '<prefix>-<n>' with n claimed monotonically per board. Prefixes are
-// globally unique (idx_issueCache_short_id is a global unique index, so two
-// boards sharing FLOW would collide on FLOW-1).
+// '<prefix>-<n>' with n claimed monotonically per board. Uniqueness lives
+// per board (idx_issueCache_board_short_id, migration 0031), so short_id is
+// a board-scoped address. Prefixes stay reserved among LIVE boards via
+// `uniquePrefix` and the boardCache query in issues.ts:createIssue, so
+// FLOW-1 still reads unambiguously across the app — but a deleted board's
+// orphan issues can no longer freeze the string in the whole database and
+// silently block another org from ever writing FLOW-1 again (migration
+// 0031's header carries the incident that motivated the fix).
 //
 // web/src/lib/slug.ts mirrors the derivation for the New Board modal's live
 // preview — keep the two in sync.

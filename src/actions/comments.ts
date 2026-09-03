@@ -115,14 +115,28 @@ export const fetchIssueForRole = (
   pubkey: string | null,
   minRole: string,
   grants: readonly Grant[] | null,
+  orgSlug: string | null = null,
 ) =>
   Effect.gen(function* () {
     const db = yield* Db;
     const shortId = asShortId(ref);
+    // Same scoping as fetchIssue in actions/issues.ts (see migration 0031):
+    // short_id lives in a per-board namespace, so a short-id resolution has
+    // to say WHICH universe. When an orgSlug is in scope we narrow the
+    // query to that org so a different org's ADA-1 — live or orphaned —
+    // cannot leak across the boundary.
     const row =
       shortId === null
         ? yield* db.queryFirst("SELECT * FROM issueCache WHERE id = ?", [ref])
-        : yield* db.queryFirst("SELECT * FROM issueCache WHERE short_id = ?", [shortId]);
+        : orgSlug === null
+          ? yield* db.queryFirst(
+              "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id WHERE i.short_id = ?",
+              [shortId],
+            )
+          : yield* db.queryFirst(
+              "SELECT i.* FROM issueCache i JOIN boardCache b ON b.id = i.board_id JOIN orgCache o ON o.id = b.org_id WHERE i.short_id = ? AND o.slug = ? AND o.deleted_at_ms IS NULL",
+              [shortId, orgSlug],
+            );
     if (row === null) return yield* notVisible(pubkey, new NotFoundError({ reason: "issue" }));
     const issue = parseIssueRow(row);
     yield* authorizeBoardById(issue.board_id, pubkey, minRole, grants).pipe(
@@ -167,7 +181,7 @@ export const createComment = (
 ): Effect.Effect<{ comment: CommentShape & { attachments: AttachmentShape[] } }, CommentsFailure, CommentServices> =>
   Effect.gen(function* () {
     const pubkey = callerPubkey(input.claims);
-  const issue = yield* fetchIssueForRole(input.params["id"] ?? "", pubkey, "contributor", input.grants);
+  const issue = yield* fetchIssueForRole(input.params["id"] ?? "", pubkey, "contributor", input.grants, input.orgSlug ?? null);
   // Parsed HERE, after fetchIssueForRole, holding the pre-split order: a
   // malformed body aimed at an issue that does not exist (or that the caller
   // cannot see) is a 404 about the issue, not a 400 about the body. Flatten
@@ -296,7 +310,9 @@ export const listComments = (
   const issue = yield* fetchIssueForRole(
     input.params["id"] ?? "",
     input.claims === null ? null : callerPubkey(input.claims),
-    "viewer", input.grants,);
+    "viewer", input.grants,
+    input.orgSlug ?? null,
+  );
 
   let limit = DEFAULT_LIMIT;
   if (limitRaw !== undefined) {
