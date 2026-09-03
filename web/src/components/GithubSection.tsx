@@ -291,15 +291,27 @@ export const GithubSection = (props: { apiBase: string }) => {
         <Show when={config()?.connected}>
           <h3>Webhook</h3>
           <p class="muted">
-            In GitHub: <em>Settings → Webhooks → Add webhook</em>. Content type must be{" "}
-            <code>application/json</code>. Subscribe to <code>Pull requests</code>,{" "}
-            <code>Pull request reviews</code> and <code>Check runs</code>.
+            In GitHub: <em>Settings → Webhooks → Add webhook</em>. On the form GitHub shows,
+            fill in exactly these:
           </p>
-          <p>
-            <strong>Payload URL</strong>
-            <br />
-            <code>{webhookAbsoluteUrl()}</code>
-          </p>
+          <dl class="webhook-setup">
+            <dt>Payload URL</dt>
+            <dd>
+              <code>{webhookAbsoluteUrl()}</code>
+            </dd>
+            <dt>Content type</dt>
+            <dd>
+              <code>application/json</code>{" "}
+              <span class="muted">
+                — the default is <code>x-www-form-urlencoded</code>, which will not work
+              </span>
+            </dd>
+            <dt>Events</dt>
+            <dd>
+              <code>Pull requests</code>, <code>Pull request reviews</code>, and{" "}
+              <code>Check runs</code>
+            </dd>
+          </dl>
 
           <Show
             when={freshSecret()}

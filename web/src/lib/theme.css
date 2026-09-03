@@ -243,6 +243,26 @@ button:disabled {
   color: var(--color-ink-soft);
 }
 
+/* GitHub webhook setup checklist — dt/dd pairs, one row each, so no field
+   (Content type, in particular) can hide inside a running paragraph. */
+.webhook-setup {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0 1rem;
+}
+.webhook-setup dt {
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  padding-top: 0.2rem;
+}
+.webhook-setup dd {
+  margin: 0;
+}
+
 /* Board-list cards (/boards) — same editorial lift as .issue-card:hover. */
 .board-card {
   display: flex;
