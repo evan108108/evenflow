@@ -8,7 +8,7 @@
 // no more expertise than using the app does. Naming it for developers tells
 // everyone else the page is not for them.
 
-import { For } from "solid-js";
+import { For, Show } from "solid-js";
 import { SECTIONS } from "@docs-content/sections";
 import { TopBar } from "../components/TopBar";
 import { methodOf, pathOf, MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
@@ -115,6 +115,28 @@ export const Docs = () => (
         {(section) => (
           <div class="docs-group">
             <h3>{section.title}</h3>
+            <Show when={section.preamble}>
+              {(preamble) => (
+                <div class="docs-preamble">
+                  <h4>{preamble().heading}</h4>
+                  <dl class="webhook-setup">
+                    <For each={preamble().steps}>
+                      {(step) => (
+                        <>
+                          <dt>{step.label}</dt>
+                          <dd>
+                            <code>{step.value}</code>
+                            <Show when={step.note}>
+                              <span class="muted"> — {step.note}</span>
+                            </Show>
+                          </dd>
+                        </>
+                      )}
+                    </For>
+                  </dl>
+                </div>
+              )}
+            </Show>
             <For each={section.endpoints}>
               {(endpoint) => (
                 <article class="docs-endpoint">

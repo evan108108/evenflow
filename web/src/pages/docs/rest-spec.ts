@@ -27,7 +27,22 @@ export interface RestEndpoint {
 
 export interface RestSection {
   readonly title: string;
+  /**
+   * Optional setup guidance shown ABOVE the endpoint list — a place for
+   * things that are not endpoints but that a caller needs to get right
+   * before endpoints matter (e.g. how to configure the third-party side of
+   * a webhook). Currently used only by the GitHub section so the docs page
+   * and the per-board settings screen (GithubSection.tsx) state the same
+   * setup requirements — two copies drift the first time a required event
+   * is added and the drift is invisible.
+   */
+  readonly preamble?: RestSectionPreamble;
   readonly endpoints: ReadonlyArray<RestEndpoint>;
+}
+
+export interface RestSectionPreamble {
+  readonly heading: string;
+  readonly steps: ReadonlyArray<{ readonly label: string; readonly value: string; readonly note?: string }>;
 }
 
 import { API_BASE, route, type RouteId } from "@routes-manifest";
@@ -222,6 +237,31 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
   },
   {
     title: "GitHub integration",
+    preamble: {
+      heading: "Configuring the webhook in GitHub",
+      steps: [
+        {
+          label: "Payload URL",
+          value: `${new URL(BASE).origin}/api/v0/webhooks/github/<board_id>`,
+          note: "The exact URL is shown on the board's GitHub settings page after you mint a secret.",
+        },
+        {
+          label: "Content type",
+          value: "application/json",
+          note: "GitHub's default is x-www-form-urlencoded, which will not work.",
+        },
+        {
+          label: "Events",
+          value: "Pull requests, Pull request reviews, Check runs",
+          note: "Pick “Let me select individual events” and check exactly those three. Anything else is dropped.",
+        },
+        {
+          label: "Secret",
+          value: "the plaintext returned by POST /board/:slug/github/secret",
+          note: "Shown once. Rotating invalidates the old secret immediately.",
+        },
+      ],
+    },
     endpoints: [
       {
         id: "github.config.get",
