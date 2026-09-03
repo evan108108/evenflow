@@ -40,10 +40,12 @@ import {
   ForbiddenError,
   UnauthorizedError,
   authorizeOrgAccess,
+  boardRoleFromOrgRole,
   callerPubkey,
   effectiveBoardRole,
   resolveBoardScope,
   resolveOrgBySlug,
+  strongest,
 } from "../authz";
 import {
   publishOrgBestEffort,
@@ -630,10 +632,43 @@ export const listBoardMembers = (
       pubkey,
       "contributor", input.grants,);
     const db = yield* Db;
-    const rows = yield* db.queryAll<Record<string, unknown>>(
+    const explicitRows = yield* db.queryAll<Record<string, unknown>>(
       "SELECT * FROM boardMemberCache WHERE board_id = ? ORDER BY added_at_ms ASC",
       [board.id],
     );
+    // Mirror `boardMemberPubkeys` (audiences.ts:76) and `effectiveBoardRole`
+    // (authz.ts:203): every org member has a projected role on every board in
+    // the org. Without this union the assignee picker and roster UI miss
+    // anyone the authz layer already treats as a member (e.g. an org admin
+    // never added to boardMemberCache), producing the drift the org-teams
+    // decision doc calls out as the invariant to hold.
+    const orgRows =
+      board.org_id === null
+        ? []
+        : yield* db.queryAll<Record<string, unknown>>(
+            "SELECT * FROM orgMemberCache WHERE org_id = ? ORDER BY added_at_ms ASC",
+            [board.org_id],
+          );
+    const byPubkey = new Map<string, ReturnType<typeof parseMemberRow>>();
+    for (const r of explicitRows) {
+      const m = parseMemberRow(r);
+      byPubkey.set(m.pubkey, m);
+    }
+    for (const r of orgRows) {
+      const orgMember = parseMemberRow(r);
+      const projectedRole = boardRoleFromOrgRole(orgMember.role);
+      if (projectedRole === null) continue;
+      const existing = byPubkey.get(orgMember.pubkey);
+      if (existing === undefined) {
+        byPubkey.set(orgMember.pubkey, { ...orgMember, role: projectedRole });
+        continue;
+      }
+      const winnerRole = strongest(existing.role, projectedRole) ?? existing.role;
+      if (winnerRole !== existing.role) {
+        byPubkey.set(orgMember.pubkey, { ...existing, role: winnerRole });
+      }
+    }
+    const members = [...byPubkey.values()].sort((a, b) => a.added_at_ms - b.added_at_ms);
     // Private boards: surface each member's current-epoch grant state so
     // the settings page can show "Key grant issued … (epoch n)".
     let grants: Array<{ member_pubkey: string; epoch: number; issued_at_ms: number }> = [];
@@ -653,7 +688,7 @@ export const listBoardMembers = (
       }));
     }
     return {
-      members: rows.map(parseMemberRow),
+      members,
       ...(board.encryption_active ? { audience_epoch: board.audience_epoch, key_grants: grants } : {}),
     };
   });

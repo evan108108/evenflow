@@ -109,6 +109,49 @@ describe("org actions", () => {
     expect(pubkeys).not.toContain("test:on-acme");
   });
 
+  it("unions org members into the board roster, projecting their role", async () => {
+    // The invariant from docs/decisions/2026-08-org-teams.md: an org member
+    // has an effective role on every board in the org via boardRoleFromOrgRole
+    // (owner→owner, admin→admin, member→contributor). listBoardMembers used
+    // to read only boardMemberCache, which meant the assignee picker could
+    // not offer a person the authz layer would happily assign.
+    const deps = makeDeps();
+    seedOrg(deps, "o1", "acme");
+    seedBoard(deps, "b-roadmap", "roadmap", "o1");
+    // A plain org member — never added to the board directly.
+    deps.db.orgMembers.push({
+      org_id: "o1", pubkey: "test:org-only", role: "member",
+      added_by: CALLER, added_at_ms: 2, substrate_event_id: null,
+    });
+    // Someone who is both an org member AND has an explicit board grant with
+    // a WEAKER role; the projected org role must win.
+    deps.db.orgMembers.push({
+      org_id: "o1", pubkey: "test:both", role: "admin",
+      added_by: CALLER, added_at_ms: 3, substrate_event_id: null,
+    });
+    deps.db.boardMembers.push({
+      board_id: "b-roadmap", pubkey: "test:both", role: "viewer",
+      added_by: CALLER, added_at_ms: 4, substrate_event_id: null,
+    });
+
+    const exit = await run(
+      deps,
+      listBoardMembers(
+        actionInput(JWT_TEST_CLAIMS, { orgSlug: "acme", boardSlug: "roadmap" }, undefined, { grants: null }),
+      ),
+    );
+
+    expect(exit._tag).toBe("Success");
+    const members = (exit as { value: { members: Array<{ pubkey: string; role: string }> } }).value.members;
+    const byPubkey = new Map(members.map((m) => [m.pubkey, m.role]));
+    // Org member surfaces with the projected board role.
+    expect(byPubkey.get("test:org-only")).toBe("contributor");
+    // Explicit + org: strongest wins (admin from org projection > viewer explicit).
+    expect(byPubkey.get("test:both")).toBe("admin");
+    // The caller (org owner) also projects onto the board as owner.
+    expect(byPubkey.get(CALLER)).toBe("owner");
+  });
+
   it("shows an anonymous reader the public view and withholds the member view", async () => {
     // The auth posture is visible in the signature: getOrg takes a
     // PublicActionInput, so claims === null is a case it has to answer rather

@@ -183,13 +183,13 @@ export const authorizeOrgAccess = (
 // ── board resolution ──────────────────────────────────────────────────────
 
 /** Org member roles project onto boards: owner→owner, admin→admin, member→contributor. */
-const boardRoleFromOrgRole = (orgRole: string | null): string | null => {
+export const boardRoleFromOrgRole = (orgRole: string | null): string | null => {
   if (orgRole === "owner" || orgRole === "admin") return orgRole;
   if (orgRole === "member") return "contributor";
   return null;
 };
 
-const strongest = (...roles: Array<string | null>): string | null =>
+export const strongest = (...roles: Array<string | null>): string | null =>
   roles.reduce<string | null>((best, r) => {
     if (r === null) return best;
     if (best === null || !roleAtLeast(best, r)) return r;
