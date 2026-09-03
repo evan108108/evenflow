@@ -9,7 +9,7 @@
 // Public: no auth, no fetch, no signed-in state. A signed-out reader — human
 // or agent — gets the whole page.
 
-import { For, Show } from "solid-js";
+import { For, Show, type JSX } from "solid-js";
 import { useParams } from "@solidjs/router";
 import { SECTIONS, sectionById } from "@docs-content/sections";
 import type { Block } from "@docs-content/model";
@@ -17,6 +17,37 @@ import { apiRowsByFamily } from "@docs-content/api-reference";
 import { TopBar } from "../components/TopBar";
 import { CodeBlock } from "../components/CodeBlock";
 import "../lib/board.css";
+
+/**
+ * Turn bare http(s) URLs in paragraph text into clickable links. The docs
+ * `p` block was originally rendered as plain text, so a paragraph that said
+ * "mint one at https://evenflow.work/settings/keys" showed the URL literally
+ * and left the reader to copy it — the exact reason /docs/mcp was reported as
+ * unclear. Splitting on the URL pattern keeps the surrounding punctuation
+ * intact (a trailing "." or ")" stays outside the anchor). Same-origin links
+ * open in this tab; anything else opens in a new tab so a docs read doesn't
+ * navigate away from the docs.
+ */
+const URL_RE = /\bhttps?:\/\/[^\s<>()"']+[^\s<>()"'.,;:!?]/g;
+
+const linkify = (text: string): JSX.Element => {
+  const nodes: JSX.Element[] = [];
+  let last = 0;
+  for (const match of text.matchAll(URL_RE)) {
+    const start = match.index;
+    if (start > last) nodes.push(text.slice(last, start));
+    const href = match[0];
+    const sameOrigin = href.startsWith("https://evenflow.work") || href.startsWith("http://localhost");
+    nodes.push(
+      <a href={href} target={sameOrigin ? undefined : "_blank"} rel={sameOrigin ? undefined : "noreferrer"}>
+        {href}
+      </a>,
+    );
+    last = start + href.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes.length === 0 ? text : nodes;
+};
 
 /** The endpoint reference, straight off the manifest — never a curated list. */
 const ApiReference = () => (
@@ -81,7 +112,7 @@ const RenderBlock = (props: { block: Block }) => (
     {(b) => {
       switch (b.kind) {
         case "p":
-          return <p class="docs-p">{b.text}</p>;
+          return <p class="docs-p">{linkify(b.text)}</p>;
         case "h":
           return <h3 class="docs-h">{b.text}</h3>;
         case "code":

@@ -446,6 +446,10 @@ curl -s "https://evenflow.work/api/v0/notifications/config" \\
       },
       {
         kind: "p",
+        text: "The evk_your_key_here placeholder above is an API key: mint one at https://evenflow.work/settings/keys and paste it in. It acts as you and can be revoked at any time; the plaintext is shown once at mint. A signed-in browser session's JWT also works, but for an MCP client (Claude Desktop / Code) an evk_ key is what you want — it survives past your session and can be scoped to one board.",
+      },
+      {
+        kind: "p",
         text: "Authentication is the same bearer token as REST, and SO IS SCOPING. A key narrowed to one board is narrowed on MCP too — the scope check lives in the shared auth middleware that the MCP server's internal app is built from, so there is no second gate to forget and no MCP-shaped hole around it.",
       },
       {
