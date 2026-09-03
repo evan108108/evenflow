@@ -18,6 +18,7 @@ const profile = (pubkey: string, display_name: string | null): ProfileData => ({
   about: null,
   event_id: display_name === null ? null : "evt",
   updated_at_ms: display_name === null ? null : 1,
+  login_prefix: null,
 });
 
 const flushBatch = () => new Promise((r) => setTimeout(r, 30)); // > BATCH_DELAY_MS

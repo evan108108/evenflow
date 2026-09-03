@@ -53,6 +53,26 @@ export const bootstrapSession = (
     const { org: personal, created } = yield* ensurePersonalOrg(claims, token, claim);
 
     const db = yield* Db;
+
+    // Seed profileCache.login_prefix (migration 0032). Idempotent — the
+    // COALESCE keeps whatever's already there, so re-bootstraps and past
+    // sign-ins never re-derive from a login that changed. The row is
+    // created if missing with fetched_at_ms=0, so the next resolveProfile
+    // still refetches from 4A and populates name/display_name.
+    //
+    // This is the ONLY writer of login_prefix in the app, and it is the
+    // fallback the client's authorLabel renders when a member has never
+    // published a kind:0 nor set a display name — so an OAuth-only user
+    // shows up as "evan.frohlich" instead of the raw "google:1…" prefix.
+    const loginPrefix = claims.login.split("@")[0] ?? claims.login;
+    if (loginPrefix !== "") {
+      yield* db.execute(
+        `INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)
+         ON CONFLICT(pubkey) DO UPDATE SET login_prefix = COALESCE(profileCache.login_prefix, excluded.login_prefix)`,
+        [pubkey, loginPrefix],
+      );
+    }
+
     const orgRows = yield* db.queryAll<{
       slug: string;
       display_name: string;

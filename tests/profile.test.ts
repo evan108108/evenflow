@@ -36,10 +36,32 @@ const makeDbMock = () => {
   const service: DbService = {
     execute: (sql, params = []) =>
       Effect.sync(() => {
+        if (sql.startsWith("INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)")) {
+          // Migration 0032: session bootstrap seeds login_prefix. COALESCE
+          // in the SQL keeps the existing value; re-bootstraps never
+          // re-derive from a login that changed.
+          const [pubkey, login_prefix] = params;
+          const existing = profiles.find((r) => r["pubkey"] === pubkey);
+          if (existing !== undefined) {
+            if (existing["login_prefix"] === null || existing["login_prefix"] === undefined) {
+              existing["login_prefix"] = login_prefix;
+            }
+          } else {
+            profiles.push({
+              pubkey, name: null, display_name: null, picture: null, about: null,
+              event_id: null, updated_at_ms: 0, fetched_at_ms: 0, login_prefix,
+            });
+          }
+          return;
+        }
         if (sql.startsWith("INSERT INTO profileCache")) {
           const [pubkey, name, display_name, picture, about, event_id, updated_at_ms, fetched_at_ms] = params;
           const existing = profiles.find((r) => r["pubkey"] === pubkey);
-          const next = { pubkey, name, display_name, picture, about, event_id, updated_at_ms, fetched_at_ms };
+          // Preserve login_prefix on this write path — upsertCache
+          // deliberately leaves the column out of its column list so a
+          // 4A refresh can't wipe the bootstrap seed. Mirror that here.
+          const preservedLoginPrefix = existing?.["login_prefix"] ?? null;
+          const next = { pubkey, name, display_name, picture, about, event_id, updated_at_ms, fetched_at_ms, login_prefix: preservedLoginPrefix };
           if (existing) Object.assign(existing, next);
           else profiles.push(next);
           return;
@@ -59,6 +81,12 @@ const makeDbMock = () => {
       }),
     queryFirst: <R>(sql: string, params: ReadonlyArray<unknown> = []) =>
       Effect.sync(() => {
+        // Migration 0032: setMyProfile reads login_prefix before upsert so
+        // the bootstrap seed survives the write.
+        if (sql.startsWith("SELECT login_prefix FROM profileCache WHERE pubkey = ?")) {
+          const r = profiles.find((x) => x["pubkey"] === params[0]);
+          return (r ? { login_prefix: r["login_prefix"] ?? null } : null) as R | null;
+        }
         if (sql.startsWith("SELECT * FROM profileCache WHERE pubkey = ?")) {
           const r = profiles.find((x) => x["pubkey"] === params[0]);
           return (r ? { ...r } : null) as R | null;

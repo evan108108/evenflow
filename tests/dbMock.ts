@@ -1072,6 +1072,34 @@ export const makeDbMock = (): DbMock => {
           }
           return;
         }
+        // Profile login_prefix seed at session bootstrap (migration 0032).
+        // COALESCE keeps the existing value so re-bootstraps never rederive.
+        if (
+          sql.startsWith(
+            "INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)",
+          )
+        ) {
+          const [pubkey, login_prefix] = params;
+          const existing = profiles.find((r) => r["pubkey"] === pubkey);
+          if (existing !== undefined) {
+            if (existing["login_prefix"] === null || existing["login_prefix"] === undefined) {
+              existing["login_prefix"] = login_prefix;
+            }
+          } else {
+            profiles.push({
+              pubkey,
+              name: null,
+              display_name: null,
+              picture: null,
+              about: null,
+              event_id: null,
+              updated_at_ms: 0,
+              fetched_at_ms: 0,
+              login_prefix,
+            });
+          }
+          return;
+        }
         // Profile OAuth-seed persistence (regression fix for missing PFP on
         // cards): the /profile/me handler upserts picture into profileCache
         // when the JWT carries one and the cached row has picture=null.
@@ -1502,6 +1530,12 @@ export const makeDbMock = (): DbMock => {
         if (sql.startsWith("SELECT display_name, name FROM profileCache WHERE pubkey = ?")) {
           const r = profiles.find((x) => x["pubkey"] === params[0]);
           return (r ? { display_name: r["display_name"] ?? null, name: r["name"] ?? null } : null) as R | null;
+        }
+        // Profile login_prefix read: setMyProfile reads it before upsert so
+        // the bootstrap seed survives the write path (see actions/profile.ts).
+        if (sql.startsWith("SELECT login_prefix FROM profileCache WHERE pubkey = ?")) {
+          const r = profiles.find((x) => x["pubkey"] === params[0]);
+          return (r ? { login_prefix: r["login_prefix"] ?? null } : null) as R | null;
         }
         // ── phase 16.5: private-board audiences ──
         if (sql.startsWith("SELECT * FROM boardAudienceKey WHERE board_id = ? AND epoch = ?")) {

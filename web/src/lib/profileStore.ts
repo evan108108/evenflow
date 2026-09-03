@@ -26,6 +26,12 @@ export interface ProfileData {
   readonly about: string | null;
   readonly event_id: string | null;
   readonly updated_at_ms: number | null;
+  /**
+   * Email local-part seeded server-side at session bootstrap (migration
+   * 0032). Read by `authorLabel` as the last friendly fallback before the
+   * raw pubkey slice — see the fallback chain there.
+   */
+  readonly login_prefix: string | null;
 }
 
 interface ProfileEntry {
@@ -97,7 +103,14 @@ export const primeProfile = (profile: ProfileData): void => {
 };
 
 /** Display name resolution shared by every author surface:
- *  display_name → name → login-prefix (own pubkey only) → 8-char prefix. */
+ *  display_name → name → login_prefix (server-seeded, migration 0032)
+ *  → own login-prefix (self only, in case bootstrap hasn't run yet)
+ *  → 8-char pubkey slice.
+ *
+ *  login_prefix is why an OAuth-signed member who never opened /profile
+ *  still shows up as "evan.frohlich" instead of "google:1…" for everyone
+ *  else on their boards — bootstrapSession seeds it on every app load,
+ *  and the profile-store bulk fetch carries it back to every chip. */
 export const authorLabel = (
   profile: ProfileData | undefined,
   pubkey: string,
@@ -105,6 +118,7 @@ export const authorLabel = (
 ): string => {
   if (profile?.display_name != null && profile.display_name !== "") return profile.display_name;
   if (profile?.name != null && profile.name !== "") return profile.name;
+  if (profile?.login_prefix != null && profile.login_prefix !== "") return profile.login_prefix;
   if (self !== null && self.pubkey === pubkey) return self.login.split("@")[0] ?? self.login;
   return `${pubkey.slice(0, 8)}…`;
 };

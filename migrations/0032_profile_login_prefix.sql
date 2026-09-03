@@ -1,0 +1,30 @@
+-- Evenflow D1 schema — migration 0032: profileCache.login_prefix
+--
+-- When a user signs in with OAuth (google:<id>, github:<id>) and never
+-- publishes a kind:0 nor edits their profile, other viewers see the raw
+-- pubkey in every assignee chip and issue-detail card — the client's
+-- authorLabel falls back to an 8-char slice ("google:1…") because the
+-- server has no name/display_name to serve and no way to know the
+-- viewer is looking at, say, "evan.frohlich".
+--
+-- The email-local-part IS knowable to the server, but only to the OWNER
+-- of the pubkey (their JWT carries `claims.login`), and only at auth
+-- time. So we stash it on the owner's profileCache row at session
+-- bootstrap. Every subsequent bulk lookup — for assignee pickers,
+-- issue-detail cards, comment authors — includes it as a fallback the
+-- client can render when display_name/name are absent.
+--
+-- WHY A SEPARATE COLUMN AND NOT `name`. The name field is a projection
+-- of 4A kind:0 — resolveProfile refreshes it on every stale read and
+-- upsertCache overwrites it. If we seeded there, the next background
+-- refresh would clobber it with null. login_prefix is written ONLY by
+-- session bootstrap and is deliberately untouched by upsertCache, so
+-- a user's 4A profile going empty (or never being published at all)
+-- cannot wipe the fallback. Preserve-on-null discipline stated in the
+-- column, not in a helper.
+--
+-- Backfill: none. Existing users get their login_prefix on next sign-in
+-- (bootstrapSession runs on every app load), so the population is
+-- automatic — no one-shot script to write, verify, and re-run.
+
+ALTER TABLE profileCache ADD COLUMN login_prefix TEXT;

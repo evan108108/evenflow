@@ -70,6 +70,15 @@ export interface ProfileShape {
   readonly about: string | null;
   readonly event_id: string | null;
   readonly updated_at_ms: number | null;
+  /**
+   * Email local-part seeded on session bootstrap (migration 0032). Read by
+   * the client's authorLabel as the last friendly fallback before the raw
+   * 8-char pubkey prefix — so a member who has never published a kind:0
+   * still shows up as "evan.frohlich" rather than "google:1…" across the
+   * app. Written ONLY at bootstrap; upsertCache never touches it, so a
+   * 4A refresh returning empty fields cannot wipe the fallback.
+   */
+  readonly login_prefix: string | null;
 }
 
 /** What the route's raw image read produces once it has run. */
@@ -86,6 +95,7 @@ const emptyProfile = (pubkey: string): ProfileShape => ({
   about: null,
   event_id: null,
   updated_at_ms: null,
+  login_prefix: null,
 });
 
 type CacheRow = Record<string, unknown>;
@@ -100,11 +110,18 @@ const rowToProfile = (row: CacheRow): ProfileShape => ({
   updated_at_ms: ((row["updated_at_ms"] as number | null) ?? 0) === 0
     ? null
     : (row["updated_at_ms"] as number),
+  login_prefix: (row["login_prefix"] as string | null) ?? null,
 });
 
 const upsertCache = (profile: ProfileShape, fetchedAtMs: number) =>
   Effect.gen(function* () {
     const db = yield* Db;
+    // login_prefix is written by bootstrapSession and NEVER touched here,
+    // even on INSERT: if a profile refresh precedes the owner's next
+    // bootstrap the row lands with login_prefix=NULL, and their next
+    // sign-in fills it in (see seedLoginPrefix in actions/session.ts).
+    // That is the whole preserve-on-null discipline migration 0032
+    // documents in one place.
     yield* db.execute(
       `INSERT INTO profileCache (pubkey, name, display_name, picture, about, event_id, updated_at_ms, fetched_at_ms)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -158,6 +175,10 @@ const resolveProfile = (
       about: remote.right.fields.about ?? null,
       event_id: remote.right.event_id,
       updated_at_ms: remote.right.updated_at_ms,
+      // Preserved from the row on this refresh — bootstrapSession is the
+      // only writer, and a 4A refresh must not wipe the fallback (see
+      // migration 0032 header). Serve the row's value if we had one.
+      login_prefix: (row?.["login_prefix"] as string | null) ?? null,
     };
     yield* upsertCache(profile, now);
     return profile;
@@ -303,6 +324,13 @@ export const setMyProfile = (
     });
 
     const now = yield* Clock.currentTimeMillis;
+    // Preserve the bootstrap-seeded login_prefix on this write, same rule
+    // as resolveProfile — this handler goes through upsertCache too.
+    const db = yield* Db;
+    const existing = yield* db.queryFirst<{ login_prefix: string | null }>(
+      "SELECT login_prefix FROM profileCache WHERE pubkey = ?",
+      [pubkey],
+    );
     const updated: ProfileShape = {
       pubkey,
       name: name ?? null,
@@ -311,6 +339,7 @@ export const setMyProfile = (
       about: about ?? null,
       event_id: published.event_id,
       updated_at_ms: now,
+      login_prefix: existing?.login_prefix ?? null,
     };
     yield* upsertCache(updated, now);
 
