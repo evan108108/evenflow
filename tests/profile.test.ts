@@ -36,7 +36,7 @@ const makeDbMock = () => {
   const service: DbService = {
     execute: (sql, params = []) =>
       Effect.sync(() => {
-        if (sql.startsWith("INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)")) {
+        if (sql.startsWith("INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms, updated_at_ms) VALUES (?, ?, 0, 0)")) {
           // Migration 0032: session bootstrap seeds login_prefix. COALESCE
           // in the SQL keeps the existing value; re-bootstraps never
           // re-derive from a login that changed.

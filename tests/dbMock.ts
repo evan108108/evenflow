@@ -1076,7 +1076,7 @@ export const makeDbMock = (): DbMock => {
         // COALESCE keeps the existing value so re-bootstraps never rederive.
         if (
           sql.startsWith(
-            "INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)",
+            "INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms, updated_at_ms) VALUES (?, ?, 0, 0)",
           )
         ) {
           const [pubkey, login_prefix] = params;

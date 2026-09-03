@@ -66,8 +66,14 @@ export const bootstrapSession = (
     // shows up as "evan.frohlich" instead of the raw "google:1…" prefix.
     const loginPrefix = claims.login.split("@")[0] ?? claims.login;
     if (loginPrefix !== "") {
+      // profileCache.updated_at_ms is NOT NULL (init 0001), so the INSERT
+      // has to supply it even for a stub row we hope will be replaced by
+      // the next resolveProfile refresh. Zero is the sentinel the reader
+      // treats as "never fetched" (rowToProfile normalizes 0 → null on
+      // updated_at_ms exposure), so a subsequent GET refetches from 4A
+      // and populates the real name/display_name fields.
       yield* db.execute(
-        `INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms) VALUES (?, ?, 0)
+        `INSERT INTO profileCache (pubkey, login_prefix, fetched_at_ms, updated_at_ms) VALUES (?, ?, 0, 0)
          ON CONFLICT(pubkey) DO UPDATE SET login_prefix = COALESCE(profileCache.login_prefix, excluded.login_prefix)`,
         [pubkey, loginPrefix],
       );
