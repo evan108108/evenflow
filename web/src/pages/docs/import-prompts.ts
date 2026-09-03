@@ -47,19 +47,32 @@ export const IMPORT_PROMPTS: ReadonlyArray<ImportPrompt> = [
     blurb: "Issues → CSV from the Linear export menu.",
     body: `Source is a Linear CSV export. Map it:
 
-- Title -> title, Description -> body, Labels -> labels (swap commas for semicolons)
-- Estimate -> estimate (whole number, blank if empty)
+- Title -> title, Description -> body
 - URL -> external_url. If there's no URL column, build it from the issue ID.
 - Created -> created_at_ms
+- Estimate -> estimate. Linear writes it as a plain integer; carry it as a plain integer.
+  Blank ONLY when the source cell is truly empty — don't drop it because it looked small.
+- Labels -> labels, semicolon-separated. Every non-empty label in the Labels cell survives;
+  swap the "," between labels for ";" and keep the label text untouched. Do not filter out
+  labels you consider organizational (team names, area tags) — they carry meaning on the
+  destination board.
+- Priority -> ALSO into labels as a "priority:<value>" tag, lowercased and hyphenated
+  ("High" -> "priority:high", "No priority" -> "priority:none"). Evenflow's canonical schema
+  has no priority column, so folding it into labels is how it survives the import. Append it
+  to whatever labels the row already has; don't drop the row's other labels to make room.
 - Linear's Status values are Backlog / Todo / In Progress / In Review / Done / Canceled /
   Duplicate. Map them to the destination board's column names. Canceled and Duplicate usually
   belong in whatever column that board treats as done — ask me rather than guessing.
 - Linear has no type field. Infer it from labels: a "bug" label -> bug, "feature" or
-  "enhancement" -> feature, otherwise task.
+  "enhancement" -> feature, otherwise task. (Use the Labels cell for this inference, NOT the
+  priority:* tag you just added.)
 - Issues in Backlog status usually want container backlog; anything In Progress or In Review
   wants active. Triage or parked states -> icebox.
-- Drop Linear's Priority, Cycle, Project, Parent issue and SLA columns. Evenflow's canonical
-  import doesn't carry them.`,
+- Drop Linear's Cycle, Project, Parent issue and SLA columns. Evenflow's canonical import
+  doesn't carry them.
+- Every source row becomes one output row. Descriptions often contain newlines and quotes —
+  that is normal CSV, quote the body field and keep going; do not silently skip a row because
+  its body was multi-line.`,
   },
   {
     vendor: "Jira",
