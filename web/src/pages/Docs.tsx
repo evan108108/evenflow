@@ -36,7 +36,8 @@ const MCP_CONNECT = `{
   }
 }`;
 
-const MCP_CALL = `curl -X POST https://evenflow.work/mcp \\
+const MCP_CALL = `# Mint the key at https://evenflow.work/settings/keys, then:
+curl -X POST https://evenflow.work/mcp \\
   -H "Authorization: Bearer evk_your_key_here" \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
@@ -170,8 +171,10 @@ export const Docs = () => (
       <h2>MCP</h2>
       <p>
         Evenflow speaks MCP (streamable HTTP, JSON-RPC 2.0) at{" "}
-        <code>POST https://evenflow.work/mcp</code> — same Bearer auth as REST, so an{" "}
-        <code>evk_</code> key is all a client needs. Claude Code / Desktop config:
+        <code>POST https://evenflow.work/mcp</code> — same Bearer auth as REST. The{" "}
+        <code>evk_your_key_here</code> placeholder below is an API key: mint one at{" "}
+        <a href="/settings/keys">/settings/keys</a> and paste it in. It acts as you and can be
+        revoked at any time; the plaintext is shown once at mint. Claude Code / Desktop config:
       </p>
       <pre class="docs-code">{MCP_CONNECT}</pre>
       <p>Or raw JSON-RPC:</p>
