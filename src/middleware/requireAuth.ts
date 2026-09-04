@@ -20,7 +20,7 @@
 import type { MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
 import { Cause, Clock, Data, Effect, Exit, Option } from "effect";
-import { entryForMatch } from "../routes-manifest";
+import { entryForMatch, type RouteEntry } from "../routes-manifest";
 import {
   derivedRequirement,
   describeRequirement,
@@ -176,7 +176,31 @@ const makeAuthMiddleware = (
     // where the board is resolved. Two choke points, two different questions,
     // each at the only layer that can answer its own.
     if (grants !== null) {
-      const entry = entryForMatch(c.req.method, routePath(c, -1));
+      // Hono 4.12 puts the matched middleware AND the resolved route AND a
+      // trailing "/*" catchall into c's matched-routes list, in that order.
+      // `routePath(c, -1)` picks the catchall — never a manifest entry — so
+      // the scope check that was supposed to key off the resolved route
+      // failed closed on every scoped-key REST call. Iterating the list and
+      // taking the first manifest match keeps the check keyed on the ACTUAL
+      // route (SCT-7 attachment download regression, 2026-09-04). Test
+      // request shape masks it because `h.app.request` resolves routing
+      // synchronously into a shorter list — see tests/scopes.test.ts, which
+      // was green while prod was broken.
+      let entry: RouteEntry | null = null;
+      let matchedPath = "";
+      for (let i = 0; ; i++) {
+        const p = routePath(c, i);
+        if (p === "") break;
+        const found = entryForMatch(c.req.method, p);
+        if (found !== null) {
+          entry = found;
+          matchedPath = p;
+          break;
+        }
+      }
+      // matchedPath is retained for future diagnostic use; the current
+      // check only cares whether `entry` is non-null.
+      void matchedPath;
       // FAIL CLOSED. No manifest entry means nothing can say what reaching
       // this route ought to require, and "unknown requirement" must never
       // read as "no requirement". This is what makes the manifest the
