@@ -32,6 +32,7 @@ export const ALLOWED_CONTENT_TYPES = [
   "image/gif",
   "application/pdf",
   "text/plain",
+  "text/markdown",
   "application/zip",
   "application/json",
 ] as const;

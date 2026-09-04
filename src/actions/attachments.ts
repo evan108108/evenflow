@@ -293,8 +293,8 @@ export const createAttachment = (
         : needsByoStorage(upload.contentType)
           ? `${upload.contentType} files need your own storage bucket — Evenflow's default storage takes images only.`
           : byob
-            ? `${upload.contentType} isn't an accepted file type — images, PDFs, plain text, zip, and JSON are.`
-            : `${upload.contentType} isn't an accepted file type — Evenflow's default storage takes images. With your own bucket you can also attach PDFs, plain text, zip, and JSON.`;
+            ? `${upload.contentType} isn't an accepted file type — images, PDFs, plain text, markdown, zip, and JSON are.`
+            : `${upload.contentType} isn't an accepted file type — Evenflow's default storage takes images. With your own bucket you can also attach PDFs, plain text, markdown, zip, and JSON.`;
       return yield* new RejectedError({ code: "type_not_allowed", message, link });
     }
     const existing = yield* listLiveAttachments(issue.id);
