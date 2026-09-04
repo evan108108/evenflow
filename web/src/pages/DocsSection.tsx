@@ -166,7 +166,7 @@ export const DocsNav = (props: { current?: string | undefined }) => (
         </a>
       )}
     </For>
-    <a class="docs-sidebar-item docs-sidebar-llms" href="/docs/llms.txt">
+    <a class="docs-sidebar-item docs-sidebar-llms" href="/docs/llms.txt" rel="external" target="_blank">
       llms.txt ↓
     </a>
     {/* The way into the product. TopBar's brand points at /boards, which is
@@ -180,6 +180,19 @@ export const DocsNav = (props: { current?: string | undefined }) => (
 export const DocsSection = () => {
   const params = useParams();
   const section = () => sectionById(params["section"] ?? "");
+
+  // Belt-and-suspenders for the llms.txt link: solidjs-router intercepts
+  // internal <a href> clicks by default, and a click on the sidebar's
+  // llms.txt link used to land here with section="llms.txt" (no such
+  // section → "No such page"), even though the Worker serves the text at
+  // that exact URL. The anchor now sets rel="external" target="_blank",
+  // but any residual same-tab navigation lands here — hard-redirect the
+  // browser to the Worker path so the reader sees the file, not this
+  // fallback. Same handling for any future .txt drop-in.
+  const raw = () => params["section"] ?? "";
+  if (typeof window !== "undefined" && raw().endsWith(".txt")) {
+    window.location.replace(`/docs/${raw()}`);
+  }
 
   return (
     <main class="docs-main">

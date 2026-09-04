@@ -19,7 +19,7 @@ export const SiteFooter = () => (
       <a href="/docs/api">API reference</a>
       {/* Served as text/plain by the Worker: the whole documentation set in
           one request, for agents that would rather not crawl seven pages. */}
-      <a href="/docs/llms.txt">llms.txt</a>
+      <a href="/docs/llms.txt" rel="external" target="_blank">llms.txt</a>
       {/* API keys removed from footer — it's a settings surface, not a doc.
           Reachable from /settings/keys via the user nav. */}
     </nav>
