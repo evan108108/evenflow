@@ -55,7 +55,13 @@ export const StorageSection = (props: { handle: string }) => {
     local() ?? remote() ?? "";
   const blossomValue = field(blossomUrl, () => saved()?.blossom_url);
   const endpointValue = field(endpoint, () => saved()?.s3_endpoint);
-  const regionValue = field(region, () => saved()?.s3_region);
+  // Region defaults to "auto" (R2's convention, and a valid AWS SDK default)
+  // when S3 is selected and neither the local edit nor the saved config
+  // supplies one — surfacing "auto" as an editable value rather than as a
+  // placeholder the browser drops on submit. The placeholder still guards
+  // against a caller who explicitly clears the field back to empty.
+  const regionValue = () =>
+    region() ?? saved()?.s3_region ?? (kindValue() === "s3" ? "auto" : "");
   const bucketValue = field(bucket, () => saved()?.s3_bucket);
   const pathStyleValue = () => pathStyle() ?? saved()?.s3_path_style ?? true;
 
@@ -87,10 +93,15 @@ export const StorageSection = (props: { handle: string }) => {
       } else if (k === "blossom") {
         body = { kind: "blossom", blossom_url: blossomValue().trim() };
       } else {
+        // Region is R2's "auto" for a Cloudflare bucket and something like
+        // us-east-1 for AWS. Backfill "auto" only when the field is empty —
+        // an empty string used to reach the server verbatim and 400 on the
+        // s3_region required-string check.
+        const region = regionValue().trim() === "" ? "auto" : regionValue().trim();
         body = {
           kind: "s3",
           s3_endpoint: endpointValue().trim(),
-          s3_region: regionValue().trim(),
+          s3_region: region,
           s3_bucket: bucketValue().trim(),
           s3_path_style: pathStyleValue(),
         };
@@ -117,8 +128,19 @@ export const StorageSection = (props: { handle: string }) => {
       await api((c) => c.put(storageApi(), body));
       setNotice("Saved — flowing outward.");
       void refetch();
-    } catch {
-      setError("The current pushed back. Nothing was saved — try again.");
+    } catch (e) {
+      // Surface the server's `reason` when we have one — e.g. "s3_region" —
+      // so a validation miss is diagnosed at the field, not left as poetry.
+      const body = (e as { body?: unknown } | undefined)?.body;
+      const reason =
+        body !== null && typeof body === "object" && "reason" in body
+          ? String((body as { reason: unknown }).reason)
+          : "";
+      setError(
+        reason !== ""
+          ? `The current pushed back — server reason: ${reason}.`
+          : "The current pushed back. Nothing was saved — try again.",
+      );
     } finally {
       clearSecrets();
       setBusy(false);

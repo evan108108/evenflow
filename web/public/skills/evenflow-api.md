@@ -16,10 +16,19 @@ play?", separate from status).
 Every call needs `Authorization: Bearer <token>`:
 
 1. If the user gives you a key (starts with `evk_`) or a JWT, use it.
-2. Else check the memory secret store for `evenflow_login` (e.g.
-   `mem_secret_get evenflow_login` in Sonata sessions) — it holds an `evk_` key.
-3. Else ask the user to mint one at https://evenflow.work/settings/keys and
-   either paste it or save it as the `evenflow_login` secret.
+2. Else get the API key from the memory secret store: **`evenflow_apikey`**
+   (`mem_secret_get evenflow_apikey`) — Sona's persistent `evk_` key, minted
+   2026-07-31. This is THE standing credential; try it FIRST, always.
+3. Else (no API key in the store) sign in via 4a with the Nostr creds — the
+   `/evenflow-signup` flow's keypair — to mint a fresh session, then save the
+   resulting `evk_` key back as `evenflow_apikey`.
+4. Else ask the user to mint one at https://evenflow.work/settings/keys and
+   either paste it or save it as the `evenflow_apikey` secret.
+
+Do NOT use the `evenflow_login` secret — it is a ~7-day Nostr-signed JWT
+(long expired; kept only as a historical artifact). A session reaching for it
+instead of `evenflow_apikey` and concluding "the Evenflow credential is
+expired" is the exact failure this ordering exists to prevent (2026-09-03).
 
 Keys act as their owner and work on both REST and MCP. A 401 with reason
 `invalid-api-key` means revoked/wrong key — ask for a fresh one, don't retry.
