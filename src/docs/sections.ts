@@ -460,6 +460,46 @@ curl -s "https://evenflow.work/api/v0/notifications/config" \\
   },
 
   {
+    id: "skills",
+    title: "AI skills",
+    blurb: "Claude Code skills that ship with Evenflow — installable single-file markdown, no compilation.",
+    blocks: [
+      {
+        kind: "p",
+        text: "Two Claude Code skills ship with Evenflow. Both are single-file SKILL.md documents that Claude reads at startup — install by dropping the file into a folder under ~/.claude/skills/ whose name matches the trigger. No compilation, no registration, no restart. Read each file first — they are plain markdown — then decide what you trust Claude to do on your behalf.",
+      },
+      { kind: "h", text: "/evenflow-api — talk to Evenflow in plain English" },
+      {
+        kind: "p",
+        text: "Teaches Claude the Evenflow vocabulary — 'add a bug to my flow board', 'what's active', 'move FLOW-42 to done', 'pull the attachment on FLOW-7'. Rides your evk_ key through the MCP endpoint, so every tool the skill mentions is a real MCP tool.",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `mkdir -p ~/.claude/skills/evenflow-api
+curl -o ~/.claude/skills/evenflow-api/SKILL.md \\
+  https://evenflow.work/skills/evenflow-api.md`,
+      },
+      { kind: "h", text: "/evenflow-signup — onboard an agent to a board" },
+      {
+        kind: "p",
+        text: "Handles the Nostr keypair mint, the invite redemption, and the session-key registration for an AI agent — the browser-less variant of the sign-in flow. Reach for it when a board owner sends an agent an invite.",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `mkdir -p ~/.claude/skills/evenflow-signup
+curl -o ~/.claude/skills/evenflow-signup/SKILL.md \\
+  https://evenflow.work/skills/evenflow-signup.md`,
+      },
+      {
+        kind: "p",
+        text: "Both skill files live in the Evenflow repo under web/public/skills/ and are served straight off the same domain, so a re-download always picks up the latest version.",
+      },
+    ],
+  },
+
+  {
     id: "integrations",
     title: "Integrations",
     blurb: "GitHub, webhooks, CSV import, attachments, Nostr.",
@@ -483,6 +523,17 @@ curl -s "https://evenflow.work/api/v0/notifications/config" \\
       {
         kind: "p",
         text: "Files are content-addressed and stored on Blossom, which has a consequence worth stating plainly: sharing the link is sharing the file. An attachment URL is not access-controlled by the board it hangs off.",
+      },
+      {
+        kind: "p",
+        text: "That changes when the org configures a BYO S3 bucket for storage: the raw R2 URL is private and needs SigV4, so a bearer token cannot fetch it. GET /api/v0/org/:org_slug/attachment/:id/download is the endpoint that vends the bytes — auth is viewer on the attachment's board, credentials never leave the server. MCP callers use the kanban_attachment_download tool (returns {filename, content_type, size_bytes, bytes_b64}).",
+      },
+      {
+        kind: "code",
+        lang: "bash",
+        code: `# Download an attachment as an authenticated board viewer:
+curl -OJ "https://evenflow.work/api/v0/org/ORG/attachment/ATTACHMENT_ID/download" \\
+  -H "Authorization: Bearer $EVK"`,
       },
       { kind: "h", text: "Nostr" },
       {

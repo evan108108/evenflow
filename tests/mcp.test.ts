@@ -52,11 +52,11 @@ describe("POST /mcp protocol methods", () => {
     });
   });
 
-  it("tools/list enumerates all 17 tools, each with an object inputSchema", async () => {
+  it("tools/list enumerates all 18 tools, each with an object inputSchema", async () => {
     const h = makeHarness();
     const { body } = await rpc(h, { jsonrpc: "2.0", id: 2, method: "tools/list" });
     const tools = (body.result as { tools: Array<Record<string, unknown>> }).tools;
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(18);
     expect(tools.map((t) => t["name"])).toEqual(MCP_TOOLS.map((t) => t.name));
     for (const tool of tools) {
       expect(typeof tool["description"]).toBe("string");

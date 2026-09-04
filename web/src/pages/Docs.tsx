@@ -11,6 +11,7 @@
 import { For, Show } from "solid-js";
 import { SECTIONS } from "@docs-content/sections";
 import { TopBar } from "../components/TopBar";
+import { CodeBlock } from "../components/CodeBlock";
 import { methodOf, pathOf, MCP_TOOLS, REST_SECTIONS } from "./docs/rest-spec";
 import { IMPORT_PROMPTS, IMPORT_PROMPT_PREAMBLE } from "./docs/import-prompts";
 import { CANONICAL_COLUMNS } from "../../../src/lib/csv-canonical";
@@ -63,7 +64,7 @@ export const Docs = () => (
         <a href="#rest">REST reference</a>
         <a href="#mcp">MCP</a>
         <a href="#import">Import</a>
-        <a href="#skill">/evenflow skill</a>
+        <a href="#skill">AI skills</a>
         <a href="#attachment-privacy">Attachment storage</a>
         {/* A cold reader needs a way INTO the product, not just around the
             docs. TopBar's brand goes to /boards, which is behind auth. */}
@@ -207,9 +208,12 @@ export const Docs = () => (
         whoever arrives from the tracker nobody wrote an adapter for.
       </p>
       <p>
-        So the conversion is done by the thing that's already good at it. Export from your
-        tracker, hand the file to your AI assistant with the matching prompt below, and paste
-        what comes back into <strong>Board settings → Import from CSV</strong>. The header is:
+        So the conversion is done by the thing that's already good at it. Each block below is a{" "}
+        <strong>prompt</strong> — copy it, paste it into the chat of your AI assistant along with
+        the CSV export you got from the tracker, and paste the CSV it hands back into{" "}
+        <strong>Board settings → Import from CSV</strong>. Nothing here is a "download this
+        skill" step: they are prompt strings, and the Copy button on each is the whole install.
+        The header of the CSV the AI must produce is:
       </p>
       <pre class="docs-code">{CANONICAL_HEADER}</pre>
       <p class="muted">
@@ -233,7 +237,10 @@ export const Docs = () => (
                 <code class="path">{prompt.vendor}</code>
               </div>
               <p>{prompt.blurb}</p>
-              <pre class="docs-code">{`${IMPORT_PROMPT_PREAMBLE}\n\n${prompt.body}`}</pre>
+              <CodeBlock
+                code={`${IMPORT_PROMPT_PREAMBLE}\n\n${prompt.body}`}
+                lang={null}
+              />
             </article>
           )}
         </For>
@@ -241,13 +248,49 @@ export const Docs = () => (
     </section>
 
     <section id="skill" class="docs-section">
-      <h2>The /evenflow skill</h2>
+      <h2>Skills for Claude Code</h2>
       <p>
-        Claude Code users can install the <code>/evenflow</code> skill: drop{" "}
-        <code>SKILL.md</code> into <code>~/.claude/skills/evenflow/</code> and Claude learns the
-        whole vocabulary above — "add a bug to my flow board", "what's active", "move FLOW-42 to
-        done" — riding your <code>evk_</code> key through the MCP endpoint. The skill file ships
-        in the Evenflow repo at <code>skills/evenflow/SKILL.md</code>.
+        Two Claude Code skills ship with Evenflow. Both are single-file <code>SKILL.md</code>{" "}
+        documents Claude reads at startup — install by dropping the file into a folder under{" "}
+        <code>~/.claude/skills/</code> whose name matches the trigger. No compilation, no
+        registration, no restart.
+      </p>
+      <dl class="webhook-setup">
+        <dt>/evenflow-api</dt>
+        <dd>
+          The vocabulary above, teach-Claude-style: "add a bug to my flow board", "what's
+          active", "move FLOW-42 to done", "pull the attachment on FLOW-7". Rides your{" "}
+          <code>evk_</code> key through the MCP endpoint.
+          <br />
+          <a href="/skills/evenflow-api.md" download="SKILL.md">
+            Download evenflow-api.md
+          </a>{" "}
+          → install to <code>~/.claude/skills/evenflow-api/SKILL.md</code>.
+          <br />
+          <span class="muted">
+            One-liner: <code>mkdir -p ~/.claude/skills/evenflow-api && curl -o ~/.claude/skills/evenflow-api/SKILL.md https://evenflow.work/skills/evenflow-api.md</code>
+          </span>
+        </dd>
+        <dt>/evenflow-signup</dt>
+        <dd>
+          Onboards an AI agent to a board (Nostr keypair, invite redemption, key registration)
+          without a browser round-trip. Reach for it when a board owner sends an agent an
+          invite.
+          <br />
+          <a href="/skills/evenflow-signup.md" download="SKILL.md">
+            Download evenflow-signup.md
+          </a>{" "}
+          → install to <code>~/.claude/skills/evenflow-signup/SKILL.md</code>.
+          <br />
+          <span class="muted">
+            One-liner: <code>mkdir -p ~/.claude/skills/evenflow-signup && curl -o ~/.claude/skills/evenflow-signup/SKILL.md https://evenflow.work/skills/evenflow-signup.md</code>
+          </span>
+        </dd>
+      </dl>
+      <p class="muted">
+        Both files are just Markdown — read them first, decide what you trust Claude to do on
+        your behalf, then install. They live in the Evenflow repo at{" "}
+        <code>web/public/skills/</code> and are served straight off the same domain.
       </p>
     </section>
 

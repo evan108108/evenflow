@@ -23,6 +23,7 @@ import type { Context } from "hono";
 import { requireAuth } from "../middleware/requireAuth";
 import { bootstrap } from "../effects";
 import type { AppHonoEnv, LayerFor } from "../http";
+import { makeAttachmentsRouter } from "./attachments";
 import { makeBoardsRouter } from "./boards";
 import { makeCommentsRouter } from "./comments";
 import { makeFeedRouter } from "./feed";
@@ -72,6 +73,15 @@ interface ToolDef {
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
   readonly toRequest: (args: Record<string, unknown>) => RestRequest;
+  /**
+   * Response shape. Default "json" — the REST route already answers with a
+   * JSON body and the tool returns it verbatim. "bytes" — the REST route
+   * returns a raw payload (e.g. attachment.download's file bytes); the tool
+   * shell reads the body, base64-encodes it, and wraps it in
+   * `{ filename, content_type, size_bytes, bytes_b64 }` so the JSON-RPC
+   * envelope remains valid.
+   */
+  readonly responseKind?: "json" | "bytes";
 }
 
 /** Require a string argument (path params must exist before dispatch). */
@@ -372,6 +382,26 @@ export const MCP_TOOLS: ReadonlyArray<ToolDef> = [
       query: pick(a, ["type", "limit", "after"]),
     }),
   },
+  {
+    name: "kanban_attachment_download",
+    description:
+      "Pull the raw bytes of an attachment. Returns { filename, content_type, size_bytes, bytes_b64 } — decode bytes_b64 (standard base64) to get the file. Auth is viewer on the attachment's board. Works uniformly across default Blossom and BYO S3; do NOT fetch the row's blob_url directly on a BYO S3 attachment, that URL is private and requires SigV4.",
+    inputSchema: schema(
+      {
+        id: {
+          type: "string",
+          description:
+            "Attachment UUID (from kanban_issue_get's attachments[].id).",
+        },
+      },
+      ["id"],
+    ),
+    toRequest: (a) => ({
+      method: "GET",
+      path: url("attachment.download", { id: str(a, "id") }),
+    }),
+    responseKind: "bytes",
+  },
 ];
 
 const TOOL_BY_NAME = new Map(MCP_TOOLS.map((t) => [t.name, t]));
@@ -387,6 +417,12 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
   api.route("/api/v0", makeIssuesRouter(layerFor));
   api.route("/api/v0", makeCommentsRouter(layerFor));
   api.route("/api/v0", makeFeedRouter(layerFor));
+  // Attachments is mounted so kanban_attachment_download can dispatch the
+  // signed GET (bytes) through the same internal REST surface as every
+  // other tool. All other attachment ops are intentionally NOT exposed as
+  // MCP tools yet — upload/patch/delete take file bytes or admin power
+  // that the caller can drive via REST directly.
+  api.route("/api/v0", makeAttachmentsRouter(layerFor));
 
   const callTool = async (
     c: Context<AppHonoEnv>,
@@ -424,6 +460,41 @@ export const makeMcpRouter = (layerFor: LayerFor = bootstrap) => {
       },
       c.env,
     );
+
+    if (tool.responseKind === "bytes") {
+      // A bytes-back tool: the REST route answered with a raw payload
+      // (Content-Disposition, Content-Type, no JSON). Wrap it in a JSON
+      // envelope the JSON-RPC transport can carry. Errors on this path
+      // are still JSON — the route swaps mime types on failure — so an
+      // !res.ok gets JSON-parsed the same way the default branch does.
+      if (!res.ok) {
+        const data = (await res.json()) as Record<string, unknown>;
+        const reason = typeof data["reason"] === "string" ? `: ${data["reason"]}` : "";
+        throw new RpcError(codeForStatus(res.status), `${data["error"] ?? "error"}${reason}`, data);
+      }
+      const buf = new Uint8Array(await res.arrayBuffer());
+      // Base64 encode. atob/btoa aren't in Workers, but a fromCharCode chunk
+      // + globalThis.btoa works on Cloudflare Workers' V8 (both are polyfilled).
+      let bin = "";
+      for (const b of buf) bin += String.fromCharCode(b);
+      const bytesB64 = btoa(bin);
+      const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+      // Content-Disposition carries `filename="…"` and optionally
+      // `filename*=UTF-8''…`; the RFC 5987 form wins when both are
+      // present. Fall back to the ASCII form, then to "download".
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+      const asciiMatch = /filename="([^"]+)"/i.exec(disposition);
+      const filename = utf8Match
+        ? decodeURIComponent(utf8Match[1] ?? "")
+        : (asciiMatch?.[1] ?? "download");
+      return {
+        filename,
+        content_type: contentType,
+        size_bytes: buf.byteLength,
+        bytes_b64: bytesB64,
+      };
+    }
 
     const data = (await res.json()) as Record<string, unknown>;
     if (!res.ok) {

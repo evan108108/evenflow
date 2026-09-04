@@ -202,6 +202,13 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
         response: "{ deleted: true }",
         curl: `curl -X DELETE ${BASE}/attachment/FLOW-42 -H "Authorization: Bearer ${KEY}"`,
       },
+      {
+        id: "attachment.download",
+        summary:
+          "Pull the bytes. Auth is `viewer` on the attachment's board. Works uniformly across default Blossom and BYO S3 — for BYO S3, the server signs a GET on the org's stored credentials and streams the bytes back with the original Content-Type and a Content-Disposition attachment filename. Do NOT fetch the row's `blob_url` directly on a BYO S3 attachment — that URL is private and needs SigV4 the caller does not have.",
+        response: "raw file bytes",
+        curl: `curl -OJ ${BASE}/attachment/ATTACHMENT_ID/download -H "Authorization: Bearer ${KEY}"`,
+      },
     ],
   },
   {
@@ -392,5 +399,12 @@ export const MCP_TOOLS: ReadonlyArray<McpTool> = [
     summary: "Board activity feed, filterable by creation/status/container.",
     args: "{ board_slug, type?, limit?, after? }",
     example: '{"name":"kanban_activity_read","arguments":{"board_slug":"flow"}}',
+  },
+  {
+    name: "kanban_attachment_download",
+    summary:
+      "Pull an attachment's bytes wrapped in a JSON envelope — {filename, content_type, size_bytes, bytes_b64}. Decode bytes_b64 (standard base64) to get the file. Same auth as REST /attachment/:id/download (viewer on the board); works for both default Blossom and BYO S3.",
+    args: "{ id } — attachment UUID from kanban_issue_get's attachments[].id",
+    example: '{"name":"kanban_attachment_download","arguments":{"id":"fa745953-183b-45b3-9269-8447e04db820"}}',
   },
 ];
