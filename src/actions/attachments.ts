@@ -392,6 +392,111 @@ export const listAttachments = (input: PublicActionInput) =>
     return { attachments: attachments_ };
   });
 
+// ── GET /attachment/:id/download — pull the bytes back ─────────────────
+//
+// The gap this exists to close: `blob_url` on a BYO-S3 attachment is a
+// private R2 URL that requires SigV4, and no endpoint here proxied it, so
+// an agent that could see the METADATA (attachment.list) could not read
+// the CONTENT. Scout hit exactly this on SCT-7 — three routes tried,
+// three 400/403s, no way through with an evk_ key.
+//
+// This endpoint proves viewer role on the attachment's board, then either
+// (a) fetches the public Blossom URL through, or (b) signs an S3 GET on
+// the org's stored credentials and streams those bytes back. Credentials
+// never leave the server; the caller sees only bytes + content-type +
+// filename, all shaped for a Content-Disposition attachment.
+//
+// storageSecret is `c.env.EVENFLOW_STORAGE_SECRET` — the same passthrough
+// used by the upload path (createAttachment above), threaded explicitly
+// so this action stays a pure function of its inputs.
+export interface DownloadedAttachment {
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+  readonly filename: string;
+}
+
+export const downloadAttachment = (
+  input: PublicActionInput,
+  storageSecret: string | undefined,
+): Effect.Effect<DownloadedAttachment, AttachmentsFailure, AttachmentServices> =>
+  Effect.gen(function* () {
+    const pubkey = input.claims === null ? null : callerPubkey(input.claims);
+    const { attachment, issue } = yield* fetchAttachment(
+      input.params["id"] ?? "",
+      pubkey,
+      "viewer",
+      input.grants,
+    );
+    if (attachment.storage_kind === "s3_byo") {
+      const db = yield* Db;
+      const boardRow = yield* db.queryFirst<{ org_id: string | null }>(
+        "SELECT org_id FROM boardCache WHERE id = ?",
+        [issue.board_id],
+      );
+      const orgId = boardRow?.org_id ?? null;
+      if (orgId === null) return yield* new NotFoundError({ reason: "attachment" });
+      const cfg = yield* getOrgStorageConfig(orgId);
+      if (cfg === null || cfg.kind !== "s3") {
+        // Row says s3_byo but the org's config is no longer s3 — the
+        // upload's storage class was reassigned or deleted. Report the
+        // attachment as gone rather than leak the shape of the mismatch.
+        return yield* new NotFoundError({ reason: "attachment" });
+      }
+      const keys = deriveServerStorageKeys(storageSecret);
+      if (keys === null) return yield* new StorageCredsError({ reason: "server-key" });
+      if (cfg.s3_creds_ciphertext === null || cfg.s3_creds_sender_pubkey === null) {
+        return yield* new StorageCredsError({ reason: "missing-creds" });
+      }
+      const creds = decryptS3Creds(keys, cfg.s3_creds_ciphertext, cfg.s3_creds_sender_pubkey);
+      if (creds === null) return yield* new StorageCredsError({ reason: "creds-unreadable" });
+      const target: S3Target = {
+        endpoint: cfg.s3_endpoint ?? "",
+        region: cfg.s3_region ?? "",
+        bucket: cfg.s3_bucket ?? "",
+        pathStyle: cfg.s3_path_style,
+        accessKeyId: creds.access_key_id,
+        secretAccessKey: creds.secret_access_key,
+      };
+      // The upload used `evenflow/${org_id}/${sha256}` — deterministic
+      // by design, so we can rebuild the key rather than parse it back
+      // out of blob_url (parsing would drag path-style vs virtual-hosted
+      // vs custom-domain considerations into the read path).
+      const key = `evenflow/${orgId}/${attachment.sha256}`;
+      const s3 = yield* S3;
+      const { bytes, contentType } = yield* s3.getObject(target, key);
+      return {
+        bytes,
+        contentType: contentType ?? attachment.content_type,
+        filename: attachment.filename,
+      };
+    }
+    // Blossom paths — the URL is public (content-addressed) either way,
+    // so a plain fetch is the right shape. We could redirect the caller
+    // to blob_url and save the byte-copy, but a redirect from an authed
+    // endpoint to a public URL would leak the fact that the blob is
+    // available anonymously (it is), which is a subtle contract change
+    // and not this endpoint's job to make. Bytes-through preserves the
+    // "authenticated attachment read" shape for every storage kind.
+    const res = yield* Effect.tryPromise({
+      try: () => fetch(attachment.blob_url),
+      catch: (e) =>
+        new BlossomError({ reason: "http", status: 502, detail: String(e) }),
+    });
+    if (!res.ok) {
+      return yield* new BlossomError({
+        reason: "http",
+        status: res.status,
+        detail: `fetch ${attachment.blob_url}`,
+      });
+    }
+    const buf = yield* Effect.promise(() => res.arrayBuffer());
+    return {
+      bytes: new Uint8Array(buf),
+      contentType: res.headers.get("content-type") ?? attachment.content_type,
+      filename: attachment.filename,
+    };
+  });
+
 // ── PATCH /attachments/:id — {is_cover} ─────────────────────────────────
 /**
  * NOT a deferred body, deliberately (EFB-98 rule 10 — preserve means preserve,

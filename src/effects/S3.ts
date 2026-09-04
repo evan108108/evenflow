@@ -13,6 +13,7 @@ import {
   buildS3Url,
   parseS3Error,
   signDeleteObject,
+  signGetObject,
   signHeadObject,
   signPutObject,
 } from "../lib/s3-sign";
@@ -41,6 +42,15 @@ export interface S3Service {
     bytes: Uint8Array,
     contentType: string,
   ) => Effect.Effect<{ url: string }, S3Error>;
+  /**
+   * GET bytes at `key`. Returns the raw payload alongside the server-reported
+   * content-type when present, so an attachment-download handler can pass
+   * through the type the upload wrote rather than second-guess it.
+   */
+  readonly getObject: (
+    target: S3Target,
+    key: string,
+  ) => Effect.Effect<{ bytes: Uint8Array; contentType: string | null }, S3Error>;
   readonly headObject: (target: S3Target, key: string) => Effect.Effect<void, S3Error>;
   readonly deleteObject: (target: S3Target, key: string) => Effect.Effect<void, S3Error>;
 }
@@ -94,6 +104,19 @@ export const S3Live: Layer.Layer<S3> = Layer.succeed(S3, {
       },
       catch: asS3Error,
     }),
+  getObject: (target, key) =>
+    Effect.tryPromise({
+      try: async () => {
+        const signed = signGetObject(signArgs(target, key));
+        const res = await run(signed.url, { method: "GET", headers: signed.headers });
+        const buf = await res.arrayBuffer();
+        return {
+          bytes: new Uint8Array(buf),
+          contentType: res.headers.get("content-type"),
+        };
+      },
+      catch: asS3Error,
+    }),
   headObject: (target, key) =>
     Effect.tryPromise({
       try: async () => {
@@ -120,10 +143,18 @@ export interface S3TestHandle {
   readonly calls: string[];
   /** When set, every op fails with an http error (bad-creds tests). */
   failOps: boolean;
+  /**
+   * In-memory blob store for the `getObject` path. `${bucket}/${key}` →
+   * `{bytes, contentType}`; a get on a missing key answers 404 to mirror
+   * a live bucket. Tests seed this by calling `putObject` (which records)
+   * or by writing directly on the returned handle.
+   */
+  readonly objects: Map<string, { bytes: Uint8Array; contentType: string }>;
 }
 
 export const makeS3Test = (): S3TestHandle => {
   const calls: string[] = [];
+  const objects = new Map<string, { bytes: Uint8Array; contentType: string }>();
   const op = (name: string, target: S3Target, key: string): Effect.Effect<void, S3Error> => {
     calls.push(`${name}:${target.bucket}/${key}`);
     if (handle.failOps) {
@@ -135,19 +166,31 @@ export const makeS3Test = (): S3TestHandle => {
   };
   const handle: S3TestHandle = {
     calls,
+    objects,
     failOps: false,
     layer: Layer.succeed(S3, {
       putObject: (target, key, bytes, contentType) =>
-        Effect.flatMap(op(`put(${contentType}:${bytes.byteLength})`, target, key), () =>
-          Effect.succeed({
+        Effect.flatMap(op(`put(${contentType}:${bytes.byteLength})`, target, key), () => {
+          objects.set(`${target.bucket}/${key}`, { bytes, contentType });
+          return Effect.succeed({
             url: buildS3Url({
               endpoint: target.endpoint,
               bucket: target.bucket,
               key,
               pathStyle: target.pathStyle,
             }).url,
-          }),
-        ),
+          });
+        }),
+      getObject: (target, key) =>
+        Effect.flatMap(op("get", target, key), () => {
+          const row = objects.get(`${target.bucket}/${key}`);
+          if (row === undefined) {
+            return Effect.fail(
+              new S3Error({ reason: "http", status: 404, code: "NoSuchKey", detail: "test-missing" }),
+            );
+          }
+          return Effect.succeed({ bytes: row.bytes, contentType: row.contentType });
+        }),
       headObject: (target, key) => op("head", target, key),
       deleteObject: (target, key) => op("delete", target, key),
     }),

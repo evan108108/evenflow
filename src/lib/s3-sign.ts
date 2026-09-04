@@ -65,6 +65,18 @@ export function signHeadObject(args: S3SignArgs): SignedRequest {
   });
 }
 
+// GET — used by the attachment-download path so a caller who has proved
+// viewer role on the board can pull bytes out of a private BYO bucket
+// without ever touching (or holding) the org's S3 credentials.
+export function signGetObject(args: S3SignArgs): SignedRequest {
+  return sign({
+    ...args,
+    method: "GET",
+    payloadHash: emptyBodySha256(),
+    extraHeaders: {},
+  });
+}
+
 // DELETE — used by the connection test to clean up the probe object.
 export function signDeleteObject(args: S3SignArgs): SignedRequest {
   return sign({

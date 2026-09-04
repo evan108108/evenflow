@@ -20,7 +20,7 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
-import { Cause, Effect, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import { path } from "../routes-manifest";
 import { bootstrap } from "../effects";
@@ -34,6 +34,7 @@ import type { Claims } from "../effects";
 import {
   createAttachment,
   deleteAttachment,
+  downloadAttachment,
   listAttachments,
   updateAttachment,
   type AttachmentServices,
@@ -131,6 +132,60 @@ const readUpload = (c: Context<AppHonoEnv>): Effect.Effect<UploadInput, Validati
     ),
   );
 
+/**
+ * Assemble a raw-bytes Response from a DownloadedAttachment. Kept OUTSIDE
+ * the route registration so the boundary scanner sees the handler span as
+ * a small forwarding call — its shape is what parseRouteQuery-style
+ * checkers expect from a route that does not read the query string.
+ * Filename is doubled through RFC 5987's `filename*` form so non-ASCII
+ * characters survive a copy round-trip.
+ */
+const buildDownloadResponse = (result: {
+  bytes: Uint8Array;
+  contentType: string;
+  filename: string;
+}): Response => {
+  const safeAscii = result.filename.replace(/["\r\n]/g, "").replace(/[^\x20-\x7e]/g, "_");
+  const encoded = encodeURIComponent(result.filename);
+  const body = new Uint8Array(result.bytes.byteLength);
+  body.set(result.bytes);
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": result.contentType,
+      "Content-Length": String(result.bytes.byteLength),
+      "Content-Disposition": `attachment; filename="${safeAscii}"; filename*=UTF-8''${encoded}`,
+      "Cache-Control": "private, max-age=60",
+    },
+  });
+};
+
+const runDownload = async (
+  c: Context<AppHonoEnv>,
+  layerFor: LayerFor,
+): Promise<Response> => {
+  const program = downloadAttachment(
+    actionInput<undefined, Claims | null>(
+      c.get("claims") ?? null,
+      c.req.param(),
+      undefined,
+      { grants: grantsOf(c), orgSlug: c.req.param("org_slug") ?? null },
+    ),
+    c.env.EVENFLOW_STORAGE_SECRET,
+  );
+  const provided = Effect.provide(
+    program as Effect.Effect<
+      { bytes: Uint8Array; contentType: string; filename: string },
+      AttachmentsFailure,
+      never
+    >,
+    layerFor(c.env),
+  );
+  const exit = await Effect.runPromiseExit(provided);
+  if (Exit.isFailure(exit)) return errorResponse(c, exit.cause);
+  return buildDownloadResponse(exit.value);
+};
+
 export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
   const attachments = new Hono<AppHonoEnv>();
   const runJson = makeRunJson<AttachmentsFailure, AttachmentServices>(layerFor, errorResponse);
@@ -189,6 +244,15 @@ export const makeAttachmentsRouter = (layerFor: LayerFor = bootstrap) => {
     });
     return runJson(c, program);
   });
+
+  // ── GET /attachment/:id/download — bytes-back for readers on the board ─
+  //
+  // NOT `runJson` — this handler returns raw bytes, not JSON. Same layer
+  // provider, same error mapping via errorResponse, but the success path
+  // writes a Response with Content-Type and Content-Disposition instead
+  // of `c.json(...)`. Anonymous callers work on public boards (viewer
+  // floor), matching attachment.list's posture.
+  attachments.get(path("attachment.download"), (c) => runDownload(c, layerFor));
 
   // ── DELETE /attachments/:id — soft delete; the blob stays on Blossom ────
   attachments.delete(path("attachment.delete"), async (c) => {

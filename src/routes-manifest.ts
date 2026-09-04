@@ -139,6 +139,14 @@ export const ROUTES = [
     file: "attachments.ts",
     auth: "contributor",
   },
+  {
+    id: "attachment.download",
+    method: "GET",
+    path: "/attachment/:id/download",
+    orgScoped: true,
+    file: "attachments.ts",
+    auth: "viewer",
+  },
 
   // ---- audiences.ts -------------------------------------------------------
   {
