@@ -137,7 +137,17 @@ curl -X POST "$BASE/issue/FLOW-42/transition" -H "$AUTH" \
 # Comment
 curl -X POST "$BASE/issue/FLOW-42/comments" -H "$AUTH" \
   -H "Content-Type: application/json" -d '{"body":"Fix shipped."}'
+
+# Attachments — metadata is on the issue detail; bytes need this endpoint.
+curl "$BASE/board/SLUG/issue/FLOW-42/attachments" -H "$AUTH"    # attachment.list
+# Download the bytes (works on default Blossom AND BYO S3 buckets — the
+# server proxies signed reads, credentials never touch the caller):
+curl -OJ "$BASE/attachment/$ATTACHMENT_ID/download" -H "$AUTH"  # attachment.download
+# Org-qualified form (same shape, disambiguates if you ever need it):
+curl -OJ "$BASE/org/ORG/attachment/$ATTACHMENT_ID/download" -H "$AUTH"
 ```
+
+Attachment ids come from `kanban_issue_get` (each attachment's `id` field) or `attachment.list` above. The download endpoint returns the raw file with the correct `Content-Type` and a `Content-Disposition: attachment; filename="…"` header — pipe to `-O -J` if you want curl to save it under the original name. **Do not try to fetch the `blob_url` field on a BYO S3 attachment directly** — that's a private R2 URL that requires SigV4 and answers `400 InvalidArgument: Authorization` to a bearer token. The `/attachment/:id/download` endpoint is the one that works everywhere; auth is `viewer` on the board.
 
 If a REST call returns `403 forbidden: this route is not declared in the API manifest`, that's a scoped `evk_` key hitting a manifest gap for keys (not a path typo — the URL is correct but the middleware fails-closed for keys on undeclared routes). Fall back to MCP for that call, or use a JWT.
 
