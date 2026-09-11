@@ -785,10 +785,22 @@ select:disabled {
   font-family: var(--font-serif);
   font-weight: 700;
   font-size: 1.7rem;
+  line-height: 1.15;
   letter-spacing: -0.02em;
   color: var(--color-ink);
   padding: 0 0 0.4rem;
   border-bottom: 1px solid transparent;
+  /* textarea specifics: wrap long titles and push the rest of the sheet
+     down instead of horizontally scrolling. field-sizing:content auto-
+     grows in modern browsers; the JS onInput handler grows it in older
+     ones. resize:none removes the manual grip so the affordance matches
+     the pre-textarea input. */
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  field-sizing: content;
+  font: inherit;
 }
 
 .issue-sheet .title-input:hover,

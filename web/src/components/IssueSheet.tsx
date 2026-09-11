@@ -370,12 +370,28 @@ export const IssueSheet = (props: {
           )}
         </Show>
 
-        <input
+        <textarea
           class="title-input"
-          value={props.issue.title}
+          rows={1}
+          // A long title used to overflow horizontally inside an <input>,
+          // forcing the reader to side-scroll to see the rest. The
+          // <textarea> wraps and grows in place; content pushes down.
+          // Enter still commits (submitting the title, not inserting a
+          // newline) so the edit UX matches the old input.
+          onInput={(e) => {
+            e.currentTarget.style.height = "auto";
+            e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`;
+          }}
           onBlur={(e) => saveTitle(e.currentTarget.value)}
-          onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        />
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
+          }}
+        >
+          {props.issue.title}
+        </textarea>
 
         <div class="sheet-row">
           <span class="key">Type</span>
