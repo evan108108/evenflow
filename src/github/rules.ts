@@ -88,7 +88,22 @@ export const ACTION_TYPES = [
 export type ActionType = (typeof ACTION_TYPES)[number];
 
 export type RuleAction =
-  | { readonly type: "transition_to_column"; readonly column_id?: string; readonly category?: ColumnCategory }
+  | {
+      readonly type: "transition_to_column";
+      readonly column_id?: string;
+      readonly category?: ColumnCategory;
+      /**
+       * Optional guard: fire only when the issue's CURRENT column has this
+       * category. Used by the closed-unmerged and reopened rules so the
+       * webhook never overrides a deliberate human move — an issue a human
+       * moved to Done or Todo stays there when a stale PR event fires. The
+       * closed-unmerged → In Progress transition triggers only from In
+       * Review; the reopened → In Review transition triggers only from
+       * In Progress. Absent guard means the transition fires unconditionally
+       * (existing behavior for opened, merged, ready_for_review).
+       */
+      readonly only_from_category?: ColumnCategory;
+    }
   | { readonly type: "set_external_state"; readonly value: string }
   | { readonly type: "set_container"; readonly container: Container }
   | { readonly type: "add_comment"; readonly template: string }
@@ -221,6 +236,16 @@ export const actionProblem = (v: unknown, allowedStates: ReadonlyArray<string>):
       // Exactly one — both set is ambiguous, neither is a no-op wearing a
       // transition's clothes.
       if (hasId === hasCategory) return "do-transition-target";
+      // Optional field; when present it must name a known category.
+      if (a["only_from_category"] !== undefined) {
+        if (
+          !(COLUMN_CATEGORIES as ReadonlyArray<string>).includes(
+            a["only_from_category"] as string,
+          )
+        ) {
+          return "do-only-from-category";
+        }
+      }
       return null;
     }
     case "set_external_state": {
@@ -314,9 +339,35 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
     ],
   },
   {
+    // Closed-unmerged: the review artifact is gone, so In Review is
+    // factually false. Nudge the ticket back to In Progress so the human
+    // sees it's no longer being reviewed — In Progress is the neutral
+    // state that's true (or immediately self-corrects) in every
+    // abandonment scenario (a follow-up PR would move it to In Review
+    // via the existing opened rule).
+    //
+    // The `only_from_category: "in_review"` guard is load-bearing: it's
+    // the "never override deliberate human arrangement" rule. If a human
+    // already moved the ticket elsewhere (Todo, backlog, icebox, Done),
+    // the webhook must not touch it — a stale PR closing shouldn't yank
+    // a ticket someone deliberately parked. The 2026-09-11 SCT-6/13
+    // incident (AE-13 sat at In Review after PR #652 was closed unmerged
+    // and nothing nudged anyone) is what motivated this rule.
     bucket: "match",
     when: { event: "pull_request", action: "closed", merged: false },
-    do: { type: "set_external_state", value: "pr_closed" },
+    do: [
+      { type: "set_external_state", value: "pr_closed" },
+      {
+        type: "transition_to_column",
+        category: "in_progress",
+        only_from_category: "in_review",
+      },
+      {
+        type: "add_comment",
+        template:
+          "PR [#{{pull_request.number}}]({{pull_request.html_url}}) closed without merging — moving back to In Progress.",
+      },
+    ],
   },
   // Opened / reopened / synchronize / ready_for_review → in review.
   //
@@ -338,11 +389,19 @@ export const DEFAULT_PRESET_RULES: ReadonlyArray<PresetRule> = [
     ],
   },
   {
+    // Reopened is the reverse edge of closed-unmerged. Symmetric guard:
+    // fire only when the ticket is currently In Progress — the state
+    // closed-unmerged puts it in. If a human moved it elsewhere in the
+    // interim, the reopen leaves that arrangement alone.
     bucket: "match",
     when: { event: "pull_request", action: "reopened" },
     do: [
       { type: "set_external_state", value: "pr_review" },
-      { type: "transition_to_column", category: "in_review" },
+      {
+        type: "transition_to_column",
+        category: "in_review",
+        only_from_category: "in_progress",
+      },
     ],
   },
   {

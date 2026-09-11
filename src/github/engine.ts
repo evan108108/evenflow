@@ -241,6 +241,26 @@ const planAction = (
     case "transition_to_column": {
       const resolved = resolveColumn(action, input.columns);
       if ("reason" in resolved) return [{ kind: "skipped", reason: resolved.reason }];
+      // Human-arrangement guard (EFB-*, 2026-09-11): fire only when the
+      // issue's current column has the required category. If a human has
+      // already moved the card out of the expected origin, the webhook
+      // leaves it alone. The closed-unmerged and reopened rules use this
+      // so a stale PR event never yanks a ticket a human deliberately
+      // parked somewhere.
+      if (action.only_from_category !== undefined) {
+        const current =
+          issue.column_id === null
+            ? undefined
+            : input.columns.find((c) => c.id === issue.column_id);
+        if (current === undefined || current.category !== action.only_from_category) {
+          return [
+            {
+              kind: "skipped",
+              reason: `only-from-category-${action.only_from_category}`,
+            },
+          ];
+        }
+      }
       if (resolved.column.id === issue.column_id) {
         return [{ kind: "skipped", reason: "already-in-column" }];
       }

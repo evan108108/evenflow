@@ -245,9 +245,26 @@ describe("default preset ordering", () => {
     ]);
   });
 
-  it("a closed-unmerged PR sets pr_closed and does NOT transition", () => {
+  it("a closed-unmerged PR flips the pill, guards a move In Review → In Progress, and comments", () => {
     const hit = firstMatchingRule(rules, "match", facts({ action: "closed", merged: false }));
-    expect(hit?.do).toEqual({ type: "set_external_state", value: "pr_closed" });
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_closed" },
+      // The guard is load-bearing — the transition MUST NOT fire when the
+      // ticket was moved elsewhere by a human. This test pins the shape;
+      // the guard's actual behaviour is exercised in the plan tests below
+      // (skipped-reason `only-from-category-in_review` when current column
+      // is not in_review; concrete move when it is).
+      {
+        type: "transition_to_column",
+        category: "in_progress",
+        only_from_category: "in_review",
+      },
+      {
+        type: "add_comment",
+        template:
+          "PR [#{{pull_request.number}}]({{pull_request.html_url}}) closed without merging — moving back to In Progress.",
+      },
+    ]);
   });
 
   it("a PR opened as draft reads pr_draft, not pr_review", () => {
@@ -263,14 +280,24 @@ describe("default preset ordering", () => {
     ]);
   });
 
-  it("reopened and ready_for_review transition too — the same three-rule set", () => {
-    for (const action of ["reopened", "ready_for_review"]) {
-      const hit = firstMatchingRule(rules, "match", facts({ action, draft: false }));
-      expect(hit?.do, action).toEqual([
-        { type: "set_external_state", value: "pr_review" },
-        { type: "transition_to_column", category: "in_review" },
-      ]);
-    }
+  it("ready_for_review transitions unconditionally — new state, no origin guard", () => {
+    const hit = firstMatchingRule(rules, "match", facts({ action: "ready_for_review", draft: false }));
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_review" },
+      { type: "transition_to_column", category: "in_review" },
+    ]);
+  });
+
+  it("reopened guards the reverse edge: In Progress → In Review only", () => {
+    const hit = firstMatchingRule(rules, "match", facts({ action: "reopened", draft: false }));
+    expect(hit?.do).toEqual([
+      { type: "set_external_state", value: "pr_review" },
+      {
+        type: "transition_to_column",
+        category: "in_review",
+        only_from_category: "in_progress",
+      },
+    ]);
   });
 
   // EFB-72's one deliberate exclusion. `synchronize` fires on every push to the
@@ -598,6 +625,77 @@ describe("evaluateDelivery", () => {
       target({ column_id: "col-done" }),
     ]);
     expect(plan.outcomes[0]?.effects).toContainEqual({ kind: "skipped", reason: "already-in-column" });
+  });
+
+  // The `only_from_category` guard on closed-unmerged: fire when the ticket
+  // is In Review (the state a PR-open put it in), skip otherwise. The 2026-
+  // 09-11 SCT-6/13 incident is the case this exists for.
+  it("closed-unmerged: transitions In Review → In Progress when the guard matches", () => {
+    const plan = evaluate("pull_request.closed_unmerged", "pull_request", [
+      target({ column_id: "col-rev" }),
+    ]);
+    const effects = plan.outcomes[0]?.effects ?? [];
+    expect(effects).toContainEqual({ kind: "set_external_state", value: "pr_closed" });
+    expect(effects).toContainEqual({
+      kind: "set_column",
+      column_id: "col-prog",
+      column_name: "In Progress",
+    });
+    // The comment fires too — the human sees WHY the ticket moved.
+    expect(effects.some((e) => e.kind === "add_comment")).toBe(true);
+  });
+
+  it("closed-unmerged: leaves a human-arranged ticket alone (Done)", () => {
+    const plan = evaluate("pull_request.closed_unmerged", "pull_request", [
+      target({ column_id: "col-done" }),
+    ]);
+    const effects = plan.outcomes[0]?.effects ?? [];
+    expect(effects).toContainEqual({ kind: "set_external_state", value: "pr_closed" });
+    // The transition MUST be skipped with the origin-guard reason.
+    expect(effects).toContainEqual({
+      kind: "skipped",
+      reason: "only-from-category-in_review",
+    });
+    // No column-move effect leaked through.
+    expect(effects.some((e) => e.kind === "set_column")).toBe(false);
+  });
+
+  it("closed-unmerged: leaves a ticket that never reached review (Todo) alone", () => {
+    const plan = evaluate("pull_request.closed_unmerged", "pull_request", [
+      target({ column_id: "col-todo" }),
+    ]);
+    const effects = plan.outcomes[0]?.effects ?? [];
+    expect(effects).toContainEqual({
+      kind: "skipped",
+      reason: "only-from-category-in_review",
+    });
+    expect(effects.some((e) => e.kind === "set_column")).toBe(false);
+  });
+
+  // Symmetric guard on reopened — only move In Progress → In Review.
+  it("reopened: transitions In Progress → In Review when the guard matches", () => {
+    const plan = evaluate("pull_request.reopened", "pull_request", [
+      target({ column_id: "col-prog" }),
+    ]);
+    const effects = plan.outcomes[0]?.effects ?? [];
+    expect(effects).toContainEqual({ kind: "set_external_state", value: "pr_review" });
+    expect(effects).toContainEqual({
+      kind: "set_column",
+      column_id: "col-rev",
+      column_name: "In Review",
+    });
+  });
+
+  it("reopened: leaves a human-arranged ticket alone (Done)", () => {
+    const plan = evaluate("pull_request.reopened", "pull_request", [
+      target({ column_id: "col-done" }),
+    ]);
+    const effects = plan.outcomes[0]?.effects ?? [];
+    expect(effects).toContainEqual({
+      kind: "skipped",
+      reason: "only-from-category-in_progress",
+    });
+    expect(effects.some((e) => e.kind === "set_column")).toBe(false);
   });
 
   it("applies to every matched ticket", () => {
