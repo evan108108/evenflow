@@ -52,16 +52,56 @@ Full reference: https://evenflow.work/docs
 
 | User says | Do |
 |---|---|
-| "add a task/bug/feature to my X board" | `kanban_issue_create` |
+| "add a task/bug/feature to my X board" (start now) | `kanban_issue_create` with `"container":"active"` |
+| "capture this for later / add to the backlog" | `kanban_issue_create` with `"container":"backlog"` |
 | "what's on my board" / "what am I working on" | `kanban_issue_list` with `container=active` |
 | "move X to done/review/…" | `kanban_issue_transition` |
 | "show me FLOW-42" / "details on the login bug" | `kanban_issue_get` (returns comments + attachments too) |
 | "comment on X" / "note that…" | `kanban_comment_post` |
-| "put X on ice" / "pull X into the backlog/active" | `kanban_issue_send_to_icebox` / `…_promote_to_backlog` / `…_promote_to_active` |
+| "start working on X" (X currently in backlog/icebox) | `kanban_issue_promote_to_active` FIRST, then transition columns |
+| "put X on ice" / "park X in backlog" | `kanban_issue_send_to_icebox` / `kanban_issue_promote_to_backlog` |
+| "put X back on the board / pick it up" | `kanban_issue_promote_to_active` |
 | "which boards do I have" | `kanban_board_list` |
 
 Resolve "my X board" by listing boards and matching slug/title; when several
 match, ask. Issue refs accept `FLOW-42` (case-insensitive) or the UUID.
+
+## Container semantics — READ THIS BEFORE CREATING OR PICKING UP TICKETS
+
+Every issue carries a `container` — `active | backlog | icebox` — orthogonal to
+its status column. The container answers **"where does this card live in the
+planning workflow?"** — it is TIED to sprints, not to "am I working on it":
+
+| Container | Meaning |
+|---|---|
+| `active` | Belongs to the current running sprint (or, on a sprint-free board, is the immediate working set) |
+| `backlog` | On the roadmap but not yet committed to a sprint |
+| `icebox` | Off the roadmap — not now, maybe never |
+
+**How to think about it:**
+
+- **On a board WITH active sprints:** `active` cards are the sprint's contents. Cards enter `active` by being pulled from the backlog into the running sprint (dragging into a sprint zone in the UI, or via `kanban_issue_promote_to_active`). Creating a card straight to `active` means "add it to the running sprint mid-flight." Creating to `backlog` means "queue for a future sprint."
+- **On a board WITHOUT sprints (like Adaptengine as of 2026-09):** the distinction between `active` and `backlog` largely collapses on the Kanban view — `web/src/pages/board/KanbanView.tsx:64-73` ORs both containers together so a sprint-free board isn't an empty Kanban. **Default to `backlog` for new tickets on a sprint-free board.** They'll still appear on the Kanban board because of the OR; the Backlog view will also list them. `icebox` is what you use to explicitly park.
+
+**Rules that hold either way:**
+
+1. **Never use `PATCH /issue/:id {"container":…}`** — that endpoint deliberately rejects container edits (`400 container-immutable`). Container moves have their own audit event and their own endpoint:
+
+```bash
+# The one true container-move endpoint (idempotent, auth=contributor on the board):
+curl -X POST "$BASE/org/ORG/issue/FLOW-42/container" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"container":"active"}'   # or "backlog" or "icebox"
+```
+
+MCP callers use the dedicated tools instead — same three destinations, no body:
+- `kanban_issue_promote_to_active` — move to `active`
+- `kanban_issue_promote_to_backlog` — move to `backlog`
+- `kanban_issue_send_to_icebox` — move to `icebox`
+
+2. **Column transitions do NOT touch container.** `POST /issue/:id/transition` only updates status/column/position. A backlog card whose column you move stays in backlog. On a board with sprints, that means it stays off the sprint-scoped Kanban view even after you "moved it to In Review." On a sprint-free board, the same call surfaces the card on Kanban via the OR — but the server row still says backlog.
+
+3. **Sprint-free board and the peer-just-saw-this-be-confusing case:** if a peer or user says "this ticket is on the Kanban board but the API says container=backlog and I want it to only show in Backlog view" — the answer is either (a) `icebox` it, or (b) start a sprint on the board so the container distinction actually gates rendering. There's no way to keep a card `backlog` AND hide it from Kanban on a sprint-free board; the "sprint-free flow" design chose visibility over separation.
 
 ## Worked examples (MCP `tools/call` params)
 
@@ -150,6 +190,17 @@ curl -OJ "$BASE/org/ORG/attachment/$ATTACHMENT_ID/download" -H "$AUTH"
 Attachment ids come from `kanban_issue_get` (each attachment's `id` field) or `attachment.list` above. The download endpoint returns the raw file with the correct `Content-Type` and a `Content-Disposition: attachment; filename="…"` header — pipe to `-O -J` if you want curl to save it under the original name. **Do not try to fetch the `blob_url` field on a BYO S3 attachment directly** — that's a private R2 URL that requires SigV4 and answers `400 InvalidArgument: Authorization` to a bearer token. The `/attachment/:id/download` endpoint is the one that works everywhere; auth is `viewer` on the board.
 
 If a REST call returns `403 forbidden: this route is not declared in the API manifest`, that's a scoped `evk_` key hitting a manifest gap for keys (not a path typo — the URL is correct but the middleware fails-closed for keys on undeclared routes). Fall back to MCP for that call, or use a JWT.
+
+## Known pubkeys — adaptengine org (cached 2026-09-08; these don't change — only fetch `/org/adaptengine/members` for a member NOT listed here)
+
+| Person | pubkey | role |
+|---|---|---|
+| Evan (evan.frohlich) | `google:114038898351513339547` | owner |
+| Sai (Sairam Yellanki) | `google:105645732047355422897` | admin |
+| Sona (this agent's Nostr identity) | `nostr:049b628c4e18d562627fd924dea8dd6fe98d4dd3094fd85a53d84c0f5219b3c2` | admin |
+| unidentified admin (likely Conrad) | `google:106902217904903147634` | admin |
+
+Use these directly as `assignee_pubkey` in issue.create — no members/profile round-trips needed.
 
 ## Ground rules
 

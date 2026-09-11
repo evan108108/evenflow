@@ -111,10 +111,18 @@ curl -s -X PATCH "https://evenflow.work/api/v0/issue/MY-1" \\
         kind: "table",
         head: ["Container", "Meaning"],
         rows: [
-          ["backlog", "Real work, not started. The default for a new issue."],
-          ["active", "On the kanban. This is what the board view shows."],
-          ["icebox", "Deliberately not now. Survives sprint sweeps untouched."],
+          ["backlog", "On the roadmap, not yet committed to a sprint. Default for a new issue."],
+          ["active", "Committed to the running sprint (or, on a sprint-free board, the immediate working set)."],
+          ["icebox", "Off the roadmap — not now, maybe never. Survives sprint sweeps untouched."],
         ],
+      },
+      {
+        kind: "p",
+        text: "Container is TIED TO SPRINTS. On a board with an active sprint, backlog cards are hidden from the Kanban view — you promote a card to `active` by dragging it into the running sprint, which is what puts it on the board. On a sprint-free board, the Kanban view intentionally ORs backlog into active (KanbanView.tsx:64-73) so the board isn't empty out of the gate; the practical implication is that on a sprint-free board `backlog` and `active` cards render together on Kanban, and if you want a card OFF the working board without deleting it you use `icebox`.",
+      },
+      {
+        kind: "p",
+        text: "The one true container-move endpoint is POST /issue/:id/container with body {container:\"active\"|\"backlog\"|\"icebox\"}. PATCH /issue/:id deliberately rejects {container:…} with 400 container-immutable — container moves have their own audit event and their own SSE kind (issue.container_changed), so the dedicated endpoint stays the only writer. Column transitions (POST /issue/:id/transition) never touch container: a card whose column you moved stays in whatever container it was in.",
       },
       {
         kind: "p",

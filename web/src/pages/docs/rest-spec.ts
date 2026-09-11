@@ -156,9 +156,11 @@ export const REST_SECTIONS: ReadonlyArray<RestSection> = [
       },
       {
         id: "issue.container.set",
-        summary: "Container verbs: promote_to_active, promote_to_backlog, send_to_icebox. Idempotent.",
+        summary:
+          "Move an issue between containers (active | backlog | icebox). Idempotent, auth=contributor. Container is orthogonal to status column and is TIED TO SPRINTS: `active` means 'in the running sprint', `backlog` means 'queued for a future sprint', `icebox` means 'off the roadmap'. PATCH /issue/:id deliberately rejects {container:…} with 400 container-immutable — this endpoint is the only writer, so container moves keep their own audit event and their own SSE event kind (issue.container_changed). On a SPRINT-FREE board the Kanban view ORs backlog into active (KanbanView.tsx:64-73) so a card sits on the board either way; use `icebox` when you need a card OFF the Kanban view without deleting it.",
+        params: [{ name: "container", note: '"active" | "backlog" | "icebox"' }],
         response: "{ issue }",
-        curl: `curl -X POST ${BASE}/issue/FLOW-42/container -H "Authorization: Bearer ${KEY}"`,
+        curl: `curl -X POST ${BASE}/org/acme/issue/FLOW-42/container -H "Authorization: Bearer ${KEY}" -H "Content-Type: application/json" -d '{"container":"active"}'`,
       },
     ],
   },
